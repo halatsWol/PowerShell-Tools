@@ -122,7 +122,7 @@ function Repair-System {
         $dismLog = "$env:windir\Logs\dism\dism.log"
         $tempPath = "$using:remoteTempPath"
 
-        $zip = [System.IO.Compression.ZipFile]::CreateFromDirectory($tempPath, $zipFile)
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($tempPath, $zipFile)
 
         if (Test-Path $cbsLog) {
             [System.IO.Compression.ZipFile]::CreateEntryFromFile($zipFile, $cbsLog, "CBS.log")

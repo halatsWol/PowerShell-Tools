@@ -12,13 +12,13 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 - [Installation](#installation)
 - [Usage](#usage)
   - [Running a Script](#running-a-script)
-  - [Importing a Module](#importing-a-module)
-- [Contributing](#contributing)
-- [License](#license)
+
 
 ## Introduction
 
 The **PowerShell-Tools** repository is a comprehensive toolkit for IT professionals. Whether you're managing systems, automating tasks, or performing routine maintenance, these PowerShell scripts and modules are designed to help streamline your workflow.
+
+Eventhough it currently looks a bit empty, more will come... 
 
 ## Features
 
@@ -44,9 +44,7 @@ The `Repair-System` module is a key tool within this repository. It allows you t
 More scripts and modules will be added to this repository over time. Stay tuned for tools that will assist with:
 
 - System monitoring
-- Automated patch management
 - Network diagnostics
-- User account management
 - And more...
 
 ## Installation
