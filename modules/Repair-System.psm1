@@ -76,9 +76,15 @@ function Repair-System {
     # Execute sfc /scannow
     Invoke-Command -ComputerName $ComputerName -ScriptBlock {
         if ($using:Quiet) {
-            sfc /scannow > $using:sfcLog 2>&1
+            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
+            $logContent = Get-Content $using:sfcLog -Raw
+            $logContent = $logContent -replace [char]0
+            Set-Content $using:sfcLog -Value $logContent
         } else {
-            sfc /scannow | Tee-Object -FilePath $using:sfcLog
+            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog
+            $logContent = Get-Content $using:sfcLog -Raw
+            $logContent = $logContent -replace [char]0
+            Set-Content $using:sfcLog -Value $logContent
         }
     }
 
@@ -105,16 +111,7 @@ function Repair-System {
         }
     }
 
-    # Handle log outputs
-    if (-not $Quiet) {
-        Get-Content "\\$ComputerName\$sfcLog" -Tail 10
-        if (-not $SfcOnly) {
-            Get-Content "\\$ComputerName\$dismScanLog" -Tail 10
-            if ($dismScanResult -ne 0) {
-                Get-Content "\\$ComputerName\$dismRestoreLog" -Tail 10
-            }
-        }
-    }
+
 
     # Zip CBS.log and DISM.log
     $zipFile = "$remoteTempPath\logs_$ComputerName.zip"
