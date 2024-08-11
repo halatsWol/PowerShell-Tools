@@ -59,14 +59,14 @@ To install and use the scripts and modules from this repository:
 
 2. Navigate to the repository directory:
 
-    ```bash
+    ```powershell
     cd PowerShell-Tools
     ```
 
 3. Import the desired module into your PowerShell session:
 
     ```powershell
-    Import-Module .\Repair-System.psm1
+    Import-Module .\modules\Repair-System.psm1
     ```
 
 ## Usage
