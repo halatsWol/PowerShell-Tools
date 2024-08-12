@@ -61,11 +61,12 @@ function Repair-System {
     }
 
     # Set up paths and file names for logging
+    $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
     $remoteTempPath = "\\$ComputerName\C$\_temp"
     $localTempPath = "C:\remoteFiles\$ComputerName"
-    $sfcLog = "$remoteTempPath\sfc-scannow_$ComputerName.log"
-    $dismScanLog = "$remoteTempPath\dism-scan_$ComputerName.log"
-    $dismRestoreLog = "$remoteTempPath\dism-restore_$ComputerName.log"
+    $sfcLog = "$remoteTempPath\sfc-scannow_$ComputerName_$currentDateTime.log"
+    $dismScanLog = "$remoteTempPath\dism-scan_$ComputerName_$currentDateTime.log"
+    $dismRestoreLog = "$remoteTempPath\dism-restore_$ComputerName_$currentDateTime.log"
 
     if (-not (Test-Path -Path $remoteTempPath)) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -114,7 +115,8 @@ function Repair-System {
 
 
     # Zip CBS.log and DISM.log
-    $zipFile = "$remoteTempPath\logs_$ComputerName.zip"
+
+    $zipFile = "$remoteTempPath\logs_$ComputerName_$currentDateTime.zip"
     Invoke-Command -ComputerName $ComputerName -ScriptBlock {
         Add-Type -Assembly "System.IO.Compression.FileSystem"
         $zipFile = $using:zipFile
@@ -122,18 +124,31 @@ function Repair-System {
         $dismLog = "$env:windir\Logs\dism\dism.log"
         $tempPath = "$using:remoteTempPath"
 
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($tempPath, $zipFile)
-
-        if (Test-Path $cbsLog) {
-            [System.IO.Compression.ZipFile]::CreateEntryFromFile($zipFile, $cbsLog, "CBS.log")
+        # Delete existing zip file if it exists
+        if (Test-Path $zipFile) {
+            Remove-Item -Path $zipFile -Force
         }
 
+        # Create a new zip file from the directory
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($tempPath, $zipFile)
+
+        # Add CBS.log to the zip file if it exists
+        if (Test-Path $cbsLog) {
+            $zipToOpen = [System.IO.Compression.ZipFile]::Open($zipFile, [System.IO.Compression.ZipArchiveMode]::Update)
+            $zipToOpen.CreateEntryFromFile($cbsLog, "CBS.log")
+            $zipToOpen.Dispose()
+        }
+
+        # Add DISM.log to the zip file if it exists and the SfcOnly flag is not set
         if (-not $using:SfcOnly) {
             if (Test-Path $dismLog) {
-                [System.IO.Compression.ZipFile]::CreateEntryFromFile($zipFile, $dismLog, "dism.log")
+                $zipToOpen = [System.IO.Compression.ZipFile]::Open($zipFile, [System.IO.Compression.ZipArchiveMode]::Update)
+                $zipToOpen.CreateEntryFromFile($dismLog, "dism.log")
+                $zipToOpen.Dispose()
             }
         }
     }
+
 
     # Copy log files to local machine
     if (-not (Test-Path -Path $localTempPath)) {
