@@ -75,7 +75,10 @@ function Repair-System {
         [switch]$Quiet,
 
         [Parameter(Mandatory = $false, Position=3)]
-        [switch]$IncludeComponentCleanup
+        [switch]$IncludeComponentCleanup,
+
+        [Parameter(Mandatory = $false, Position=4)]
+        [switch]$WindowsUpdateCleanup
     )
 
     # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
