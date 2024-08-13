@@ -154,14 +154,14 @@ function Repair-System {
                 }
             }
         } elseif ($dismScanResult -eq 2) {
-            $message = "The component store is healthy on $using:ComputerName. No repairs needed."
+            $message = "The component store is healthy on $ComputerName. No repairs needed."
             Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 param ($logPath, $logMessage)
                 Add-Content -Path $logPath -Value $logMessage
             } -ArgumentList $dismRestoreLog, $message
         } else {
-            $message = "DISM ScanHealth returned an unexpected exit code ($using:dismScanResult) on $using:ComputerName. Please review the logs."
+            $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResult) on $ComputerName. Please review the logs."
             Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 param ($logPath, $logMessage)
