@@ -23,6 +23,9 @@ function Repair-System {
     .PARAMETER IncludeComponentCleanup
     When specified, performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, performs `DISM /Online /Cleanup-Image /StartComponentCleanup`.
 
+    .PARAMETER WindowsUpdateCleanup
+    When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
+
     .EXAMPLE
     Repair-System -ComputerName <remote-device>
 
@@ -42,6 +45,10 @@ function Repair-System {
     Repair-System <remote-device> -IncludeComponentCleanup
 
     Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-sfcOnly'
+
+    .EXAMPLE
+    Repair-System <remote-device> -WindowsUpdateCleanup
+    stops the Windows Update and related Services, renames the SoftwareDistribution and catroot2 folders, and restarts the services.
 
     .NOTES
     This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
