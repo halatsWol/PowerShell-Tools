@@ -63,24 +63,25 @@ function Repair-System {
     Date: 2024-08-12
     #>
 
+    [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
         [string]$ComputerName,
 
-        [Parameter(Position=1)]
+        [Parameter(Mandatory = $false, Position=1)]
         [switch]$sfcOnly,
 
-        [Parameter(Position=2)]
+        [Parameter(Mandatory = $false, Position=2)]
         [switch]$Quiet,
 
-        [Parameter(Position=3)]
+        [Parameter(Mandatory = $false, Position=3)]
         [switch]$IncludeComponentCleanup
     )
 
     # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
     if ($sfcOnly -and $IncludeComponentCleanup) {
-        throw "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
-        return
+        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
+        return 1
     }
 
     # Ping the remote computer to check availability
@@ -88,7 +89,7 @@ function Repair-System {
 
     if (-not $pingResult) {
         Write-Host "Unable to reach $ComputerName. Please check the network connection."
-        return
+        return 2
     }
 
     # Set up paths and file names for logging
@@ -100,7 +101,9 @@ function Repair-System {
     $dismRestoreLog = "$remoteTempPath\dism-restore_$currentDateTime.log"
     $analyzeComponentLog = "$remoteTempPath\analyze-component_$currentDateTime.log"
     $componentCleanupLog = "$remoteTempPath\component-cleanup_$currentDateTime.log"
+    $zipFile = "$remoteTempPath\logs_$ComputerName_$currentDateTime.zip"
     $zipErrorLog = "$remoteTempPath\zip-errors_$currentDateTime.log"
+
 
     if (-not (Test-Path -Path $remoteTempPath)) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -110,6 +113,7 @@ function Repair-System {
 
     # Execute sfc /scannow
     Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+        Write-Verbose "executing SFC"
         if ($using:Quiet) {
             sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
             $logContent = Get-Content $using:sfcLog -Raw
@@ -126,6 +130,7 @@ function Repair-System {
     if (-not $sfcOnly) {
         # Execute dism /online /Cleanup-Image /Scanhealth
         $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            Write-Verbose "executing DISM/ScanHealth"
             if ($using:Quiet) {
                 dism /online /Cleanup-Image /Scanhealth > $using:dismScanLog 2>&1
             } else {
@@ -138,6 +143,7 @@ function Repair-System {
         if ($dismScanResult -eq 0) {
             # Component store is repairable, proceed with RestoreHealth
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                Write-Verbose "executing DISM/RestoreHealth"
                 if ($using:Quiet) {
                     dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
                 } else {
@@ -146,14 +152,14 @@ function Repair-System {
             }
         } elseif ($dismScanResult -eq 2) {
             $message = "The component store is healthy on $using:ComputerName. No repairs needed."
-            Write-Host $message
+            Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 param ($logPath, $logMessage)
                 Add-Content -Path $logPath -Value $logMessage
             } -ArgumentList $dismRestoreLog, $message
         } else {
             $message = "DISM ScanHealth returned an unexpected exit code ($using:dismScanResult) on $using:ComputerName. Please review the logs."
-            Write-Host $message
+            Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 param ($logPath, $logMessage)
                 Add-Content -Path $logPath -Value $logMessage
@@ -182,17 +188,17 @@ function Repair-System {
                             dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $using:componentCleanupLog
                         }
                         $message = "Component store cleanup was performed on $using:ComputerName."
-                        Write-Host $message
+                        Write-Verbose $message
                         Add-Content -Path $using:componentCleanupLog -Value $message
                     } else {
                         $message = "No component store cleanup was needed on $using:ComputerName."
-                        Write-Host $message
+                        Write-Verbose $message
                         Add-Content -Path $using:componentCleanupLog -Value $message
                     }
                 }
             } else {
                 $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
-                Write-Host $message
+                Write-Output $message
                 Add-Content -Path $componentCleanupLog -Value $message
             }
         }
@@ -200,11 +206,8 @@ function Repair-System {
 
 
 
-
     # Zip CBS.log and DISM.log
-
-    $zipFile = "$remoteTempPath\logs_$ComputerName_$currentDateTime.zip"
-    Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+    $zipErrorCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
         try {
             $cbsLog = "$env:windir\Logs\CBS\CBS.log"
             $dismLog = "$env:windir\Logs\dism\dism.log"
@@ -243,8 +246,11 @@ function Repair-System {
             }
         } catch {
             $errorMessage = "An error occurred while creating the zip file: $_"
+            Write-Output $message
             Add-Content -Path $using:zipErrorLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
+            return 1
         }
+        return 0
     }
 
 
@@ -260,6 +266,10 @@ function Repair-System {
             Remove-Item -Path "C:\_temp\*" -Recurse -Force
         }
     }
+
+
+
+    return $zipErrorCode
 }
 
 Export-ModuleMember -Function Repair-System
