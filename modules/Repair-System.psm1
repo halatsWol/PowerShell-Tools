@@ -14,7 +14,7 @@ function Repair-System {
     .PARAMETER ComputerName
     The hostname or IP address of the remote computer where the system repair will be performed.
 
-    .PARAMETER SfcOnly
+    .PARAMETER sfcOnly
     When specified, only the `sfc /scannow` command is executed. The `DISM` commands are skipped.
 
     .PARAMETER Quiet
@@ -24,20 +24,24 @@ function Repair-System {
     When specified, performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, performs `DISM /Online /Cleanup-Image /StartComponentCleanup`.
 
     .EXAMPLE
-    Repair-System -ComputerName SomePC
+    Repair-System -ComputerName <remote-device>
 
-    Runs the `sfc /scannow` and `DISM` commands on the remote computer `SomePC`. Outputs are shown on the console and logged to files.
-
-    .EXAMPLE
-    Repair-System SomePC -SfcOnly
-
-    Runs only the `sfc /scannow` command on the remote computer `SomePC`. Outputs are shown on the console and logged to files.
+    Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
     .EXAMPLE
-    Repair-System SomePC -Quiet
+    Repair-System <remote-device> -sfcOnly
 
-    Runs the `sfc /scannow` and `DISM` commands on the remote computer `SomePC`. Outputs are logged to files but not shown on the console.
+    Runs only the `sfc /scannow` command on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
+    .EXAMPLE
+    Repair-System <remote-device> -Quiet
+
+    Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are logged to files but not shown on the console.
+
+    .EXAMPLE
+    Repair-System <remote-device> -IncludeComponentCleanup
+
+    Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-sfcOnly'
 
     .NOTES
     This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
@@ -64,7 +68,7 @@ function Repair-System {
         [string]$ComputerName,
 
         [Parameter(Position=1)]
-        [switch]$SfcOnly,
+        [switch]$sfcOnly,
 
         [Parameter(Position=2)]
         [switch]$Quiet,
@@ -72,6 +76,12 @@ function Repair-System {
         [Parameter(Position=3)]
         [switch]$IncludeComponentCleanup
     )
+
+    # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
+    if ($sfcOnly -and $IncludeComponentCleanup) {
+        throw "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
+        return
+    }
 
     # Ping the remote computer to check availability
     $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet
@@ -113,7 +123,7 @@ function Repair-System {
         }
     }
 
-    if (-not $SfcOnly) {
+    if (-not $sfcOnly) {
         # Execute dism /online /Cleanup-Image /Scanhealth
         $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             if ($using:Quiet) {
@@ -196,59 +206,40 @@ function Repair-System {
     $zipFile = "$remoteTempPath\logs_$ComputerName_$currentDateTime.zip"
     Invoke-Command -ComputerName $ComputerName -ScriptBlock {
         try {
-            Add-Type -Assembly "System.IO.Compression.FileSystem"
-            $zipFile = $using:zipFile
             $cbsLog = "$env:windir\Logs\CBS\CBS.log"
             $dismLog = "$env:windir\Logs\dism\dism.log"
             $tempPath = "$using:remoteTempPath"
+            $filesToZip = @()
 
             # Copy CBS.log to the temporary directory if it exists
             if (Test-Path $cbsLog) {
-                Copy-Item -Path $cbsLog -Destination $tempPath
+                Copy-Item -Path $cbsLog -Destination $tempPath -Verbose
+                $filesToZip += (Join-Path -Path $tempPath -ChildPath "CBS.log")
             }
 
-            # Copy DISM.log to the temporary directory if it exists and the SfcOnly flag is not set
-            if (-not $using:SfcOnly) {
+            # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
+            if (-not $using:sfcOnly) {
                 if (Test-Path $dismLog) {
-                    Copy-Item -Path $dismLog -Destination $tempPath
+                    Copy-Item -Path $dismLog -Destination $tempPath -Verbose
+                    $filesToZip += (Join-Path -Path $tempPath -ChildPath "dism.log")
                 }
             }
 
             # Delete existing zip file if it exists
-            if (Test-Path $zipFile) {
-                Remove-Item -Path $zipFile -Force
+            if (Test-Path $using:zipFile) {
+                Remove-Item -Path $using:zipFile -Force -Verbose
             }
 
             # Create a new zip file
-            $zipToOpen = [System.IO.Compression.ZipFile]::Open($zipFile, [System.IO.Compression.ZipArchiveMode]::Create)
-
-            # Add copied CBS.log to the zip file if it exists
-            $copiedCbsLog = Join-Path -Path $tempPath -ChildPath "CBS.log"
-            if (Test-Path $copiedCbsLog) {
-                $entry = $zipToOpen.CreateEntry("CBS.log")
-                $entryStream = $entry.Open()
-                [System.IO.File]::OpenRead($copiedCbsLog).CopyTo($entryStream)
-                $entryStream.Close()
+            if ($filesToZip.Count -gt 0) {
+                Compress-Archive -Path $filesToZip -DestinationPath $using:zipFile -Force -Verbose
             }
-
-            # Add copied DISM.log to the zip file if it exists
-            $copiedDismLog = Join-Path -Path $tempPath -ChildPath "dism.log"
-            if (Test-Path $copiedDismLog) {
-                $entry = $zipToOpen.CreateEntry("dism.log")
-                $entryStream = $entry.Open()
-                [System.IO.File]::OpenRead($copiedDismLog).CopyTo($entryStream)
-                $entryStream.Close()
-            }
-
-            # Dispose the zip file to finalize it
-            $zipToOpen.Dispose()
 
             # Remove the copied logs from the temporary directory
-            if (Test-Path $copiedCbsLog) {
-                Remove-Item -Path $copiedCbsLog -Force
-            }
-            if (Test-Path $copiedDismLog) {
-                Remove-Item -Path $copiedDismLog -Force
+            foreach ($file in $filesToZip) {
+                if (Test-Path $file) {
+                    Remove-Item -Path $file -Force -Verbose
+                }
             }
         } catch {
             $errorMessage = "An error occurred while creating the zip file: $_"
