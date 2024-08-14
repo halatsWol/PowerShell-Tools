@@ -349,7 +349,7 @@ function Repair-System {
 
 
 
-    return $zipErrorCode
+    return "System-Repair on $ComputerName successfully performed.`r`nLog-Files can be found on this Machine under '$localTempPath'"
 }
 
 
