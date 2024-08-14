@@ -12,7 +12,7 @@
 RootModule = '.\Repair-System.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.8.1'
+ModuleVersion = '1.0'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -24,7 +24,7 @@ GUID = 'c14ab226-61b7-40c9-bd94-33123ec20311'
 Author = 'Wolfram Halatschek'
 
 # Company or vendor of this module
-CompanyName = 'Unknown'
+# CompanyName = ''
 
 # Copyright statement for this module
 Copyright = '(c) Wolfram Halatschek. All rights reserved.'
@@ -33,7 +33,7 @@ Copyright = '(c) Wolfram Halatschek. All rights reserved.'
 # Description = ''
 
 # Minimum version of the PowerShell engine required by this module
-# PowerShellVersion = '5.1'
+PowerShellVersion = '5.1'
 
 # Name of the PowerShell host required by this module
 # PowerShellHostName = ''
@@ -101,7 +101,7 @@ PrivateData = @{
         # LicenseUri = ''
 
         # A URL to the main website for this project.
-        # ProjectUri = ''
+        ProjectUri = 'https://github.com/halatsWol/PowerShell-Tools'
 
         # A URL to an icon representing this module.
         # IconUri = ''
