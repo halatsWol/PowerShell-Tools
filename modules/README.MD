@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `Repair-System` PowerShell module provides a function to repair Windows systems remotely by running System File Checker (SFC) and Deployment Imaging Service and Management Tool (DISM) commands. It allows for extensive repair capabilities, including scanning and restoring system files, component cleanup, and Windows Update cleanup on a remote machine. The results are logged on the remote computer and can be optionally transferred to the local machine.
+The `Repair-System` PowerShell module provides a function to repair Windows systems remotely by running System File Checker (SFC) and Deployment Imaging Service and Management Tool (DISM) commands. It allows for extensive repair capabilities, including scanning and restoring system files, component cleanup, and Windows Update cleanup on a remote machine. The results are logged on the remote computer and are transferred to the local machine upon completion.
 
 ## Functionality
 
@@ -21,7 +21,7 @@ This function performs the following tasks on a specified remote computer:
 
 - **`-ComputerName`** (Mandatory): The hostname or IP address of the remote computer.
 - **`-sfcOnly`** (Optional): When specified, only the `sfc /scannow` command is executed, skipping the `DISM` commands.
-- **`-Quiet`** (Optional): Suppresses console output on the local machine. The output is logged to files on the remote machine instead.
+- **`-Quiet`** (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
 - **`-IncludeComponentCleanup`** (Optional): Performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, `DISM /Online /Cleanup-Image /StartComponentCleanup`.
 - **`-WindowsUpdateCleanup`** (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update cleanup.
 
@@ -47,6 +47,7 @@ Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 
 - **WinRM**: Must be enabled and configured on the remote computer.
 - **Administrative Privileges**: Running this script may require administrative privileges on the remote computer.
+    For this, Powershell must be started as the user, which has administrative privileges on the remote computer.
 
 ## Notes
 
