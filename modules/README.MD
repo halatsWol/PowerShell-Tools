@@ -42,6 +42,8 @@ Repair-System -ComputerName <remote-device> -IncludeComponentCleanup
 
 # Perform Windows Update cleanup
 Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
+```
+
 
 ## Requirements
 
