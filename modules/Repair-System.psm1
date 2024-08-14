@@ -67,7 +67,7 @@ function Repair-System {
 
     Author: Wolfram Halatschek
     E-Mail: halatschek.wolfram@gmail.com
-    Date: 2024-08-12
+    Date: 2024-08-14
     #>
 
     [CmdletBinding()]
@@ -87,7 +87,6 @@ function Repair-System {
 
         [Parameter(Mandatory = $false, Position=4)]
         [switch]$WindowsUpdateCleanup
-
 
     )
 
