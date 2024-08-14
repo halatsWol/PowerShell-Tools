@@ -173,7 +173,7 @@ function Repair-System {
             }
             return $LASTEXITCODE
         }
-
+        $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
         $dismScanResultString = $dismScanResult.ToString()
 
         # Explicitly check the exit code to decide on RestoreHealth
