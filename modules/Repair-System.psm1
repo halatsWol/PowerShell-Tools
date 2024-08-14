@@ -296,32 +296,32 @@ function Repair-System {
 
             # Copy CBS.log to the temporary directory if it exists
             if (Test-Path $cbsLog) {
-                Copy-Item -Path $cbsLog -Destination $tempPath -Verbose
+                Copy-Item -Path $cbsLog -Destination $tempPath
                 $filesToZip += (Join-Path -Path $tempPath -ChildPath "CBS.log")
             }
 
             # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
             if (-not $using:sfcOnly) {
                 if (Test-Path $dismLog) {
-                    Copy-Item -Path $dismLog -Destination $tempPath -Verbose
+                    Copy-Item -Path $dismLog -Destination $tempPath
                     $filesToZip += (Join-Path -Path $tempPath -ChildPath "dism.log")
                 }
             }
 
             # Delete existing zip file if it exists
             if (Test-Path $using:zipFile) {
-                Remove-Item -Path $using:zipFile -Force -Verbose
+                Remove-Item -Path $using:zipFile -Force
             }
 
             # Create a new zip file
             if ($filesToZip.Count -gt 0) {
-                Compress-Archive -Path $filesToZip -DestinationPath $using:zipFile -Force -Verbose
+                Compress-Archive -Path $filesToZip -DestinationPath $using:zipFile -Force
             }
 
             # Remove the copied logs from the temporary directory
             foreach ($file in $filesToZip) {
                 if (Test-Path $file) {
-                    Remove-Item -Path $file -Force -Verbose
+                    Remove-Item -Path $file -Force
                 }
             }
         } catch {
