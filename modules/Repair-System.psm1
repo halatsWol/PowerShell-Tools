@@ -86,7 +86,16 @@ function Repair-System {
 
         [Parameter(Mandatory = $false, Position=4)]
         [switch]$WindowsUpdateCleanup
+
+        # [Parameter(Mandatory = $false, Position=5)]
+        # [switch]$resetTSlite
     )
+
+    # check if verbose param is set in command execution
+    if ( -not $PSCmdlet.MyInvocation.BoundParameters['Verbose']) {
+        $VerbosePreference = "SilentlyContinue"
+    }
+
 
     # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
     if ($sfcOnly -and $IncludeComponentCleanup) {
@@ -99,22 +108,37 @@ function Repair-System {
 
     if (-not $pingResult) {
         Write-Host "Unable to reach $ComputerName. Please check the network connection."
-        return 2
+        exit 2
     }
+
+
 
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
     $remoteTempPath = "\\$ComputerName\C$\_temp"
-    $localTempPath = "C:\remoteFiles\$ComputerName"
+    $localTempPath = "C:\remote-Files\$ComputerName"
     $sfcLog = "$remoteTempPath\sfc-scannow_$currentDateTime.log"
     $dismScanLog = "$remoteTempPath\dism-scan_$currentDateTime.log"
     $dismRestoreLog = "$remoteTempPath\dism-restore_$currentDateTime.log"
     $analyzeComponentLog = "$remoteTempPath\analyze-component_$currentDateTime.log"
     $componentCleanupLog = "$remoteTempPath\component-cleanup_$currentDateTime.log"
-    $zipFile = "$remoteTempPath\logs_$ComputerName_$currentDateTime.zip"
+    $zipFile = "$remoteTempPath\cbsDism-logs_$ComputerName_$currentDateTime.zip"
     $zipErrorLog = "$remoteTempPath\zip-errors_$currentDateTime.log"
     $updateCleanupLog = "$remoteTempPath\update-cleanup_$currentDateTime.log"
 
+    try{
+        Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            Get-Process | Out-Null
+        }
+    } catch {
+        $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration."
+        Write-Host $winRMexit
+        if (-not (Test-Path -Path $localTempPath)) {
+            New-Item -Path $localTempPath -ItemType Directory -Force
+        }
+        Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
+        exit 3
+    }
 
     if (-not (Test-Path -Path $remoteTempPath)) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -150,18 +174,21 @@ function Repair-System {
             return $LASTEXITCODE
         }
 
+        $dismScanResultString = $dismScanResult.ToString()
+
         # Explicitly check the exit code to decide on RestoreHealth
-        if ($dismScanResult -eq 0) {
+        if ($dismScanResultString -eq 0) {
             # Component store is repairable, proceed with RestoreHealth
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 Write-Verbose "executing DISM/RestoreHealth"
+                Clear-Content -Path $using:dismRestoreLog
                 if ($using:Quiet) {
                     dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
                 } else {
                     dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $using:dismRestoreLog
                 }
             }
-        } elseif ($dismScanResult -eq 2) {
+        } elseif ($dismScanResultString -eq 2) {
             $message = "The component store is healthy on $ComputerName. No repairs needed."
             Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -169,7 +196,7 @@ function Repair-System {
                 Add-Content -Path $logPath -Value $logMessage
             } -ArgumentList $dismRestoreLog, $message
         } else {
-            $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResult) on $ComputerName. Please review the logs."
+            $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
             Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 param ($logPath, $logMessage)
@@ -323,7 +350,38 @@ function Repair-System {
 
 
 
-    return $zipErrorCode
+    exit $zipErrorCode
 }
+
+
+
+# function resetTSlite {
+
+#     # Source: https://github.com/gwblok/garytown/blob/master/ResetTSlite.ps1 | commit 71f98db
+#     #2019.12.24 - Help Reset TS's that are having issues starting. "Stuck at Installing..."
+
+#     if (Get-WmiObject -Namespace Root\CCM\SoftMgmtAgent -Class CCM_TSExecutionRequest) {
+#         Write-output "Removing TS Excustion Request from WMI"
+#         Get-WmiObject -Namespace Root\CCM\SoftMgmtAgent -Class CCM_TSExecutionRequest | Remove-WmiObject
+#         Get-CimInstance -Namespace root/ccm -ClassName SMS_MaintenanceTaskRequests | Remove-CimInstance
+#         Set-Service smstsmgr -StartupType manual
+#         Start-Service smstsmgr
+#         Start-Sleep -Seconds 5
+#         if ((Get-Process CcmExec -ea SilentlyContinue) -ne $Null) {Get-Process CcmExec | Stop-Process -Force}
+#         if ((Get-Process TSManager -ea SilentlyContinue) -ne $Null) {Get-Process TSManager| Stop-Process -Force}
+#         Start-Sleep -Seconds 5
+#         Start-Service ccmexec
+#         Start-Sleep -Seconds 5
+#         Start-Service smstsmgr
+#         restart-service ccmexec -force -ErrorAction SilentlyContinue
+#         Start-Process -FilePath C:\windows\ccm\CcmEval.exe
+#         start-sleep -Seconds 15
+#         #Invoke Machine Policy
+#         Invoke-WMIMethod -Namespace root\ccm -Class SMS_CLIENT -Name TriggerSchedule "{00000000-0000-0000-0000-000000000021}" |Out-Null
+#         Invoke-WMIMethod -Namespace root\ccm -Class SMS_CLIENT -Name TriggerSchedule "{00000000-0000-0000-0000-000000000022}" |Out-Null
+
+#         }
+#     Else {Write-output "No TS Excustion Request in WMI"}
+# }
 
 Export-ModuleMember -Function Repair-System
