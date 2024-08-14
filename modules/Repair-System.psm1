@@ -93,9 +93,7 @@ function Repair-System {
     )
 
     # check if verbose param is set in command execution
-    if ( -not $PSCmdlet.MyInvocation.BoundParameters['Verbose']) {
-        $VerbosePreference = "SilentlyContinue"
-    }
+    $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
 
 
     # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
@@ -130,7 +128,7 @@ function Repair-System {
     try{
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             Get-Process | Out-Null
-        }
+        } -Verbose:$VerboseOption
     } catch {
         $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration."
         Write-Host $winRMexit
@@ -144,7 +142,7 @@ function Repair-System {
     if (-not (Test-Path -Path $remoteTempPath)) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             New-Item -Path "C:\_temp" -ItemType Directory -Force
-        }
+        } -Verbose:$VerboseOption
     }
 
     # Execute sfc /scannow
@@ -161,7 +159,7 @@ function Repair-System {
             $logContent = $logContent -replace [char]0
             Set-Content $using:sfcLog -Value $logContent
         }
-    }
+    } -Verbose:$VerboseOption
 
     if (-not $sfcOnly) {
         # Execute dism /online /Cleanup-Image /Scanhealth
@@ -173,7 +171,7 @@ function Repair-System {
                 dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $using:dismScanLog
             }
             return $LASTEXITCODE
-        }
+        } -Verbose:$VerboseOption
         $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
         $dismScanResultString = $dismScanResult.ToString()
 
@@ -188,21 +186,21 @@ function Repair-System {
                 } else {
                     dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $using:dismRestoreLog
                 }
-            }
+            } -Verbose:$VerboseOption
         } elseif ($dismScanResultString -eq 2) {
             $message = "The component store is healthy on $ComputerName. No repairs needed."
             Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 param ($logPath, $logMessage)
                 Add-Content -Path $logPath -Value $logMessage
-            } -ArgumentList $dismRestoreLog, $message
+            }  -Verbose:$VerboseOption -ArgumentList $dismRestoreLog, $message
         } else {
             $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
             Write-Verbose $message
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 param ($logPath, $logMessage)
                 Add-Content -Path $logPath -Value $logMessage
-            } -ArgumentList $dismRestoreLog, $message
+            }  -Verbose:$VerboseOption -ArgumentList $dismRestoreLog, $message
         }
 
         if ($IncludeComponentCleanup) {
@@ -214,7 +212,7 @@ function Repair-System {
                     dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $using:analyzeComponentLog
                 }
                 return $LASTEXITCODE
-            }
+            } -Verbose:$VerboseOption
 
             # Check the output and perform cleanup if recommended
             if ($analyzeResult -eq 0) {
@@ -234,7 +232,7 @@ function Repair-System {
                         Write-Verbose $message
                         Add-Content -Path $using:componentCleanupLog -Value $message
                     }
-                }
+                } -Verbose:$VerboseOption
             } else {
                 $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
                 Write-Output $message
@@ -282,7 +280,7 @@ function Repair-System {
                     Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
                     return 1
                 }
-            }
+            } -Verbose:$VerboseOption
         }
     }
 
@@ -333,7 +331,7 @@ function Repair-System {
             return 1
         }
         return 0
-    }
+    } -Verbose:$VerboseOption
 
 
     # Copy log files to local machine
@@ -346,7 +344,7 @@ function Repair-System {
     if ($?) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             Remove-Item -Path "C:\_temp\*" -Recurse -Force
-        }
+        } -Verbose:$VerboseOption
     }
 
 
