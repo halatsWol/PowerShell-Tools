@@ -73,6 +73,7 @@ function Repair-System {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
+        [ValidatePattern('^(([a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')]
         [string]$ComputerName,
 
         [Parameter(Mandatory = $false, Position=1)]
@@ -108,7 +109,7 @@ function Repair-System {
 
     if (-not $pingResult) {
         Write-Host "Unable to reach $ComputerName. Please check the network connection."
-        exit 2
+        return 2
     }
 
 
@@ -137,7 +138,7 @@ function Repair-System {
             New-Item -Path $localTempPath -ItemType Directory -Force
         }
         Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
-        exit 3
+        return 3
     }
 
     if (-not (Test-Path -Path $remoteTempPath)) {
@@ -350,7 +351,7 @@ function Repair-System {
 
 
 
-    exit $zipErrorCode
+    return $zipErrorCode
 }
 
 
