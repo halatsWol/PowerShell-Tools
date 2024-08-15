@@ -65,7 +65,7 @@ function Repair-RemoteSystem {
 
     Author: Wolfram Halatschek
     E-Mail: halatschek.wolfram@gmail.com
-    Date: 2024-08-14
+    Date: 2024-08-15
     #>
 
     [CmdletBinding()]
@@ -374,6 +374,72 @@ function Repair-RemoteSystem {
 }
 
 function Repair-LocalSystem {
+
+ <#
+    .SYNOPSIS
+    Repairs the system by running SFC and DISM commands on the local computer.
+
+    .DESCRIPTION
+    This function performs a series of system repair commands on the local computer. It first checks the availability of the machine by pinging it.
+    Then, depending on the options specified, it executes `sfc /scannow` and  `DISM` commands to scan and repair the Windows image.
+
+    The results are logged both on the machine and optionally shown on the local console. Logs and relevant system files are then transferred to the %HomeDrive%\Repair-System Directory.
+
+
+    .PARAMETER sfcOnly
+    When specified, only the `sfc /scannow` command is executed. The `DISM` commands are skipped.
+
+    .PARAMETER Quiet
+    Suppresses console output on the local machine. The output is always logged to files on the local machine instead.
+
+    .PARAMETER IncludeComponentCleanup
+    When specified, performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, performs `DISM /Online /Cleanup-Image /StartComponentCleanup`.
+
+    .PARAMETER WindowsUpdateCleanup
+    When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
+
+    .EXAMPLE
+    Repair-LocalSystem
+
+    Runs the `sfc /scannow` and `DISM` commands on the  computer. Outputs are shown on the console and logged to files.
+
+    .EXAMPLE
+    Repair-LocalSystem -sfcOnly
+
+    Runs only the `sfc /scannow` command on the  computer. Outputs are shown on the console and logged to files.
+
+    .EXAMPLE
+    Repair-LocalSystem -Quiet
+
+    Runs the `sfc /scannow` and `DISM` commands on the  computer. Outputs are logged to files but not shown on the console.
+
+    .EXAMPLE
+    Repair-LocalSystem -IncludeComponentCleanup
+
+    Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-sfcOnly'
+
+    .EXAMPLE
+    Repair-LocalSystem -WindowsUpdateCleanup
+    stops the Windows Update and related Services, renames the SoftwareDistribution and catroot2 folders, and restarts the services.
+
+    .NOTES
+    This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
+    Using this script may require administrative privileges on the local computer.
+
+    WARNING:
+    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT PERMISSION OR AUTHORIZATION.
+    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT UNDERSTANDING THE CONSEQUENCES.
+    NEVER RUN SCRIPTS FROM UNTRUSTED SOURCES WITHOUT REVIEWING AND UNDERSTANDING THE CODE.
+    DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING. IT MAY CAUSE DATA LOSS OR SYSTEM INSTABILITY.
+
+
+
+
+    Author: Wolfram Halatschek
+    E-Mail: halatschek.wolfram@gmail.com
+    Date: 2024-08-1
+    #>
+
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $false, Position=0)]
@@ -398,13 +464,15 @@ function Repair-LocalSystem {
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
     $TempPath = "$env:HOMEDRIVE\_temp"
-    $logPath = "C:\System-Repair\"
+    $logPath = "C:\Repair-System\"
     $sfcLog = "$TempPath\sfc-scannow_$currentDateTime.log"
     $dismScanLog = "$TempPath\dism-scan_$currentDateTime.log"
     $dismRestoreLog = "$TempPath\dism-restore_$currentDateTime.log"
     $analyzeComponentLog = "$TempPath\analyze-component_$currentDateTime.log"
     $componentCleanupLog = "$TempPath\component-cleanup_$currentDateTime.log"
     $updateCleanupLog = "$TempPath\update-cleanup_$currentDateTime.log"
+    $zipFile = "$TempPath\cbsDism-logs_$currentDateTime.zip"
+    $zipErrorLog = "$TempPath\zip-errors_$currentDateTime.log"
     $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
 
     # Execute sfc /scannow
@@ -558,6 +626,54 @@ function Repair-LocalSystem {
 
         return
     }
+
+
+    $zipErrorCode= {
+        try {
+            $cbsLog = "$env:windir\Logs\CBS\CBS.log"
+            $dismLog = "$env:windir\Logs\dism\dism.log"
+
+            $filesToZip = @()
+
+            # Copy CBS.log to the temporary directory if it exists
+            if (Test-Path $cbsLog) {
+                Copy-Item -Path $cbsLog -Destination $TempPath
+                $filesToZip += (Join-Path -Path $TempPath -ChildPath "CBS.log")
+            }
+
+            # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
+            if (-not $using:sfcOnly) {
+                if (Test-Path $dismLog) {
+                    Copy-Item -Path $dismLog -Destination $TempPath
+                    $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
+                }
+            }
+
+            # Delete existing zip file if it exists
+            if (Test-Path $zipFile) {
+                Remove-Item -Path $zipFile -Force
+            }
+
+            # Create a new zip file
+            if ($filesToZip.Count -gt 0) {
+                Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
+            }
+
+            # Remove the copied logs from the temporary directory
+            foreach ($file in $filesToZip) {
+                if (Test-Path $file) {
+                    Remove-Item -Path $file -Force
+                }
+            }
+        } catch {
+            $errorMessage = "An error occurred while creating the zip file: $_"
+            Write-Output $message
+            Add-Content -Path $zipErrorLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
+            return 1
+        }
+        return 0
+    }
+    $ExitCode[7]=$zipErrorCode
 
 
     # Copy log files to local machine

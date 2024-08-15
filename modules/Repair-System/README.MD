@@ -6,7 +6,7 @@ The `Repair-System` PowerShell module provides a function to repair Windows syst
 
 ## Functionality
 
-### `Repair-System`
+### `Repair-RemoteSystem`
 
 This function performs the following tasks on a specified remote computer:
 
@@ -17,7 +17,7 @@ This function performs the following tasks on a specified remote computer:
 - Logs the results on the remote machine and optionally shows them on the local console.
 - Transfers the logs and relevant system files to the local machine.
 
-### Parameters
+#### Parameters
 
 - **`-ComputerName`** (Mandatory): The hostname or IP address of the remote computer.
 - **`-sfcOnly`** (Optional): When specified, only the `sfc /scannow` command is executed, skipping the `DISM` commands.
@@ -25,31 +25,38 @@ This function performs the following tasks on a specified remote computer:
 - **`-IncludeComponentCleanup`** (Optional): Performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, `DISM /Online /Cleanup-Image /StartComponentCleanup`.
 - **`-WindowsUpdateCleanup`** (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update cleanup.
 
-### Examples
+#### Examples
 
 ```powershell
 # Run SFC and DISM on the remote computer
-Repair-System -ComputerName <remote-device>
+Repair-RemoteSystem -ComputerName <remote-device>
 
 # Run only SFC on the remote computer
-Repair-System -ComputerName <remote-device> -sfcOnly
+Repair-RemoteSystem -ComputerName <remote-device> -sfcOnly
 
 # Run SFC and DISM on the remote computer with no console output
-Repair-System -ComputerName <remote-device> -Quiet
+Repair-RemoteSystem -ComputerName <remote-device> -Quiet
 
 # Analyze and clean up the component store
-Repair-System -ComputerName <remote-device> -IncludeComponentCleanup
+Repair-RemoteSystem -ComputerName <remote-device> -IncludeComponentCleanup
 
 # Perform Windows Update cleanup
-Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
+Repair-RemoteSystem -ComputerName <remote-device> -WindowsUpdateCleanup
 ```
 
 
-## Requirements
+#### Requirements
 
 - **WinRM**: Must be enabled and configured on the remote computer.
 - **Administrative Privileges**: Running this script may require administrative privileges on the remote computer.
     For this, Powershell must be started as the user, which has administrative privileges on the remote computer.
+ 
+ 
+### `Repair-LocalSystem`
+
+This function performs the same tasks as [Repair-RemoteSystem](#Repair-RemoteSystem) but only on the local machine. Therefore the `-ComputerName` parameter is not available
+
+Additionally `WinRM` is not required for Repair-LocalSystem
 
 ## Notes
 
@@ -61,7 +68,7 @@ Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 
 - **Author**: Wolfram Halatschek
 - **Contact**: halatschek.wolfram@gmail.com
-- **Date**: August 14, 2024
+- **Date**: August 15, 2024
 
 ## Warnings
 
