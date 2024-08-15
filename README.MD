@@ -29,9 +29,9 @@ Eventhough it currently looks a bit empty, more will come...
 
 ## Modules and Scripts
 
-### [Repair-System](https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/Repair-System)
+### [Repair-System](./modules/Repair-System)
 
-The [`Repair-System`](https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
+The [`Repair-System`](./modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
 
 
 ### Additional Tools
