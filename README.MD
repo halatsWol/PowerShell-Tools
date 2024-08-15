@@ -18,7 +18,7 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 
 The **PowerShell-Tools** repository is a comprehensive toolkit for IT professionals. Whether you're managing systems, automating tasks, or performing routine maintenance, these PowerShell scripts and modules are designed to help streamline your workflow.
 
-Eventhough it currently looks a bit empty, more will come... 
+Eventhough it currently looks a bit empty, more will come...
 
 ## Features
 
@@ -29,15 +29,10 @@ Eventhough it currently looks a bit empty, more will come...
 
 ## Modules and Scripts
 
-### Repair-System
+### [Repair-System](https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/Repair-System)
 
-The `Repair-System` module is a key tool within this repository. It allows you to perform system repair operations on remote computers using a combination of SFC and DISM commands. This module can check the availability of remote machines, execute repair commands, and handle logging and file transfers.
+The [`Repair-System`](https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
 
-**Key Features:**
-- Run `sfc /scannow` and DISM commands on remote computers.
-- Optionally run only the SFC command.
-- Quiet mode for logging without console output.
-- Automatic log file collection and transfer to the local machine.
 
 ### Additional Tools
 
@@ -48,26 +43,24 @@ More scripts and modules will be added to this repository over time. Stay tuned 
 - And more...
 
 ## Installation
+### Installation of Modules
 
 To install and use the scripts and modules from this repository:
 
-1. Clone the repository to your local machine:
+1. Download the repository to your local machine:
 
-    ```bash
-    git clone https://github.com/yourusername/PowerShell-Tools.git
-    ```
+2. unzip the directory and open the modules folder:
 
-2. Navigate to the repository directory:
+3. Copy the desired module-Folder into on of the PowerShell-Module-Directories:
 
-    ```powershell
-    cd PowerShell-Tools
-    ```
 
-3. Import the desired module into your PowerShell session:
+	* %userprofile%\Documents\WindowsPowerShell\Modules
+	* %ProgramFiles%\WindowsPowerShell\Modules
+	* %ProgramFiles(x86)%\WindowsPowerShell\Modules
+	* %WinDir%\system32\WindowsPowerShell\v1.0\Modules
 
-    ```powershell
-    Import-Module .\modules\Repair-System.psm1
-    ```
+
+4. Run restart any Powershell session to use the module. For further help please visit the readme of the module
 
 ## Usage
 
@@ -77,3 +70,4 @@ To run any script from the repository, navigate to the directory containing the 
 
 ```powershell
 .\script-name.ps1
+```
