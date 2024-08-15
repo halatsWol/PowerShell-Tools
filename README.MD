@@ -29,9 +29,9 @@ Eventhough it currently looks a bit empty, more will come...
 
 ## Modules and Scripts
 
-### [Repair-System](./modules/Repair-System)
+### [`Repair-System`](./modules/Repair-System)
 
-The [`Repair-System`](./modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
+The [Repair-System](./modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
 
 
 ### Additional Tools
@@ -51,7 +51,7 @@ To install and use the scripts and modules from this repository:
 
 2. unzip the directory and open the modules folder:
 
-3. Copy the desired module-Folder into on of the PowerShell-Module-Directories:
+3. Copy the desired module-Folder into one of the PowerShell-Module-Directories:
 
 
 	* %userprofile%\Documents\WindowsPowerShell\Modules
