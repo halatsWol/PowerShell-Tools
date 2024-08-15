@@ -64,7 +64,7 @@ To install and use the scripts and modules from this repository:
 	* %WinDir%\system32\WindowsPowerShell\v1.0\Modules
 
 
-4. Run restart any Powershell session to use the module. For further help please visit the readme of the module
+4. Restart any Powershell session to use the module. For further information and help please visit the readme of the module
 
 ## Usage
 
