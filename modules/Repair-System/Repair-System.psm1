@@ -1,6 +1,4 @@
-# Define the Repair-System module
-
-function Repair-System {
+function Repair-RemoteSystem {
     <#
     .SYNOPSIS
     Repairs the system by running SFC and DISM commands on a remote computer.
@@ -27,27 +25,27 @@ function Repair-System {
     When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
 
     .EXAMPLE
-    Repair-System -ComputerName <remote-device>
+    Repair-RemoteSystem -ComputerName <remote-device>
 
     Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
     .EXAMPLE
-    Repair-System <remote-device> -sfcOnly
+    Repair-RemoteSystem <remote-device> -sfcOnly
 
     Runs only the `sfc /scannow` command on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
     .EXAMPLE
-    Repair-System <remote-device> -Quiet
+    Repair-RemoteSystem <remote-device> -Quiet
 
     Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are logged to files but not shown on the console.
 
     .EXAMPLE
-    Repair-System <remote-device> -IncludeComponentCleanup
+    Repair-RemoteSystem <remote-device> -IncludeComponentCleanup
 
     Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-sfcOnly'
 
     .EXAMPLE
-    Repair-System <remote-device> -WindowsUpdateCleanup
+    Repair-RemoteSystem <remote-device> -WindowsUpdateCleanup
     stops the Windows Update and related Services, renames the SoftwareDistribution and catroot2 folders, and restarts the services.
 
     .NOTES
@@ -122,6 +120,7 @@ function Repair-System {
     $zipFile = "$remoteTempPath\cbsDism-logs_$ComputerName_$currentDateTime.zip"
     $zipErrorLog = "$remoteTempPath\zip-errors_$currentDateTime.log"
     $updateCleanupLog = "$remoteTempPath\update-cleanup_$currentDateTime.log"
+    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
 
     try{
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -144,20 +143,20 @@ function Repair-System {
     }
 
     # Execute sfc /scannow
-    Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+    $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
         Write-Verbose "executing SFC"
         if ($using:Quiet) {
             sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
-            $logContent = Get-Content $using:sfcLog -Raw
-            $logContent = $logContent -replace [char]0
-            Set-Content $using:sfcLog -Value $logContent
         } else {
             sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog
-            $logContent = Get-Content $using:sfcLog -Raw
-            $logContent = $logContent -replace [char]0
-            Set-Content $using:sfcLog -Value $logContent
         }
+        $sfcExitCode=$LASTEXITCODE
+        $logContent = Get-Content $using:sfcLog -Raw
+        $logContent = $logContent -replace [char]0
+        Set-Content $using:sfcLog -Value $logContent
+        return $sfcExitCode
     } -Verbose:$VerboseOption
+    $ExitCode[1]=$sfcExitCode
 
     if (-not $sfcOnly) {
         # Execute dism /online /Cleanup-Image /Scanhealth
@@ -171,27 +170,34 @@ function Repair-System {
             return $LASTEXITCODE
         } -Verbose:$VerboseOption
         $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
+        $ExitCode[2]=$dismScanResult
         $dismScanResultString = $dismScanResult.ToString()
+
+
 
         # Explicitly check the exit code to decide on RestoreHealth
         if ($dismScanResultString -eq 0) {
             # Component store is repairable, proceed with RestoreHealth
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                Write-Verbose "executing DISM/RestoreHealth"
-                Clear-Content -Path $using:dismRestoreLog
-                if ($using:Quiet) {
-                    dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
-                } else {
-                    dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $using:dismRestoreLog
+            $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                $ScanResult = Get-Content -Path $using:dismScanLog | Select-Object -Reverse | ForEach-Object {
+                    if ($_ -match 'The component store is repairable.') {
+                        return 1
+                    } elseif ($_ -match 'No component store corruption detected.') {
+                        return 0
+                    }
+                }
+                if ($ScanResult -eq 1) {
+                    Write-Verbose "executing DISM/RestoreHealth"
+                    Clear-Content -Path $using:dismRestoreLog
+                    if ($using:Quiet) {
+                        dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
+                    } else {
+                        dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $using:dismRestoreLog
+                    }
+                    return $LASTEXITCODE
                 }
             } -Verbose:$VerboseOption
-        } elseif ($dismScanResultString -eq 2) {
-            $message = "The component store is healthy on $ComputerName. No repairs needed."
-            Write-Verbose $message
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                param ($logPath, $logMessage)
-                Add-Content -Path $logPath -Value $logMessage
-            }  -Verbose:$VerboseOption -ArgumentList $dismRestoreLog, $message
+            $ExitCode[3]=$dismRestoreExit
         } else {
             $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
             Write-Verbose $message
@@ -203,7 +209,7 @@ function Repair-System {
 
         if ($IncludeComponentCleanup) {
             # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
-            $analyzeResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            $analyzeExit = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 if ($using:Quiet) {
                     dism /Online /Cleanup-Image /AnalyzeComponentStore > $using:analyzeComponentLog 2>&1
                 } else {
@@ -211,12 +217,24 @@ function Repair-System {
                 }
                 return $LASTEXITCODE
             } -Verbose:$VerboseOption
+            $ExitCode[4]=$analyzeExit
+
 
             # Check the output and perform cleanup if recommended
-            if ($analyzeResult -eq 0) {
-                Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                    $cleanupRecommended = Select-String -Path $using:componentCleanupLog -Pattern "Component store cleanup recommended"
-                    if ($cleanupRecommended) {
+            $message = ""
+            if ($analyzeExit -eq 0 ) {
+                $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+
+                    $analyzeResult = Get-Content -Path $using:analyzeComponentLog | Select-Object -Reverse | ForEach-Object {
+                            if ($_ -match 'Component Store Cleanup Recommended : Yes') {
+                                return 1
+                            } elseif ($_ -match 'Component Store Cleanup Recommended : No') {
+                                return 0
+                            }
+                        }
+
+
+                    if ($analyzeResult -eq 1) {
                         if ($using:Quiet) {
                             dism /Online /Cleanup-Image /StartComponentCleanup > $using:componentCleanupLog 2>&1
                         } else {
@@ -231,8 +249,9 @@ function Repair-System {
                         Add-Content -Path $using:componentCleanupLog -Value $message
                     }
                 } -Verbose:$VerboseOption
+                $ExitCode[5]=$componentCleanupExit
             } else {
-                $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
+                $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $using:ComputerName. Please review the logs."
                 Write-Output $message
                 Add-Content -Path $componentCleanupLog -Value $message
             }
@@ -241,7 +260,7 @@ function Repair-System {
         if ($WindowsUpdateCleanup) {
             $message = "Starting Windows Update Cleanup"
             Write-Verbose $message
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 try {
                     $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
                     $catroot2Path = "$Env:systemroot\system32\catroot2"
@@ -279,6 +298,7 @@ function Repair-System {
                     return 1
                 }
             } -Verbose:$VerboseOption
+            $ExitCode[6]=$updateCleanupExit
         }
     }
 
@@ -330,7 +350,7 @@ function Repair-System {
         }
         return 0
     } -Verbose:$VerboseOption
-
+    $ExitCode[7]=$zipErrorCode
 
     # Copy log files to local machine
     if (-not (Test-Path -Path $localTempPath)) {
@@ -347,8 +367,218 @@ function Repair-System {
 
 
 
-    return "System-Repair on $ComputerName successfully performed.`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    Write-Host "System-Repair on $ComputerName successfully performed.`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    $exitCode=$exitCode | Sort-Object {$_} -Descending
+    $exitCode = $exitCode -join ""
+    $global:LASTEXITCODE = $ExitCode
+}
+
+function Repair-LocalSystem {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $false, Position=0)]
+        [switch]$sfcOnly,
+
+        [Parameter(Mandatory = $false, Position=1)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory = $false, Position=2)]
+        [switch]$IncludeComponentCleanup,
+
+        [Parameter(Mandatory = $false, Position=3)]
+        [switch]$WindowsUpdateCleanup
+    )
+
+
+    # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
+    if ($sfcOnly -and $IncludeComponentCleanup) {
+        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
+        return 1
+    }
+    # Set up paths and file names for logging
+    $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
+    $TempPath = "$env:HOMEDRIVE\_temp"
+    $logPath = "C:\System-Repair\"
+    $sfcLog = "$TempPath\sfc-scannow_$currentDateTime.log"
+    $dismScanLog = "$TempPath\dism-scan_$currentDateTime.log"
+    $dismRestoreLog = "$TempPath\dism-restore_$currentDateTime.log"
+    $analyzeComponentLog = "$TempPath\analyze-component_$currentDateTime.log"
+    $componentCleanupLog = "$TempPath\component-cleanup_$currentDateTime.log"
+    $updateCleanupLog = "$TempPath\update-cleanup_$currentDateTime.log"
+    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
+
+    # Execute sfc /scannow
+
+    Write-Verbose "executing SFC"
+    if ($Quiet) {
+        sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
+    } else {
+        sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog
+    }
+    $ExitCode[1]=$LASTEXITCODE
+    $logContent = Get-Content $sfcLog -Raw
+    $logContent = $logContent -replace [char]0
+    Set-Content $sfcLog -Value $logContent
+
+    if (-not $sfcOnly) {
+        # Execute dism /online /Cleanup-Image /Scanhealth
+        $dismScanResult = {
+            Write-Verbose "executing DISM/ScanHealth"
+            if ($Quiet) {
+                dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
+            } else {
+                dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
+            }
+            $ExitCode[2]=$LASTEXITCODE
+            return $LASTEXITCODE
+        }
+
+        # Explicitly check the exit code to decide on RestoreHealth
+        $message = ""
+        if ($dismScanResult -eq 0) {
+            $ScanResult = Get-Content -Path $using:dismScanLog | Select-Object -Reverse | ForEach-Object {
+                if ($_ -match 'The component store is repairable.') {
+                    return 1
+                } elseif ($_ -match 'No component store corruption detected.') {
+                    return 0
+                }
+            }
+            if ($ScanResult -eq 1) {
+                Write-Verbose "executing DISM/RestoreHealth"
+                Clear-Content -Path $using:dismRestoreLog
+                if ($using:Quiet) {
+                    dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
+                } else {
+                    dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $dismRestoreLog
+                }
+                $ExitCode[3]=$LASTEXITCODE
+            }
+        } else {
+            $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResult). Please review the logs."
+
+        }
+        if($message -ne ""){
+            Write-Verbose $message
+            Add-Content -Path $dismRestoreLog -Value $message
+        }
+
+        if ($IncludeComponentCleanup) {
+            # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
+            $analyzeExit =  {
+                if ($using:Quiet) {
+                    dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
+                } else {
+                    dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
+                }
+                $ExitCode[4]=$LASTEXITCODE
+                return $LASTEXITCODE
+            }
+
+            $analyzeResult ={
+                $match = Get-Content -Path $analyzeComponentLog | Select-Object -Reverse | ForEach-Object {
+                    if ($_ -match 'Component Store Cleanup Recommended : Yes') {
+                        return 1
+                    } elseif ($_ -match 'Component Store Cleanup Recommended : No') {
+                        return 0
+                    }
+                }
+                return $match
+            }
+
+            # Check the output and perform cleanup if recommended
+            $message = ""
+            if ($analyzeExit -eq 0 -and $analyzeResult -eq 1) {
+
+                $cleanupRecommended = Select-String -Path $componentCleanupLog -Pattern "Component store cleanup recommended"
+                if ($cleanupRecommended) {
+                    if ($Quiet) {
+                        dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
+                    } else {
+                        dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
+                    }
+                    $ExitCode[5]=$LASTEXITCODE
+                    $message = "Component store cleanup was performed."
+                } elseif ($analyzeExit -eq 0 -and $analyzeResult -eq 0) {
+                    $message = "No Component store cleanup recommended."
+                } else { $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult). Please review the logs."}
+
+
+            } else { $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."}
+            if($message -ne ""){
+                Write-Verbose $message
+                Add-Content -Path $componentCleanupLog -Value $message
+            }
+        }
+
+        if ($WindowsUpdateCleanup) {
+            $message = "Starting Windows Update Cleanup"
+            Write-Verbose $message
+            $successMessage=""
+            try {
+                $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
+                $catroot2Path = "$Env:systemroot\system32\catroot2"
+                $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
+                $catroot2BackupPath = "$catroot2Path.bak"
+                stop-service wuauserv
+                stop-service bits
+                stop-service appidsvc
+                stop-service cryptsvc
+                if (Test-Path -Path $softwareDistributionBackupPath) {
+                    Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
+                    Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force -Verbose
+                } else {
+                    Write-Verbose "Backup directory does not exist. No need to delete."
+                }
+                Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+                if (Test-Path -Path $catroot2BackupPath) {
+                    Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
+                    Remove-Item -Path $catroot2BackupPath -Recurse -Force -Verbose
+                } else {
+                    Write-Verbose "Backup directory does not exist. No need to delete."
+                }
+                Rename-Item -Path $catroot2Path -NewName catroot2.bak
+                start-service bits
+                start-service wuauserv
+                start-service appidsvc
+                start-service cryptsvc
+                $ExitCode[6]=$LASTEXITCODE
+                $successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
+                Write-Verbose $errorMessage
+                Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n$successMessage"
+
+            } catch {
+                $successMessage = "An error occurred while performing Windows Update Cleanup: $_"
+                Write-Output $errorMessage
+                Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
+                $ExitCode[6]=1
+
+            }
+
+        }
+
+        return
+    }
+
+
+    # Copy log files to local machine
+    if (-not (Test-Path -Path $logPath)) {
+        New-Item -Path $logPath -ItemType Directory -Force
+    }
+    Copy-Item -Path "$TempPath\*" -Destination $logPath -Recurse -Force
+
+    # Clear remote _temp folder if copy was successful
+    if ($?) {
+        Remove-Item -Path "$TempPath\*" -Recurse -Force
+    }
+
+
+
+    Write-Host "Local System-Repair successfully performed.`r`nLog-Files can be found on this Machine under '$logPath'"
+
+    $exitCode=$exitCode | Sort-Object {$_} -Descending
+    $exitCode = $exitCode -join ""
+    $global:LASTEXITCODE = $ExitCode
 }
 
 
-Export-ModuleMember -Function Repair-System
+Export-ModuleMember -Function Repair-RemoteSystem, Repair-LocalSystem
