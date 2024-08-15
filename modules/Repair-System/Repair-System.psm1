@@ -148,7 +148,7 @@ function Repair-RemoteSystem {
         if ($using:Quiet) {
             sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
         } else {
-            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog
+            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog -OutBuffer 1
         }
         $sfcExitCode=$LASTEXITCODE
         $logContent = Get-Content $using:sfcLog -Raw
@@ -179,11 +179,16 @@ function Repair-RemoteSystem {
         if ($dismScanResultString -eq 0) {
             # Component store is repairable, proceed with RestoreHealth
             $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                $ScanResult = Get-Content -Path $using:dismScanLog | Select-Object -Reverse | ForEach-Object {
-                    if ($_ -match 'The component store is repairable.') {
-                        return 1
-                    } elseif ($_ -match 'No component store corruption detected.') {
-                        return 0
+
+                $ScanResult = 1
+                $lines=Get-Content -Path $using:dismScanLog
+                $ScanResultData=$lines[-1..-($lines.Count)]
+                foreach ($line in $ScanResultData) {
+                    if ($line -match 'The component store is repairable.') {
+                        break
+                    } elseif ($line -match 'No component store corruption detected.') {
+                        $ScanResult=0
+                        break
                     }
                 }
                 if ($ScanResult -eq 1) {
@@ -225,13 +230,18 @@ function Repair-RemoteSystem {
             if ($analyzeExit -eq 0 ) {
                 $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
 
-                    $analyzeResult = Get-Content -Path $using:analyzeComponentLog | Select-Object -Reverse | ForEach-Object {
-                            if ($_ -match 'Component Store Cleanup Recommended : Yes') {
-                                return 1
-                            } elseif ($_ -match 'Component Store Cleanup Recommended : No') {
-                                return 0
-                            }
+                    $lines = Get-Content -Path $using:analyzeComponentLog
+                    $analyzeComponentLogData = $lines[-1..-($lines.Count)]
+                    $analyzeResult = 0
+                    foreach ($line in $analyzeComponentLogData) {
+                        if ($line -match 'Component Store Cleanup Recommended : Yes') {
+                            $analyzeResult= 1
+                            break
+                        } elseif ($line -match 'Component Store Cleanup Recommended : No') {
+                            $analyzeResult= 0
+                            break
                         }
+                    }
 
 
                     if ($analyzeResult -eq 1) {
@@ -365,9 +375,9 @@ function Repair-RemoteSystem {
         } -Verbose:$VerboseOption
     }
 
+    Start-Sleep -Seconds 2
 
-
-    Write-Host "System-Repair on $ComputerName successfully performed.`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    Write-Host "`r`nSystem-Repair on $ComputerName successfully performed.`r`nLog-Files can be found on this Machine under '$localTempPath'"
     $exitCode=$exitCode | Sort-Object {$_} -Descending
     $exitCode = $exitCode -join ""
     $global:LASTEXITCODE = $ExitCode
@@ -481,7 +491,7 @@ function Repair-LocalSystem {
     if ($Quiet) {
         sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
     } else {
-        sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog
+        sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
     }
     $ExitCode[1]=$LASTEXITCODE
     $logContent = Get-Content $sfcLog -Raw
@@ -503,11 +513,15 @@ function Repair-LocalSystem {
         # Explicitly check the exit code to decide on RestoreHealth
         $message = ""
         if ($ExitCode[2] -eq 0) {
-            $ScanResult = Get-Content -Path $dismScanLog | Select-Object -Reverse | ForEach-Object {
-                if ($_ -match 'The component store is repairable.') {
-                    return 1
-                } elseif ($_ -match 'No component store corruption detected.') {
-                    return 0
+            $ScanResult = 1
+            $lines = Get-Content -Path $dismScanLog
+            $ScanResultData=$lines[-1..-($lines.Count)]
+            foreach ($line in $ScanResultData) {
+                if ($line -match 'The component store is repairable.') {
+                    break
+                } elseif ($line -match 'No component store corruption detected.') {
+                    $ScanResult=0
+                    break
                 }
             }
             if ($ScanResult -eq 1) {
@@ -538,37 +552,37 @@ function Repair-LocalSystem {
             }
             $ExitCode[4]=$LASTEXITCODE
 
-
-            $analyzeResult ={
-                $match = Get-Content -Path $analyzeComponentLog | Select-Object -Reverse | ForEach-Object {
-                    if ($_ -match 'Component Store Cleanup Recommended : Yes') {
-                        return 1
-                    } elseif ($_ -match 'Component Store Cleanup Recommended : No') {
-                        return 0
-                    }
+            $lines = Get-Content -Path $analyzeComponentLog
+            $analyzeComponentLogData = $lines[-1..-($lines.Count)]
+            $analyzeResult = 0
+            foreach ($line in $analyzeComponentLogData) {
+                if ($line -match 'Component Store Cleanup Recommended : Yes') {
+                    $analyzeResult= 1
+                    break
+                } elseif ($line -match 'Component Store Cleanup Recommended : No') {
+                    $analyzeResult= 0
+                    break
                 }
-                return $match
             }
+
 
             # Check the output and perform cleanup if recommended
             $message = ""
-            if ($ExitCode[4]=$LASTEXITCODE -eq 0 -and $analyzeResult -eq 1) {
+            if ($ExitCode[4] -eq 0 -and $analyzeResult -eq 1) {
 
-                $cleanupRecommended = Select-String -Path $componentCleanupLog -Pattern "Component store cleanup recommended"
-                if ($cleanupRecommended) {
-                    if ($Quiet) {
-                        dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
-                    } else {
-                        dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
-                    }
-                    $ExitCode[5]=$LASTEXITCODE
-                    $message = "Component store cleanup was performed."
-                } elseif ($analyzeExit -eq 0 -and $analyzeResult -eq 0) {
-                    $message = "No Component store cleanup recommended."
-                } else { $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult). Please review the logs."}
+                if ($Quiet) {
+                    dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
+                } else {
+                    dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
+                }
+                $ExitCode[5]=$LASTEXITCODE
+                $message = "Component store cleanup was performed."
 
 
-            } else { $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."}
+
+            } elseif ($analyzeExit -eq 0 -and $analyzeResult -eq 0) {
+                $message = "No Component store cleanup recommended."
+            }else { $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."}
             if($message -ne ""){
                 Write-Verbose $message
                 Add-Content -Path $componentCleanupLog -Value $message
@@ -682,9 +696,9 @@ function Repair-LocalSystem {
         Remove-Item -Path "$TempPath\*" -Recurse -Force
     }
 
+    Start-Sleep -Seconds 2
 
-
-    Write-Host "Local System-Repair successfully performed.`r`nLog-Files can be found on this Machine under '$logPath'"
+    Write-Host "`r`nLocal System-Repair successfully performed.`r`nLog-Files can be found on this Machine under '$logPath'"
 
     $exitCode=$exitCode | Sort-Object {$_} -Descending
     $exitCode = $exitCode -join ""
