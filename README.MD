@@ -26,6 +26,10 @@ Eventhough it currently looks a bit empty, more will come...
 - **Automation:** Automate repetitive tasks to save time and reduce the chance of human error.
 - **Modularity:** Each script or module is designed to be as self-contained as possible, allowing for easy use and customization.
 - **Documentation:** Each script and module comes with detailed documentation, including usage examples.
+In-Depth documentation and usage help can be retrieved from the README file in each module-directory and from within PowerShell using the get-help CmdLet:
+	```PowerShell
+	Get-Help <Module-Name>
+	```
 
 ## Modules and Scripts
 
