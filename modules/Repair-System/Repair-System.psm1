@@ -503,7 +503,7 @@ function Repair-LocalSystem {
         # Explicitly check the exit code to decide on RestoreHealth
         $message = ""
         if ($ExitCode[2] -eq 0) {
-            $ScanResult = Get-Content -Path $using:dismScanLog | Select-Object -Reverse | ForEach-Object {
+            $ScanResult = Get-Content -Path $dismScanLog | Select-Object -Reverse | ForEach-Object {
                 if ($_ -match 'The component store is repairable.') {
                     return 1
                 } elseif ($_ -match 'No component store corruption detected.') {
@@ -512,8 +512,8 @@ function Repair-LocalSystem {
             }
             if ($ScanResult -eq 1) {
                 Write-Verbose "executing DISM/RestoreHealth"
-                Clear-Content -Path $using:dismRestoreLog
-                if ($using:Quiet) {
+                Clear-Content -Path $dismRestoreLog
+                if ($Quiet) {
                     dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
                 } else {
                     dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $dismRestoreLog
@@ -531,7 +531,7 @@ function Repair-LocalSystem {
 
         if ($IncludeComponentCleanup) {
             # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
-            if ($using:Quiet) {
+            if ($Quiet) {
                 dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
             } else {
                 dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
@@ -639,7 +639,7 @@ function Repair-LocalSystem {
         }
 
         # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
-        if (-not $using:sfcOnly) {
+        if (-not $sfcOnly) {
             if (Test-Path $dismLog) {
                 Copy-Item -Path $dismLog -Destination $TempPath
                 $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
