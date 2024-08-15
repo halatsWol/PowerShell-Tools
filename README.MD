@@ -8,7 +8,7 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 - [Features](#features)
 - [Modules and Scripts](#modules-and-scripts)
   - [Repair-System](#repair-system)
-  - [Additional Tools](#additional-tools)
+  - [Upcoming Tools](#upcoming-tools)
 - [Installation](#installation)
 - [Usage](#usage)
   - [Running a Script](#running-a-script)
@@ -38,7 +38,7 @@ In-Depth documentation and usage help can be retrieved from the README file in e
 The [Repair-System](./modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
 
 
-### Additional Tools
+### Upcoming Tools
 
 More scripts and modules will be added to this repository over time. Stay tuned for tools that will assist with:
 
@@ -64,7 +64,22 @@ To install and use the scripts and modules from this repository:
 	* %WinDir%\system32\WindowsPowerShell\v1.0\Modules
 
 
-4. Restart any Powershell session to use the module. For further information and help please visit the readme of the module
+4. Restart any Powershell session to use the functions of the module. For further information and help please visit the readme of the module
+
+### Temporary Import of Modules
+
+Alternatively, modules can also be used temporarily.
+
+1. Follow Step 1. & 2. in [Installation of Modules](#installation-of-modules) enter directly in the specific Module Directory
+2. copy the Path from the Explorer Address-Bar
+3. Open Windows Powershell as Administrator and enter:
+	```PowerShell
+	cd <copied-Path>
+	```
+4. import module so it can be used
+	```PowerShell
+	Import-Module .\<Module-Name>
+	```
 
 ## Usage
 

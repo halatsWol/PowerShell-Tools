@@ -490,20 +490,19 @@ function Repair-LocalSystem {
 
     if (-not $sfcOnly) {
         # Execute dism /online /Cleanup-Image /Scanhealth
-        $dismScanResult = {
-            Write-Verbose "executing DISM/ScanHealth"
-            if ($Quiet) {
-                dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
-            } else {
-                dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
-            }
-            $ExitCode[2]=$LASTEXITCODE
-            return $LASTEXITCODE
+
+        Write-Verbose "executing DISM/ScanHealth"
+        if ($Quiet) {
+            dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
+        } else {
+            dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
         }
+        $ExitCode[2]=$LASTEXITCODE
+
 
         # Explicitly check the exit code to decide on RestoreHealth
         $message = ""
-        if ($dismScanResult -eq 0) {
+        if ($ExitCode[2] -eq 0) {
             $ScanResult = Get-Content -Path $using:dismScanLog | Select-Object -Reverse | ForEach-Object {
                 if ($_ -match 'The component store is repairable.') {
                     return 1
@@ -532,15 +531,13 @@ function Repair-LocalSystem {
 
         if ($IncludeComponentCleanup) {
             # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
-            $analyzeExit =  {
-                if ($using:Quiet) {
-                    dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
-                } else {
-                    dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
-                }
-                $ExitCode[4]=$LASTEXITCODE
-                return $LASTEXITCODE
+            if ($using:Quiet) {
+                dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
+            } else {
+                dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
             }
+            $ExitCode[4]=$LASTEXITCODE
+
 
             $analyzeResult ={
                 $match = Get-Content -Path $analyzeComponentLog | Select-Object -Reverse | ForEach-Object {
@@ -555,7 +552,7 @@ function Repair-LocalSystem {
 
             # Check the output and perform cleanup if recommended
             $message = ""
-            if ($analyzeExit -eq 0 -and $analyzeResult -eq 1) {
+            if ($ExitCode[4]=$LASTEXITCODE -eq 0 -and $analyzeResult -eq 1) {
 
                 $cleanupRecommended = Select-String -Path $componentCleanupLog -Pattern "Component store cleanup recommended"
                 if ($cleanupRecommended) {
@@ -624,56 +621,54 @@ function Repair-LocalSystem {
 
         }
 
-        return
+
     }
 
 
-    $zipErrorCode= {
-        try {
-            $cbsLog = "$env:windir\Logs\CBS\CBS.log"
-            $dismLog = "$env:windir\Logs\dism\dism.log"
 
-            $filesToZip = @()
+    try {
+        $cbsLog = "$env:windir\Logs\CBS\CBS.log"
+        $dismLog = "$env:windir\Logs\dism\dism.log"
 
-            # Copy CBS.log to the temporary directory if it exists
-            if (Test-Path $cbsLog) {
-                Copy-Item -Path $cbsLog -Destination $TempPath
-                $filesToZip += (Join-Path -Path $TempPath -ChildPath "CBS.log")
-            }
+        $filesToZip = @()
 
-            # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
-            if (-not $using:sfcOnly) {
-                if (Test-Path $dismLog) {
-                    Copy-Item -Path $dismLog -Destination $TempPath
-                    $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
-                }
-            }
-
-            # Delete existing zip file if it exists
-            if (Test-Path $zipFile) {
-                Remove-Item -Path $zipFile -Force
-            }
-
-            # Create a new zip file
-            if ($filesToZip.Count -gt 0) {
-                Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
-            }
-
-            # Remove the copied logs from the temporary directory
-            foreach ($file in $filesToZip) {
-                if (Test-Path $file) {
-                    Remove-Item -Path $file -Force
-                }
-            }
-        } catch {
-            $errorMessage = "An error occurred while creating the zip file: $_"
-            Write-Output $message
-            Add-Content -Path $zipErrorLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
-            return 1
+        # Copy CBS.log to the temporary directory if it exists
+        if (Test-Path $cbsLog) {
+            Copy-Item -Path $cbsLog -Destination $TempPath
+            $filesToZip += (Join-Path -Path $TempPath -ChildPath "CBS.log")
         }
-        return 0
+
+        # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
+        if (-not $using:sfcOnly) {
+            if (Test-Path $dismLog) {
+                Copy-Item -Path $dismLog -Destination $TempPath
+                $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
+            }
+        }
+
+        # Delete existing zip file if it exists
+        if (Test-Path $zipFile) {
+            Remove-Item -Path $zipFile -Force
+        }
+
+        # Create a new zip file
+        if ($filesToZip.Count -gt 0) {
+            Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
+        }
+
+        # Remove the copied logs from the temporary directory
+        foreach ($file in $filesToZip) {
+            if (Test-Path $file) {
+                Remove-Item -Path $file -Force
+            }
+        }
+    } catch {
+        $errorMessage = "An error occurred while creating the zip file: $_"
+        Write-Output $message
+        Add-Content -Path $zipErrorLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
+        $ExitCode[7]= 1
     }
-    $ExitCode[7]=$zipErrorCode
+
 
 
     # Copy log files to local machine
