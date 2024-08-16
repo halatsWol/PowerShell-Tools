@@ -61,6 +61,25 @@ function Repair-RemoteSystem {
     DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING. IT MAY CAUSE DATA LOSS OR SYSTEM INSTABILITY.
 
 
+    Exit-Codes:
+    Repair-System Module returns an exit code that can be used to determine the success or failure of the script.
+    0 if the script was executed successfully. Any other value indicates an error.
+    The exit code is a string of 8 digits, each representing the exit code of a specific step in the script.
+    The exit codes possitions are as follows:
+    Position 0: Startup (Synthax Error, Network Error, WinRM Error)
+    Position 1: SFC
+    Position 2: DISM Scan Health
+    Position 3: Dism Restore Healt
+    Position 4: Dism Analyse Component Store
+    Position 5: Dism Component Cleanup
+    Position 6: Windows Update Cleanup
+    Position 7: Zip CBS/DISM Logs
+
+    Except for Position 0, the exit code is the return value of the corresponding command.
+    If the command was not executed, the exit code is 0.
+    Furthermore only if startup fails, the Repair-System will quit and return the exit code.
+    All other errors will not interrupt the script.
+
 
 
     Author: Wolfram Halatschek
@@ -87,6 +106,7 @@ function Repair-RemoteSystem {
         [switch]$WindowsUpdateCleanup
 
     )
+    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
 
     # check if verbose param is set in command execution
     $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
@@ -95,15 +115,23 @@ function Repair-RemoteSystem {
     # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
     if ($sfcOnly -and $IncludeComponentCleanup) {
         Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
-        return 1
+        $ExitCode[0]=1
+        $exitCode=$exitCode | Sort-Object {$_} -Descending
+        $exitCode = $exitCode -join ""
+        $global:LASTEXITCODE = $ExitCode
+        break
     }
 
     # Ping the remote computer to check availability
-    $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet
+    $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
 
     if (-not $pingResult) {
         Write-Host "Unable to reach $ComputerName. Please check the network connection."
-        return 2
+        $ExitCode[0]=2
+        $exitCode=$exitCode | Sort-Object {$_} -Descending
+        $exitCode = $exitCode -join ""
+        $global:LASTEXITCODE = $ExitCode
+        break
     }
 
 
@@ -120,7 +148,6 @@ function Repair-RemoteSystem {
     $zipFile = "$remoteTempPath\cbsDism-logs_$ComputerName_$currentDateTime.zip"
     $zipErrorLog = "$remoteTempPath\zip-errors_$currentDateTime.log"
     $updateCleanupLog = "$remoteTempPath\update-cleanup_$currentDateTime.log"
-    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
 
     try{
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -133,7 +160,12 @@ function Repair-RemoteSystem {
             New-Item -Path $localTempPath -ItemType Directory -Force
         }
         Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
-        return 3
+        Write-Host "Unable to reach $ComputerName. Please check the network connection."
+        $ExitCode[0]=3
+        $exitCode=$exitCode | Sort-Object {$_} -Descending
+        $exitCode = $exitCode -join ""
+        $global:LASTEXITCODE = $ExitCode
+        break
     }
 
     if (-not (Test-Path -Path $remoteTempPath)) {
@@ -443,6 +475,24 @@ function Repair-LocalSystem {
     DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING. IT MAY CAUSE DATA LOSS OR SYSTEM INSTABILITY.
 
 
+    Exit-Codes:
+    Repair-System Module returns an exit code that can be used to determine the success or failure of the script.
+    0 if the script was executed successfully. Any other value indicates an error.
+    The exit code is a string of 8 digits, each representing the exit code of a specific step in the script.
+    The exit codes possitions are as follows:
+    Position 0: Startup (Synthax Error)
+    Position 1: SFC
+    Position 2: DISM Scan Health
+    Position 3: Dism Restore Healt
+    Position 4: Dism Analyse Component Store
+    Position 5: Dism Component Cleanup
+    Position 6: Windows Update Cleanup
+    Position 7: Zip CBS/DISM Logs
+
+    Except for Position 0, the exit code is the return value of the corresponding command.
+    If the command was not executed, the exit code is 0.
+    Furthermore only if startup fails, the Repair-System will quit and return the exit code.
+    All other errors will not interrupt the script.
 
 
     Author: Wolfram Halatschek
@@ -469,7 +519,11 @@ function Repair-LocalSystem {
     # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
     if ($sfcOnly -and $IncludeComponentCleanup) {
         Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
-        return 1
+        $ExitCode[0]=1
+        $exitCode=$exitCode | Sort-Object {$_} -Descending
+        $exitCode = $exitCode -join ""
+        $global:LASTEXITCODE = $ExitCode
+        break
     }
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
