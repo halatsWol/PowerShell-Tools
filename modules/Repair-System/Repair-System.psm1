@@ -260,7 +260,6 @@ function Repair-RemoteSystem {
             $message = ""
             if ($analyzeExit -eq 0 ) {
                 $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-
                     $lines = Get-Content -Path $using:analyzeComponentLog
                     $analyzeComponentLogData = $lines[-1..-($lines.Count)]
                     $analyzeResult = 0
