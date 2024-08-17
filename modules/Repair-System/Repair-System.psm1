@@ -145,7 +145,7 @@ function Repair-RemoteSystem {
     $dismRestoreLog = "$remoteTempPath\dism-restore_$currentDateTime.log"
     $analyzeComponentLog = "$remoteTempPath\analyze-component_$currentDateTime.log"
     $componentCleanupLog = "$remoteTempPath\component-cleanup_$currentDateTime.log"
-    $zipFile = "$remoteTempPath\cbsDism-logs_$ComputerName_$currentDateTime.zip"
+    $zipFile = "$remoteTempPath\cbsDism-logs_$currentDateTime.zip"
     $zipErrorLog = "$remoteTempPath\zip-errors_$currentDateTime.log"
     $updateCleanupLog = "$remoteTempPath\update-cleanup_$currentDateTime.log"
 
@@ -225,7 +225,6 @@ function Repair-RemoteSystem {
                 }
                 if ($ScanResult -eq 1) {
                     Write-Verbose "executing DISM/RestoreHealth"
-                    Clear-Content -Path $using:dismRestoreLog
                     if ($using:Quiet) {
                         dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
                     } else {
@@ -580,7 +579,6 @@ function Repair-LocalSystem {
             }
             if ($ScanResult -eq 1) {
                 Write-Verbose "executing DISM/RestoreHealth"
-                Clear-Content -Path $dismRestoreLog
                 if ($Quiet) {
                     dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
                 } else {
