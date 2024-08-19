@@ -291,7 +291,7 @@ function Repair-RemoteSystem {
                 } -Verbose:$VerboseOption
                 $ExitCode[5]=$componentCleanupExit
             } else {
-                $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $using:ComputerName. Please review the logs."
+                $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
                 Write-Output $message
                 Add-Content -Path $componentCleanupLog -Value $message
             }
