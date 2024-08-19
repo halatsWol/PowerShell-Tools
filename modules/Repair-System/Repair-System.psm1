@@ -329,7 +329,7 @@ function Repair-RemoteSystem {
                     start-service appidsvc
                     start-service cryptsvc
                     $successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
-                    Write-Verbose $errorMessage
+                    Write-Verbose $successMessage
                     Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n$successMessage"
                 } catch {
                     $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
