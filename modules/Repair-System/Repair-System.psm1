@@ -316,14 +316,18 @@ function Repair-RemoteSystem {
                     } else {
                         Write-Verbose "Backup directory does not exist. No need to delete."
                     }
-                    Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+                    if (Test-Path -Path $softwareDistributionPath) {
+                        Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+                    }
                     if (Test-Path -Path $catroot2BackupPath) {
                         Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
                         Remove-Item -Path $catroot2BackupPath -Recurse -Force -Verbose
                     } else {
                         Write-Verbose "Backup directory does not exist. No need to delete."
                     }
-                    Rename-Item -Path $catroot2Path -NewName catroot2.bak
+                    if (Test-Path -Path $catroot2Path) {
+                        Rename-Item -Path $catroot2Path -NewName catroot2.bak
+                    }
                     start-service bits
                     start-service wuauserv
                     start-service appidsvc
@@ -659,14 +663,18 @@ function Repair-LocalSystem {
                 } else {
                     Write-Verbose "Backup directory does not exist. No need to delete."
                 }
-                Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+                if (Test-Path -Path $softwareDistributionPath) {
+                    Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+                }
                 if (Test-Path -Path $catroot2BackupPath) {
                     Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
                     Remove-Item -Path $catroot2BackupPath -Recurse -Force -Verbose
                 } else {
                     Write-Verbose "Backup directory does not exist. No need to delete."
                 }
-                Rename-Item -Path $catroot2Path -NewName catroot2.bak
+                if (Test-Path -Path $catroot2Path) {
+                    Rename-Item -Path $catroot2Path -NewName catroot2.bak
+                }
                 start-service bits
                 start-service wuauserv
                 start-service appidsvc
