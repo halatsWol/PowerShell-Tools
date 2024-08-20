@@ -1,3 +1,56 @@
+function Invoke-WinUpdateCleanup {
+    [CmdletBinding()]
+    param (
+        [string]$updateCleanupLog,
+        [string]$currentDateTime
+    )
+
+    try {
+        Write-Host "Starting Windows Update Cleanup..."
+        $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
+        $catroot2Path = "$Env:systemroot\system32\catroot2"
+        $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
+        $catroot2BackupPath = "$catroot2Path.bak"
+        stop-service wuauserv
+        stop-service bits
+        stop-service appidsvc
+        stop-service cryptsvc
+        if (Test-Path -Path $softwareDistributionBackupPath) {
+            Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
+            Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
+        } else {
+            Write-Verbose "Backup directory does not exist. No need to delete."
+        }
+        if (Test-Path -Path $softwareDistributionPath) {
+            Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+        }
+        if (Test-Path -Path $catroot2BackupPath) {
+            Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
+            Remove-Item -Path $catroot2BackupPath -Recurse -Force
+        } else {
+            Write-Verbose "Backup directory does not exist. No need to delete."
+        }
+        if (Test-Path -Path $catroot2Path) {
+            Rename-Item -Path $catroot2Path -NewName catroot2.bak
+        }
+        start-service bits
+        start-service wuauserv
+        start-service appidsvc
+        start-service cryptsvc
+        $successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
+        Write-Verbose $successMessage
+        Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n$successMessage"
+    } catch {
+        $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
+        Write-Output $errorMessage
+        Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
+        return 1
+    }
+}
+
+
+
+
 function Repair-RemoteSystem {
     <#
     .SYNOPSIS
@@ -12,8 +65,11 @@ function Repair-RemoteSystem {
     .PARAMETER ComputerName
     The hostname or IP address of the remote computer where the system repair will be performed.
 
-    .PARAMETER sfcOnly
-    When specified, only the `sfc /scannow` command is executed. The `DISM` commands are skipped.
+    .PARAMETER noSfc
+    When specified, the `SCF /SCANNOW` command is skipped.
+
+    .PARAMETER noDism
+    When specified, the `DISM` commands are skipped.
 
     .PARAMETER Quiet
     Suppresses console output on the local machine. The output is logged to files on the remote machine instead.
@@ -30,7 +86,7 @@ function Repair-RemoteSystem {
     Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
     .EXAMPLE
-    Repair-RemoteSystem <remote-device> -sfcOnly
+    Repair-RemoteSystem <remote-device> -noDism
 
     Runs only the `sfc /scannow` command on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
@@ -42,7 +98,7 @@ function Repair-RemoteSystem {
     .EXAMPLE
     Repair-RemoteSystem <remote-device> -IncludeComponentCleanup
 
-    Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-sfcOnly'
+    Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-noDism'
 
     .EXAMPLE
     Repair-RemoteSystem <remote-device> -WindowsUpdateCleanup
@@ -94,15 +150,18 @@ function Repair-RemoteSystem {
         [string]$ComputerName,
 
         [Parameter(Mandatory = $false, Position=1)]
-        [switch]$sfcOnly,
+        [switch]$noSfc,
 
         [Parameter(Mandatory = $false, Position=2)]
-        [switch]$Quiet,
+        [switch]$noDism,
 
         [Parameter(Mandatory = $false, Position=3)]
-        [switch]$IncludeComponentCleanup,
+        [switch]$Quiet,
 
         [Parameter(Mandatory = $false, Position=4)]
+        [switch]$IncludeComponentCleanup,
+
+        [Parameter(Mandatory = $false, Position=5)]
         [switch]$WindowsUpdateCleanup
 
     )
@@ -111,10 +170,9 @@ function Repair-RemoteSystem {
     # check if verbose param is set in command execution
     $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
 
-
-    # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
-    if ($sfcOnly -and $IncludeComponentCleanup) {
-        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
+    # Validation to ensure -IncludeComponentCleanup is not used with -noDism
+    if ($noDism -and $IncludeComponentCleanup) {
+        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
         $ExitCode[0]=1
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
@@ -174,23 +232,25 @@ function Repair-RemoteSystem {
         } -Verbose:$VerboseOption
     }
 
-    # Execute sfc /scannow
-    $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-        Write-Verbose "executing SFC"
-        if ($using:Quiet) {
-            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
-        } else {
-            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog -OutBuffer 1
-        }
-        $sfcExitCode=$LASTEXITCODE
-        $logContent = Get-Content $using:sfcLog -Raw
-        $logContent = $logContent -replace [char]0
-        Set-Content $using:sfcLog -Value $logContent
-        return $sfcExitCode
-    } -Verbose:$VerboseOption
-    $ExitCode[1]=$sfcExitCode
+    if(-not $noSfc){
+        # Execute sfc /scannow
+            $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            Write-Verbose "executing SFC"
+            if ($using:Quiet) {
+                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
+            } else {
+                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog -OutBuffer 1
+            }
+            $sfcExitCode=$LASTEXITCODE
+            $logContent = Get-Content $using:sfcLog -Raw
+            $logContent = $logContent -replace [char]0
+            Set-Content $using:sfcLog -Value $logContent
+            return $sfcExitCode
+        } -Verbose:$VerboseOption
+        $ExitCode[1]=$sfcExitCode
+    }
 
-    if (-not $sfcOnly) {
+    if (-not $noDism) {
         # Execute dism /online /Cleanup-Image /Scanhealth
         $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             Write-Verbose "executing DISM/ScanHealth"
@@ -297,53 +357,14 @@ function Repair-RemoteSystem {
             }
         }
 
-        if ($WindowsUpdateCleanup) {
-            $message = "Starting Windows Update Cleanup"
-            Write-Verbose $message
-            $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                try {
-                    $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
-                    $catroot2Path = "$Env:systemroot\system32\catroot2"
-                    $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
-                    $catroot2BackupPath = "$catroot2Path.bak"
-                    stop-service wuauserv
-                    stop-service bits
-                    stop-service appidsvc
-                    stop-service cryptsvc
-                    if (Test-Path -Path $softwareDistributionBackupPath) {
-                        Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-                        Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force -Verbose
-                    } else {
-                        Write-Verbose "Backup directory does not exist. No need to delete."
-                    }
-                    if (Test-Path -Path $softwareDistributionPath) {
-                        Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
-                    }
-                    if (Test-Path -Path $catroot2BackupPath) {
-                        Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-                        Remove-Item -Path $catroot2BackupPath -Recurse -Force -Verbose
-                    } else {
-                        Write-Verbose "Backup directory does not exist. No need to delete."
-                    }
-                    if (Test-Path -Path $catroot2Path) {
-                        Rename-Item -Path $catroot2Path -NewName catroot2.bak
-                    }
-                    start-service bits
-                    start-service wuauserv
-                    start-service appidsvc
-                    start-service cryptsvc
-                    $successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
-                    Write-Verbose $successMessage
-                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n$successMessage"
-                } catch {
-                    $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
-                    Write-Output $errorMessage
-                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
-                    return 1
-                }
-            } -Verbose:$VerboseOption
-            $ExitCode[6]=$updateCleanupExit
-        }
+
+    }
+
+    if ($WindowsUpdateCleanup) {
+        $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            Invoke-WinUpdateCleanup -updateCleanupLog $using:updateCleanupLog -currentDateTime $using:currentDateTime
+        } -Verbose:$VerboseOption
+        $ExitCode[6]=$updateCleanupExit
     }
 
 
@@ -362,8 +383,8 @@ function Repair-RemoteSystem {
                 $filesToZip += (Join-Path -Path $tempPath -ChildPath "CBS.log")
             }
 
-            # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
-            if (-not $using:sfcOnly) {
+            # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
+            if (-not $using:noDism) {
                 if (Test-Path $dismLog) {
                     Copy-Item -Path $dismLog -Destination $tempPath
                     $filesToZip += (Join-Path -Path $tempPath -ChildPath "dism.log")
@@ -429,9 +450,11 @@ function Repair-LocalSystem {
 
     The results are logged both on the machine and optionally shown on the local console. Logs and relevant system files are then transferred to the %HomeDrive%\Repair-System Directory.
 
+    .PARAMETER noSfc
+    When specified, the `SCF /SCANNOW` command is skipped.
 
-    .PARAMETER sfcOnly
-    When specified, only the `sfc /scannow` command is executed. The `DISM` commands are skipped.
+    .PARAMETER noDism
+    When specified, the `DISM` commands are skipped.
 
     .PARAMETER Quiet
     Suppresses console output on the local machine. The output is always logged to files on the local machine instead.
@@ -448,7 +471,7 @@ function Repair-LocalSystem {
     Runs the `sfc /scannow` and `DISM` commands on the  computer. Outputs are shown on the console and logged to files.
 
     .EXAMPLE
-    Repair-LocalSystem -sfcOnly
+    Repair-LocalSystem -noDism
 
     Runs only the `sfc /scannow` command on the  computer. Outputs are shown on the console and logged to files.
 
@@ -460,7 +483,7 @@ function Repair-LocalSystem {
     .EXAMPLE
     Repair-LocalSystem -IncludeComponentCleanup
 
-    Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-sfcOnly'
+    Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-noDism'
 
     .EXAMPLE
     Repair-LocalSystem -WindowsUpdateCleanup
@@ -505,22 +528,24 @@ function Repair-LocalSystem {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $false, Position=0)]
-        [switch]$sfcOnly,
+        [switch]$noSfc,
 
         [Parameter(Mandatory = $false, Position=1)]
-        [switch]$Quiet,
+        [switch]$noDism,
 
         [Parameter(Mandatory = $false, Position=2)]
-        [switch]$IncludeComponentCleanup,
+        [switch]$Quiet,
 
         [Parameter(Mandatory = $false, Position=3)]
+        [switch]$IncludeComponentCleanup,
+
+        [Parameter(Mandatory = $false, Position=4)]
         [switch]$WindowsUpdateCleanup
     )
 
-
-    # Validation to ensure -IncludeComponentCleanup is not used with -sfcOnly
-    if ($sfcOnly -and $IncludeComponentCleanup) {
-        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -sfcOnly."
+    # Validation to ensure -IncludeComponentCleanup is not used with -noDism
+    if ($noDism -and $IncludeComponentCleanup) {
+        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
         $ExitCode[0]=1
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
@@ -541,20 +566,22 @@ function Repair-LocalSystem {
     $zipErrorLog = "$TempPath\zip-errors_$currentDateTime.log"
     $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
 
-    # Execute sfc /scannow
+    if(-not $noSfc){
+        # Execute sfc /scannow
 
-    Write-Verbose "executing SFC"
-    if ($Quiet) {
-        sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
-    } else {
-        sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
+        Write-Verbose "executing SFC"
+        if ($Quiet) {
+            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
+        } else {
+            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
+        }
+        $ExitCode[1]=$LASTEXITCODE
+        $logContent = Get-Content $sfcLog -Raw
+        $logContent = $logContent -replace [char]0
+        Set-Content $sfcLog -Value $logContent
     }
-    $ExitCode[1]=$LASTEXITCODE
-    $logContent = Get-Content $sfcLog -Raw
-    $logContent = $logContent -replace [char]0
-    Set-Content $sfcLog -Value $logContent
 
-    if (-not $sfcOnly) {
+    if (-not $noDism) {
         # Execute dism /online /Cleanup-Image /Scanhealth
 
         Write-Verbose "executing DISM/ScanHealth"
@@ -644,57 +671,10 @@ function Repair-LocalSystem {
             }
         }
 
-        if ($WindowsUpdateCleanup) {
-            $message = "Starting Windows Update Cleanup"
-            Write-Verbose $message
-            $successMessage=""
-            try {
-                $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
-                $catroot2Path = "$Env:systemroot\system32\catroot2"
-                $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
-                $catroot2BackupPath = "$catroot2Path.bak"
-                stop-service wuauserv
-                stop-service bits
-                stop-service appidsvc
-                stop-service cryptsvc
-                if (Test-Path -Path $softwareDistributionBackupPath) {
-                    Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-                    Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force -Verbose
-                } else {
-                    Write-Verbose "Backup directory does not exist. No need to delete."
-                }
-                if (Test-Path -Path $softwareDistributionPath) {
-                    Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
-                }
-                if (Test-Path -Path $catroot2BackupPath) {
-                    Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-                    Remove-Item -Path $catroot2BackupPath -Recurse -Force -Verbose
-                } else {
-                    Write-Verbose "Backup directory does not exist. No need to delete."
-                }
-                if (Test-Path -Path $catroot2Path) {
-                    Rename-Item -Path $catroot2Path -NewName catroot2.bak
-                }
-                start-service bits
-                start-service wuauserv
-                start-service appidsvc
-                start-service cryptsvc
-                $ExitCode[6]=$LASTEXITCODE
-                $successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
-                Write-Verbose $errorMessage
-                Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n$successMessage"
+    }
 
-            } catch {
-                $successMessage = "An error occurred while performing Windows Update Cleanup: $_"
-                Write-Output $errorMessage
-                Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
-                $ExitCode[6]=1
-
-            }
-
-        }
-
-
+    if ($WindowsUpdateCleanup) {
+        Invoke-WinUpdateCleanup -updateCleanupLog $updateCleanupLog -currentDateTime $currentDateTime
     }
 
 
@@ -711,8 +691,8 @@ function Repair-LocalSystem {
             $filesToZip += (Join-Path -Path $TempPath -ChildPath "CBS.log")
         }
 
-        # Copy DISM.log to the temporary directory if it exists and the sfcOnly flag is not set
-        if (-not $sfcOnly) {
+        # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
+        if (-not $noDism) {
             if (Test-Path $dismLog) {
                 Copy-Item -Path $dismLog -Destination $TempPath
                 $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
