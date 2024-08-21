@@ -146,7 +146,7 @@ function Repair-RemoteSystem {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
-        [ValidatePattern('^(([a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')]
+        [ValidatePattern('^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')]
         [string]$ComputerName,
 
         [Parameter(Mandatory = $false, Position=1)]
@@ -184,7 +184,7 @@ function Repair-RemoteSystem {
     $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
 
     if (-not $pingResult) {
-        Write-Error "Unable to reach $ComputerName. Please check the network connection."
+        Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
         $ExitCode[0]=2
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
@@ -210,9 +210,9 @@ function Repair-RemoteSystem {
     try{
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             Get-Process | Out-Null
-        } -Verbose:$VerboseOption
+        } -Verbose:$VerboseOption -ErrorAction Stop
     } catch {
-        $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration."
+        $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration.`r`n `r`n `r`nError: $_"
         Write-Error $winRMexit
         if (-not (Test-Path -Path $localTempPath)) {
             New-Item -Path $localTempPath -ItemType Directory -Force
@@ -546,6 +546,8 @@ function Repair-LocalSystem {
         [Parameter(Mandatory = $false, Position=4)]
         [switch]$WindowsUpdateCleanup
     )
+
+    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
 
     # Validation to ensure -IncludeComponentCleanup is not used with -noDism
     if ($noDism -and $IncludeComponentCleanup) {
