@@ -42,7 +42,7 @@ function Invoke-WinUpdateCleanup {
         Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n$successMessage"
     } catch {
         $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
-        Write-Output $errorMessage
+        Write-Error $errorMessage
         Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
         return 1
     }
@@ -184,7 +184,7 @@ function Repair-RemoteSystem {
     $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
 
     if (-not $pingResult) {
-        Write-Host "Unable to reach $ComputerName. Please check the network connection."
+        Write-Error "Unable to reach $ComputerName. Please check the network connection."
         $ExitCode[0]=2
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
@@ -213,12 +213,11 @@ function Repair-RemoteSystem {
         } -Verbose:$VerboseOption
     } catch {
         $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration."
-        Write-Host $winRMexit
+        Write-Error $winRMexit
         if (-not (Test-Path -Path $localTempPath)) {
             New-Item -Path $localTempPath -ItemType Directory -Force
         }
         Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
-        Write-Host "Unable to reach $ComputerName. Please check the network connection."
         $ExitCode[0]=3
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
@@ -370,52 +369,57 @@ function Repair-RemoteSystem {
 
 
     # Zip CBS.log and DISM.log
-    $zipErrorCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-        try {
-            $cbsLog = "$env:windir\Logs\CBS\CBS.log"
-            $dismLog = "$env:windir\Logs\dism\dism.log"
-            $tempPath = "$using:remoteTempPath"
-            $filesToZip = @()
+    if (-not $noSfc -or -not $noDism) {
+        $zipErrorCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            try {
+                $cbsLog = "$env:windir\Logs\CBS\CBS.log"
+                $dismLog = "$env:windir\Logs\dism\dism.log"
+                $tempPath = "$using:remoteTempPath"
+                $filesToZip = @()
 
-            # Copy CBS.log to the temporary directory if it exists
-            if (Test-Path $cbsLog) {
-                Copy-Item -Path $cbsLog -Destination $tempPath
-                $filesToZip += (Join-Path -Path $tempPath -ChildPath "CBS.log")
-            }
-
-            # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
-            if (-not $using:noDism) {
-                if (Test-Path $dismLog) {
-                    Copy-Item -Path $dismLog -Destination $tempPath
-                    $filesToZip += (Join-Path -Path $tempPath -ChildPath "dism.log")
+                # Copy CBS.log to the temporary directory if it exists
+                if (Test-Path $cbsLog) {
+                    Copy-Item -Path $cbsLog -Destination $tempPath
+                    $filesToZip += (Join-Path -Path $tempPath -ChildPath "CBS.log")
                 }
-            }
 
-            # Delete existing zip file if it exists
-            if (Test-Path $using:zipFile) {
-                Remove-Item -Path $using:zipFile -Force
-            }
-
-            # Create a new zip file
-            if ($filesToZip.Count -gt 0) {
-                Compress-Archive -Path $filesToZip -DestinationPath $using:zipFile -Force
-            }
-
-            # Remove the copied logs from the temporary directory
-            foreach ($file in $filesToZip) {
-                if (Test-Path $file) {
-                    Remove-Item -Path $file -Force
+                # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
+                if (-not $using:noDism) {
+                    if (Test-Path $dismLog) {
+                        Copy-Item -Path $dismLog -Destination $tempPath
+                        $filesToZip += (Join-Path -Path $tempPath -ChildPath "dism.log")
+                    }
                 }
+
+                # Delete existing zip file if it exists
+                if (Test-Path $using:zipFile) {
+                    Remove-Item -Path $using:zipFile -Force
+                }
+
+                # Create a new zip file
+                if ($filesToZip.Count -gt 0) {
+                    Compress-Archive -Path $filesToZip -DestinationPath $using:zipFile -Force
+                }
+
+                # Remove the copied logs from the temporary directory
+                foreach ($file in $filesToZip) {
+                    if (Test-Path $file) {
+                        Remove-Item -Path $file -Force
+                    }
+                }
+            } catch {
+                $errorMessage = "An error occurred while creating the zip file: $_"
+                Write-Error $message
+                Add-Content -Path $using:zipErrorLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
+                return 1
             }
-        } catch {
-            $errorMessage = "An error occurred while creating the zip file: $_"
-            Write-Output $message
-            Add-Content -Path $using:zipErrorLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
-            return 1
-        }
-        return 0
-    } -Verbose:$VerboseOption
-    $ExitCode[7]=$zipErrorCode
+            return 0
+        } -Verbose:$VerboseOption
+        $ExitCode[7]=$zipErrorCode
+    } else {
+        $ExitCode[7]=0
+    }
+
 
     # Copy log files to local machine
     if (-not (Test-Path -Path $localTempPath)) {
@@ -678,48 +682,51 @@ function Repair-LocalSystem {
     }
 
 
+    if (-not $noSfc -or -not $noDism) {
+        try {
+            $cbsLog = "$env:windir\Logs\CBS\CBS.log"
+            $dismLog = "$env:windir\Logs\dism\dism.log"
 
-    try {
-        $cbsLog = "$env:windir\Logs\CBS\CBS.log"
-        $dismLog = "$env:windir\Logs\dism\dism.log"
+            $filesToZip = @()
 
-        $filesToZip = @()
-
-        # Copy CBS.log to the temporary directory if it exists
-        if (Test-Path $cbsLog) {
-            Copy-Item -Path $cbsLog -Destination $TempPath
-            $filesToZip += (Join-Path -Path $TempPath -ChildPath "CBS.log")
-        }
-
-        # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
-        if (-not $noDism) {
-            if (Test-Path $dismLog) {
-                Copy-Item -Path $dismLog -Destination $TempPath
-                $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
+            # Copy CBS.log to the temporary directory if it exists and the noSfc flag is not set
+            if (-not $noSfc) {
+                if (Test-Path $cbsLog) {
+                    Copy-Item -Path $cbsLog -Destination $TempPath
+                    $filesToZip += (Join-Path -Path $TempPath -ChildPath "CBS.log")
+                }
             }
-        }
 
-        # Delete existing zip file if it exists
-        if (Test-Path $zipFile) {
-            Remove-Item -Path $zipFile -Force
-        }
-
-        # Create a new zip file
-        if ($filesToZip.Count -gt 0) {
-            Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
-        }
-
-        # Remove the copied logs from the temporary directory
-        foreach ($file in $filesToZip) {
-            if (Test-Path $file) {
-                Remove-Item -Path $file -Force
+            # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
+            if (-not $noDism) {
+                if (Test-Path $dismLog) {
+                    Copy-Item -Path $dismLog -Destination $TempPath
+                    $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
+                }
             }
+
+            # Delete existing zip file if it exists
+            if (Test-Path $zipFile) {
+                Remove-Item -Path $zipFile -Force
+            }
+
+            # Create a new zip file
+            if ($filesToZip.Count -gt 0) {
+                Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
+            }
+
+            # Remove the copied logs from the temporary directory
+            foreach ($file in $filesToZip) {
+                if (Test-Path $file) {
+                    Remove-Item -Path $file -Force
+                }
+            }
+        } catch {
+            $errorMessage = "An error occurred while creating the zip file: $_"
+            Write-Error $message
+            Add-Content -Path $zipErrorLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
+            $ExitCode[7]= 1
         }
-    } catch {
-        $errorMessage = "An error occurred while creating the zip file: $_"
-        Write-Output $message
-        Add-Content -Path $zipErrorLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
-        $ExitCode[7]= 1
     }
 
 
