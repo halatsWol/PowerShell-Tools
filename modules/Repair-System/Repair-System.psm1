@@ -1,56 +1,3 @@
-function Invoke-WinUpdateCleanup {
-    [CmdletBinding()]
-    param (
-        [string]$updateCleanupLog,
-        [string]$currentDateTime
-    )
-
-    try {
-        Write-Host "Starting Windows Update Cleanup..."
-        $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
-        $catroot2Path = "$Env:systemroot\system32\catroot2"
-        $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
-        $catroot2BackupPath = "$catroot2Path.bak"
-        stop-service wuauserv
-        stop-service bits
-        stop-service appidsvc
-        stop-service cryptsvc
-        if (Test-Path -Path $softwareDistributionBackupPath) {
-            Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-            Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
-        } else {
-            Write-Verbose "Backup directory does not exist. No need to delete."
-        }
-        if (Test-Path -Path $softwareDistributionPath) {
-            Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
-        }
-        if (Test-Path -Path $catroot2BackupPath) {
-            Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-            Remove-Item -Path $catroot2BackupPath -Recurse -Force
-        } else {
-            Write-Verbose "Backup directory does not exist. No need to delete."
-        }
-        if (Test-Path -Path $catroot2Path) {
-            Rename-Item -Path $catroot2Path -NewName catroot2.bak
-        }
-        start-service bits
-        start-service wuauserv
-        start-service appidsvc
-        start-service cryptsvc
-        $successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
-        Write-Verbose $successMessage
-        Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n$successMessage"
-    } catch {
-        $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
-        Write-Error $errorMessage
-        Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
-        return 1
-    }
-}
-
-
-
-
 function Repair-RemoteSystem {
     <#
     .SYNOPSIS
@@ -360,12 +307,49 @@ function Repair-RemoteSystem {
     }
 
     if ($WindowsUpdateCleanup) {
-		$WinUpdateCleanupDefinition = (Get-Command Invoke-WinUpdateCleanup).Definition
         $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-			param($func)
-			Invoke-Expression $func
-            Invoke-WinUpdateCleanup -updateCleanupLog $using:updateCleanupLog -currentDateTime $using:currentDateTime
-        } -ArgumentList $WinUpdateCleanupDefinition -Verbose:$VerboseOption
+	try {
+		Write-Host "Starting Windows Update Cleanup..."
+		$softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
+		$catroot2Path = "$Env:systemroot\system32\catroot2"
+		$softwareDistributionBackupPath = "$softwareDistributionPath.bak"
+		$catroot2BackupPath = "$catroot2Path.bak"
+		stop-service wuauserv
+		stop-service bits
+		stop-service appidsvc
+		stop-service cryptsvc
+		if (Test-Path -Path $softwareDistributionBackupPath) {
+		    Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
+		    Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
+		} else {
+		    Write-Verbose "Backup directory does not exist. No need to delete."
+		}
+		if (Test-Path -Path $softwareDistributionPath) {
+		    Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+		}
+		if (Test-Path -Path $catroot2BackupPath) {
+		    Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
+		    Remove-Item -Path $catroot2BackupPath -Recurse -Force
+		} else {
+		    Write-Verbose "Backup directory does not exist. No need to delete."
+		}
+		if (Test-Path -Path $catroot2Path) {
+		    Rename-Item -Path $catroot2Path -NewName catroot2.bak
+		}
+		start-service bits
+		start-service wuauserv
+		start-service appidsvc
+		start-service cryptsvc
+		$successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
+		Write-Verbose $successMessage
+		Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n$successMessage"
+	    } catch {
+		$errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
+		Write-Error $errorMessage
+		Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
+		return 1
+	    }
+        } -Verbose:$VerboseOption
         $ExitCode[6]=$updateCleanupExit
     }
 
@@ -683,7 +667,47 @@ function Repair-LocalSystem {
     }
 
     if ($WindowsUpdateCleanup) {
-        Invoke-WinUpdateCleanup -updateCleanupLog $updateCleanupLog -currentDateTime $currentDateTime
+	try {
+	        Write-Host "Starting Windows Update Cleanup..."
+	        $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
+	        $catroot2Path = "$Env:systemroot\system32\catroot2"
+	        $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
+	        $catroot2BackupPath = "$catroot2Path.bak"
+	        stop-service wuauserv
+	        stop-service bits
+	        stop-service appidsvc
+	        stop-service cryptsvc
+	        if (Test-Path -Path $softwareDistributionBackupPath) {
+	            Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
+	            Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
+	        } else {
+	            Write-Verbose "Backup directory does not exist. No need to delete."
+	        }
+	        if (Test-Path -Path $softwareDistributionPath) {
+	            Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+	        }
+	        if (Test-Path -Path $catroot2BackupPath) {
+	            Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
+	            Remove-Item -Path $catroot2BackupPath -Recurse -Force
+	        } else {
+	            Write-Verbose "Backup directory does not exist. No need to delete."
+	        }
+	        if (Test-Path -Path $catroot2Path) {
+	            Rename-Item -Path $catroot2Path -NewName catroot2.bak
+	        }
+	        start-service bits
+	        start-service wuauserv
+	        start-service appidsvc
+	        start-service cryptsvc
+	        $successMessage = "Windows Update Cleanup successfully.`r`nSoftwareDistribution and catroot2 folders have been renamed."
+	        Write-Verbose $successMessage
+	        Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n$successMessage"
+	    } catch {
+	        $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
+	        Write-Error $errorMessage
+	        Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
+	        return 1
+	    }
     }
 
 
