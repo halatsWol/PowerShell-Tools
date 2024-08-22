@@ -754,4 +754,4 @@ function Repair-LocalSystem {
 }
 
 
-Export-ModuleMember -Function Repair-RemoteSystem, Repair-LocalSystem
+Export-ModuleMember -Function Repair-RemoteSystem, Repair-LocalSystem,Invoke-WinUpdateCleanup
