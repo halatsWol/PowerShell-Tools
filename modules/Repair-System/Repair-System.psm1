@@ -360,9 +360,12 @@ function Repair-RemoteSystem {
     }
 
     if ($WindowsUpdateCleanup) {
+		$WinUpdateCleanupDefinition = (Get-Command Invoke-WinUpdateCleanup).Definition
         $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+			param($func)
+			Invoke-Expression $func
             Invoke-WinUpdateCleanup -updateCleanupLog $using:updateCleanupLog -currentDateTime $using:currentDateTime
-        } -Verbose:$VerboseOption
+        } -ArgumentList $WinUpdateCleanupDefinition -Verbose:$VerboseOption
         $ExitCode[6]=$updateCleanupExit
     }
 
