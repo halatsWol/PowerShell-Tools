@@ -16,9 +16,9 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 
 ## Introduction
 
-The **PowerShell-Tools** repository is a comprehensive toolkit for IT professionals. Whether you're managing systems, automating tasks, or performing routine maintenance, these PowerShell scripts and modules are designed to help streamline your workflow.
+The **PowerShell-Tools** repository is a comprehensive tool-kit for IT professionals. Whether you're managing systems, automating tasks, or performing routine maintenance, these PowerShell scripts and modules are designed to help streamline your workflow.
 
-Eventhough it currently looks a bit empty, more will come...
+Even though it currently looks a bit empty, more will come...
 
 ## Features
 
@@ -49,22 +49,16 @@ More scripts and modules will be added to this repository over time. Stay tuned 
 ## Installation
 ### Installation of Modules
 
-To install and use the scripts and modules from this repository:
+To install and use modules from this repository:
 
 1. Download the repository to your local machine:
 
 2. unzip the directory and open the modules folder:
 
-3. Copy the desired module-Folder into one of the PowerShell-Module-Directories:
+3. run as Administrator the ```install.cmd```-file within the Modules-Folder
 
 
-	* %userprofile%\Documents\WindowsPowerShell\Modules
-	* %ProgramFiles%\WindowsPowerShell\Modules
-	* %ProgramFiles(x86)%\WindowsPowerShell\Modules
-	* %WinDir%\system32\WindowsPowerShell\v1.0\Modules
-
-
-4. Restart any Powershell session to use the functions of the module. For further information and help please visit the readme of the module
+4. Restart any PowerShell session to use the functions of the module. For further information and help please visit the readme of the module
 
 ### Temporary Import of Modules
 
@@ -72,7 +66,7 @@ Alternatively, modules can also be used temporarily.
 
 1. Follow Step 1. & 2. in [Installation of Modules](#installation-of-modules) enter directly in the specific Module Directory
 2. copy the Path from the Explorer Address-Bar
-3. Open Windows Powershell as Administrator and enter:
+3. Open Windows PowerShell as Administrator and enter:
 	```PowerShell
 	cd <copied-Path>
 	```
@@ -87,6 +81,6 @@ Alternatively, modules can also be used temporarily.
 
 To run any script from the repository, navigate to the directory containing the script and execute it in PowerShell:
 
-```powershell
+```PowerShell
 .\script-name.ps1
 ```
