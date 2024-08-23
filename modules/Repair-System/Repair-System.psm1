@@ -365,11 +365,11 @@ function Repair-RemoteSystem {
                 if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
             }
                 Write-Verbose $successMessage
-                Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n$successMessage"
+                Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$successMessage"
             } catch {
-                $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
+                $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
                 Write-Error $errorMessage
-                Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
+                Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$errorMessage"
                 return 1
             }
         } -Verbose:$VerboseOption
@@ -730,7 +730,6 @@ function Repair-LocalSystem {
                     $cat2Err= "Error renaming catroot2 folder: `r`n$_"
                     Write-Verbose $cat2Err
                 }
-
             }
             start-service @("bits","wuauserv","appidsvc","cryptsvc")
             $successMessage = "Windows Update Cleanup successfully."
@@ -747,11 +746,11 @@ function Repair-LocalSystem {
                 if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
             }
             Write-Verbose $successMessage
-            Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n$successMessage"
+            Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n`t$successMessage"
         } catch {
-            $errorMessage = "An error occurred while performing Windows Update Cleanup: $_"
+            $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
             Write-Error $errorMessage
-            Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
+            Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n`t$errorMessage"
             return 1
         }
     }
