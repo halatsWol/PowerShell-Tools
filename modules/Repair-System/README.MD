@@ -13,26 +13,27 @@ This function performs the following tasks on a specified remote computer:
 - Pings the remote machine to check its availability.
 - Executes `sfc /scannow` to check and repair system files.
 - Optionally, executes `DISM /Online /Cleanup-Image /ScanHealth` and `DISM /Online /Cleanup-Image /RestoreHealth` to repair the Windows image.
-- Optionally, performs component cleanup and Windows Update cleanup.
+- Optionally, performs Component Store cleanup and Windows Update Cache cleanup.
 - Logs the results on the remote machine and optionally shows them on the local console.
 - Transfers the logs and relevant system files to the local machine.
 
 #### Parameters
 
 - **`-ComputerName`** (Mandatory): The hostname or IP address of the remote computer.
-- **`-sfcOnly`** (Optional): When specified, only the `sfc /scannow` command is executed, skipping the `DISM` commands.
+- **`-noSfc`** (Optional): When specified, `sfc /scannow` command will be skipped.
+- **`-noDism`** (Optional): When specified, all DISM commands will be skipped. This cannot be used in combination with `-IncludeComponentCleanup`.
 - **`-Quiet`** (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
-- **`-IncludeComponentCleanup`** (Optional): Performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, `DISM /Online /Cleanup-Image /StartComponentCleanup`.
-- **`-WindowsUpdateCleanup`** (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update cleanup.
+- **`-IncludeComponentCleanup`** (Optional): Analyzes and if recommended cleans up the Windows Component Store. This cannot be used in combination with `-noDism`.
+- **`-WindowsUpdateCleanup`** (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update Cache cleanup.
 
 #### Examples
 
-```powershell
+```PowerShell
 # Run SFC and DISM on the remote computer
 Repair-RemoteSystem -ComputerName <remote-device>
 
 # Run only SFC on the remote computer
-Repair-RemoteSystem -ComputerName <remote-device> -sfcOnly
+Repair-RemoteSystem -ComputerName <remote-device> -noDism
 
 # Run SFC and DISM on the remote computer with no console output
 Repair-RemoteSystem -ComputerName <remote-device> -Quiet
@@ -68,7 +69,7 @@ Additionally `WinRM` is not required for Repair-LocalSystem
 
 - **Author**: Wolfram Halatschek
 - **Contact**: halatschek.wolfram@gmail.com
-- **Date**: August 15, 2024
+- **Date**: August 24, 2024
 
 ## Warnings
 
