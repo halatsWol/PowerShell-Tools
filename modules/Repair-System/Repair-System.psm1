@@ -182,16 +182,23 @@ function Repair-RemoteSystem {
         # Execute sfc /scannow
             $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             Write-Verbose "executing SFC"
-            if ($using:Quiet) {
-                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
-            } else {
-                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog -OutBuffer 1
+            try{
+                if ($using:Quiet) {
+                    sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
+                } else {
+                    sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog -OutBuffer 1
+                }
+                $sfcExitCode=$LASTEXITCODE
+                $logContent = Get-Content $using:sfcLog -Raw
+                $logContent = $logContent -replace [char]0
+                Set-Content $using:sfcLog -Value $logContent
+                return $sfcExitCode
+            } catch {
+                $errorMessage = "An error occurred while performing SFC: `r`n$_"
+                Write-Error $errorMessage
+                Add-Content -Path $using:sfcLog -Value $errorMessage
+                return 1
             }
-            $sfcExitCode=$LASTEXITCODE
-            $logContent = Get-Content $using:sfcLog -Raw
-            $logContent = $logContent -replace [char]0
-            Set-Content $using:sfcLog -Value $logContent
-            return $sfcExitCode
         } -Verbose:$VerboseOption
         $ExitCode[1]=$sfcExitCode
     }
@@ -200,12 +207,19 @@ function Repair-RemoteSystem {
         # Execute dism /online /Cleanup-Image /Scanhealth
         $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             Write-Verbose "executing DISM/ScanHealth"
-            if ($using:Quiet) {
-                dism /online /Cleanup-Image /Scanhealth > $using:dismScanLog 2>&1
-            } else {
-                dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $using:dismScanLog
+            try{
+                if ($using:Quiet) {
+                    dism /online /Cleanup-Image /Scanhealth > $using:dismScanLog 2>&1
+                } else {
+                    dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $using:dismScanLog
+                }
+                return $LASTEXITCODE
+            } catch {
+                $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
+                Write-Error $errorMessage
+                Add-Content -Path $using:dismScanLog -Value $errorMessage
+                return 1
             }
-            return $LASTEXITCODE
         } -Verbose:$VerboseOption
         $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
         $ExitCode[2]=$dismScanResult
@@ -231,12 +245,19 @@ function Repair-RemoteSystem {
                 }
                 if ($ScanResult -eq 1) {
                     Write-Verbose "executing DISM/RestoreHealth"
-                    if ($using:Quiet) {
-                        dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
-                    } else {
-                        dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $using:dismRestoreLog
+                    try{
+                        if ($using:Quiet) {
+                            dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
+                        } else {
+                            dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $using:dismRestoreLog
+                        }
+                        return $LASTEXITCODE
+                    } catch {
+                        $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
+                        Write-Error $errorMessage
+                        Add-Content -Path $using:dismRestoreLog -Value $errorMessage
+                        return 1
                     }
-                    return $LASTEXITCODE
                 }
             } -Verbose:$VerboseOption
             $ExitCode[3]=$dismRestoreExit
@@ -252,12 +273,19 @@ function Repair-RemoteSystem {
         if ($IncludeComponentCleanup) {
             # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
             $analyzeExit = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                if ($using:Quiet) {
-                    dism /Online /Cleanup-Image /AnalyzeComponentStore > $using:analyzeComponentLog 2>&1
-                } else {
-                    dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $using:analyzeComponentLog
+                try{
+                    if ($using:Quiet) {
+                        dism /Online /Cleanup-Image /AnalyzeComponentStore > $using:analyzeComponentLog 2>&1
+                    } else {
+                        dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $using:analyzeComponentLog
+                    }
+                    return $LASTEXITCODE
+                } catch {
+                    $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
+                    Write-Error $errorMessage
+                    Add-Content -Path $using:analyzeComponentLog -Value $errorMessage
+                    return 1
                 }
-                return $LASTEXITCODE
             } -Verbose:$VerboseOption
             $ExitCode[4]=$analyzeExit
 
@@ -281,14 +309,20 @@ function Repair-RemoteSystem {
 
 
                     if ($analyzeResult -eq 1) {
-                        if ($using:Quiet) {
-                            dism /Online /Cleanup-Image /StartComponentCleanup > $using:componentCleanupLog 2>&1
-                        } else {
-                            dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $using:componentCleanupLog
+                        try{
+                            if ($using:Quiet) {
+                                dism /Online /Cleanup-Image /StartComponentCleanup > $using:componentCleanupLog 2>&1
+                            } else {
+                                dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $using:componentCleanupLog
+                            }
+                            $message = "Component store cleanup was performed on $using:ComputerName."
+                            Write-Verbose $message
+                            Add-Content -Path $using:componentCleanupLog -Value $message
+                        } catch {
+                            $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
+                            Write-Error $message
+                            Add-Content -Path $using:componentCleanupLog -Value $message
                         }
-                        $message = "Component store cleanup was performed on $using:ComputerName."
-                        Write-Verbose $message
-                        Add-Content -Path $using:componentCleanupLog -Value $message
                     } else {
                         $message = "No component store cleanup was needed on $using:ComputerName."
                         Write-Verbose $message
@@ -586,28 +620,40 @@ function Repair-LocalSystem {
         # Execute sfc /scannow
 
         Write-Verbose "executing SFC"
-        if ($Quiet) {
-            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
-        } else {
-            sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
+        try{
+            if ($Quiet) {
+                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
+            } else {
+                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
+            }
+            $ExitCode[1]=$LASTEXITCODE
+            $logContent = Get-Content $sfcLog -Raw
+            $logContent = $logContent -replace [char]0
+            Set-Content $sfcLog -Value $logContent
+        } catch {
+            $errorMessage = "An error occurred while performing SFC: `r`n$_"
+            Write-Error $errorMessage
+            Add-Content -Path $sfcLog -Value $errorMessage
+            $ExitCode[1]=1
         }
-        $ExitCode[1]=$LASTEXITCODE
-        $logContent = Get-Content $sfcLog -Raw
-        $logContent = $logContent -replace [char]0
-        Set-Content $sfcLog -Value $logContent
     }
 
     if (-not $noDism) {
         # Execute dism /online /Cleanup-Image /Scanhealth
-
         Write-Verbose "executing DISM/ScanHealth"
-        if ($Quiet) {
-            dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
-        } else {
-            dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
+        try{
+            if ($Quiet) {
+                dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
+            } else {
+                dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
+            }
+            $ExitCode[2]=$LASTEXITCODE
+        } catch {
+            $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
+            Write-Error $errorMessage
+            Add-Content -Path $dismScanLog -Value $errorMessage
+            $ExitCode[2]=1
         }
-        $ExitCode[2]=$LASTEXITCODE
-
 
         # Explicitly check the exit code to decide on RestoreHealth
         $message = ""
@@ -625,12 +671,19 @@ function Repair-LocalSystem {
             }
             if ($ScanResult -eq 1) {
                 Write-Verbose "executing DISM/RestoreHealth"
-                if ($Quiet) {
-                    dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
-                } else {
-                    dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $dismRestoreLog
+                try{
+                    if ($Quiet) {
+                        dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
+                    } else {
+                        dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $dismRestoreLog
+                    }
+                    $ExitCode[3]=$LASTEXITCODE
+                } catch {
+                    $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
+                    Write-Error $errorMessage
+                    Add-Content -Path $dismRestoreLog -Value $errorMessage
+                    $ExitCode[3]=1
                 }
-                $ExitCode[3]=$LASTEXITCODE
             }
         } else {
             $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResult). Please review the logs."
@@ -643,12 +696,20 @@ function Repair-LocalSystem {
 
         if ($IncludeComponentCleanup) {
             # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
-            if ($Quiet) {
-                dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
-            } else {
-                dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
+            Write-Verbose "executing DISM/AnalyzeComponentStore"
+            try{
+                if ($Quiet) {
+                    dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
+                } else {
+                    dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
+                }
+                $ExitCode[4]=$LASTEXITCODE
+            } catch {
+                $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
+                Write-Error $errorMessage
+                Add-Content -Path $analyzeComponentLog -Value $errorMessage
+                $ExitCode[4]=1
             }
-            $ExitCode[4]=$LASTEXITCODE
 
             $lines = Get-Content -Path $analyzeComponentLog
             $analyzeComponentLogData = $lines[-1..-($lines.Count)]
@@ -667,15 +728,21 @@ function Repair-LocalSystem {
             # Check the output and perform cleanup if recommended
             $message = ""
             if ($ExitCode[4] -eq 0 -and $analyzeResult -eq 1) {
-
-                if ($Quiet) {
-                    dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
-                } else {
-                    dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
+                Write-Verbose "executing DISM/StartComponentCleanup"
+                try{
+                    if ($Quiet) {
+                        dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
+                    } else {
+                        dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
+                    }
+                    $ExitCode[5]=$LASTEXITCODE
+                    $message = "Component store cleanup was performed."
+                } catch {
+                    $errorMessage = "An error occurred while performing Component Store Cleanup: `r`n$_"
+                    Write-Error $errorMessage
+                    Add-Content -Path $componentCleanupLog -Value $errorMessage
+                    $ExitCode[5]=1
                 }
-                $ExitCode[5]=$LASTEXITCODE
-                $message = "Component store cleanup was performed."
-
 
 
             } elseif ($analyzeExit -eq 0 -and $analyzeResult -eq 0) {
