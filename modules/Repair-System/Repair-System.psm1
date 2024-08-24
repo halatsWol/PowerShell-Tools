@@ -818,7 +818,7 @@ function Repair-LocalSystem {
             $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
             Write-Error $errorMessage
             Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n`t$errorMessage"
-            return 1
+            $ExitCode[6]=1
         }
     }
 
