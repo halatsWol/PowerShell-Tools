@@ -87,7 +87,7 @@ function Repair-RemoteSystem {
 
     Author: Wolfram Halatschek
     E-Mail: halatschek.wolfram@gmail.com
-    Date: 2024-08-15
+    Date: 2024-08-24
     #>
 
     [CmdletBinding()]
@@ -570,7 +570,7 @@ function Repair-LocalSystem {
 
     Author: Wolfram Halatschek
     E-Mail: halatschek.wolfram@gmail.com
-    Date: 2024-08-1
+    Date: 2024-08-24
     #>
 
     [CmdletBinding()]
