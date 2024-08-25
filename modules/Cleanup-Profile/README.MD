@@ -1,6 +1,7 @@
 # Cleanup-Profile Module
 
-# :bangbang: `Module not working yet!`
+## $${\color{red}:bangbang: Module not working yet! Do not execute since it will cause damages}
+This warning will be removed once development has advanced further
 
 ## Overview
 
@@ -50,8 +51,8 @@ Cleanup-RemoteProfile -ComputerName <remote-device> -UserName <UserName> -noNetD
 - **WinRM**: Must be enabled and configured on the remote computer.
 - **Administrative Privileges**: Running this script may require administrative privileges on the remote computer.
     For this, Powershell must be started as the user, which has administrative privileges on the remote computer.
- 
- 
+
+
 ### `Cleanup-LocalProfile`
 
 This function performs the same tasks as [Cleanup-RemoteProfile](#Cleanup-RemoteProfile) but only on the local machine. Therefore the `-ComputerName` parameter is not available
