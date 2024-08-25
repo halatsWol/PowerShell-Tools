@@ -59,7 +59,7 @@ Invoke-RemoteProfileCleanup -ComputerName <remote-device> -UserName <UserName> -
 
 This function performs the same tasks as [Invoke-RemoteProfileCleanup](#Invoke-RemoteProfileCleanup) but only on the local machine. Therefore the `-ComputerName` parameter is not available
 
-Additionally `WinRM` is not required for Cleanup-LocalProfile
+Additionally `WinRM` is not required for Invoke-LocalProfileCleanup
 
 ## Notes
 

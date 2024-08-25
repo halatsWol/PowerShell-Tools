@@ -248,12 +248,12 @@ function Invoke-RemoteProfileCleanup {
             $message = "Exporting ProfileList Key for User $using:UserName from HKEY_USERS."
             Write-Verbose $message
             Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: $message"
+
             try{
                 $regUserPathKey = Get-Item -Path $using:regUserPath\$using:profileListId
                 $regUserPathKey2=Get-Item -Path ("$using:regUserPath\$using:profileListId" +"_Classes")
                 $outputFilePath = "$using:remoteTempPath\HKey_UsersBackup_$using:UserName"+"_$using:currentDateTime.reg"
                 $outputFilePath2 = "$using:remoteTempPath\HKey_Users_Classes_Backup_$using:UserName"+"_$using:currentDateTime.reg"
-
 
                 Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`tExporting ´$($regUserPathKey| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })´`r`n`tto $outputFilePath"
                 Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
@@ -305,6 +305,7 @@ function Invoke-RemoteProfileCleanup {
         Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: $message`r`n"
         try{
             $profilePath = "$env:USERPROFILE\$using:UserName"
+            #TODO: check if folder exists
             $newProfilePath = "$env:USERPROFILE\$using:UserName"+".bak"
             Rename-Item -Path $profilePath -NewName $newProfilePath -Force
             $message = "Renaming User-Profile Folder for User $using:UserName.`r`n`tSuccessful$_"
