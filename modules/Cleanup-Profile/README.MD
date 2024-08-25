@@ -1,6 +1,6 @@
 # Cleanup-Profile Module
 
-## $${\color{red} :bangbang: Module not working yet! Do not execute since it will cause damages}
+## <span style="color:red">:bangbang: Module not working yet! Do not execute since it will cause damages</span>
 This warning will be removed once development has advanced further
 
 ## Overview
