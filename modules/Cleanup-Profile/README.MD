@@ -10,7 +10,7 @@ By default installer CMD-Files to easily set up previously mapped Network-Drives
 
 ## Functionality
 
-### `Cleanup-RemoteProfile`
+### `Invoke-RemoteProfileCleanup`
 
 This function performs the following tasks on a specified remote computer:
 
@@ -37,13 +37,13 @@ This function performs the following tasks on a specified remote computer:
 
 ```PowerShell
 # cleanup profile
-Cleanup-RemoteProfile -ComputerName <remote-device> -UserName <UserName>
+Invoke-RemoteProfileCleanup -ComputerName <remote-device> -UserName <UserName>
 
 # cleanup profile in quiet mode
-Cleanup-RemoteProfile -ComputerName <remote-device> -UserName <UserName> -Quiet
+Invoke-RemoteProfileCleanup -ComputerName <remote-device> -UserName <UserName> -Quiet
 
 # cleanup profile not scanning for mapped Network Drives
-Cleanup-RemoteProfile -ComputerName <remote-device> -UserName <UserName> -noNetDrives
+Invoke-RemoteProfileCleanup -ComputerName <remote-device> -UserName <UserName> -noNetDrives
 
 ```
 
@@ -57,7 +57,7 @@ Cleanup-RemoteProfile -ComputerName <remote-device> -UserName <UserName> -noNetD
 
 ### `Cleanup-LocalProfile`
 
-This function performs the same tasks as [Cleanup-RemoteProfile](#Cleanup-RemoteProfile) but only on the local machine. Therefore the `-ComputerName` parameter is not available
+This function performs the same tasks as [Invoke-RemoteProfileCleanup](#Invoke-RemoteProfileCleanup) but only on the local machine. Therefore the `-ComputerName` parameter is not available
 
 Additionally `WinRM` is not required for Cleanup-LocalProfile
 

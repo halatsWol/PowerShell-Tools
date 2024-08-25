@@ -1,5 +1,5 @@
 
-function Cleanup-RemoteProfile {
+function Invoke-RemoteProfileCleanup {
 
     <#
     .SYNOPSIS
@@ -27,12 +27,12 @@ function Cleanup-RemoteProfile {
     If set, the function will log out the user if logged in, before cleaning the profile.
 
     .EXAMPLE
-    Cleanup-RemoteProfile -ComputerName "Computer01" -UserName "User01"
+    Invoke-RemoteProfileCleanup -ComputerName "Computer01" -UserName "User01"
 
     Cleans up the profile of User01 on Computer01.
 
     .EXAMPLE
-    Cleanup-RemoteProfile -ComputerName "Computer01" -UserName "User01" -ForceLogout
+    Invoke-RemoteProfileCleanup -ComputerName "Computer01" -UserName "User01" -ForceLogout
 
     Cleans up the profile of User01 on Computer01. If User01 is logged in, the function will log out the user before cleaning the profile.
 
@@ -159,4 +159,4 @@ function Cleanup-RemoteProfile {
     }
 }
 
-Export-ModuleMember -Function Cleanup-RemoteProfile
+Export-ModuleMember -Function Invoke-RemoteProfileCleanup
