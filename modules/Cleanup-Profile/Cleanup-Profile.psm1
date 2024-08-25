@@ -76,12 +76,14 @@ function Invoke-RemoteProfileCleanup {
         [switch]$ForceLogout
     )
 
+    $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
+    $remoteTempPath = "\\$ComputerName\C$\_temp"
+    $cleanupLog=$remoteTempPath+"\cleanupLog_$currentDateTime.log"
+    $localTempPath = "C:\remote-Files\$ComputerName"
     $profilePath = "$env:USERPROFILE\$ProfileName"
     $ExitCode = @()
 
-    if (Test-Path $profilePath) {
-        Remove-Item $profilePath -Recurse -Force
-    }
+
 
     # Ping the remote computer to check availability
     $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
