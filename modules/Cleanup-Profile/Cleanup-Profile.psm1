@@ -105,7 +105,7 @@ function Invoke-RemoteProfileCleanup {
     $regProfileListPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
     New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS
     $regUserPath = "HKU:\"
-    $ExitCode = @()
+    $ExitCode = 0,0,0,0,0
 
 
     # Ping the remote computer to check availability
@@ -172,7 +172,7 @@ function Invoke-RemoteProfileCleanup {
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                 $message = "User $using:user (UID: $using:id) is still logged in. Logging off user $using:id."
                 Write-Verbose $message
-                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: $message"
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: $message`r`n"
                 logoff $using:id
             } -Verbose:$VerboseOption -ErrorAction Stop
         }
@@ -205,20 +205,23 @@ function Invoke-RemoteProfileCleanup {
         $success=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             $message = "Backing up ProfileList Key for User $using:UserName."
             Write-Verbose $message
-            Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: $message"
+            Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: $message`r`n"
             try{
                 $profileListKey = Get-Item -Path $using:regProfileListPath\$using:profileListId
                 $outputFilePath = "$using:remoteTempPath\ProfileListBackup_$using:UserName"+"_$using:currentDateTime.reg"
                 Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileListKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
-
-                #Remove ProfileList Key
+                $message = "Exporting User Key for User $using:UserName from ProfileList Successfully.`r`n`tKey: ´$($profileListKey| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })´"
+                Write-Verbose $message
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`t$message`r`n"
                 Remove-Item -Path $profileListKey -Force
-
+                $message = "`tKey deleted: ´$($profileListKey| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })´`r`n"
+                Write-Verbose $message
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`t$message`r`n"
                 return $true
             } catch {
                 $message = "Error backing up ProfileList Key for User $using:UserName.`r`nError: `r`n$_"
                 Write-Error $message
-                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - ERROR: $message"
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - ERROR: $message`r`n"
                 return $false
             }
         } -Verbose:$VerboseOption -ErrorAction Stop
@@ -226,7 +229,7 @@ function Invoke-RemoteProfileCleanup {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             $message = "User $using:UserName does not have a profile listed in Registry/ProfileList."
             Write-Error $message
-            Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - ERROR: $message"
+            Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - ERROR: $message`r`n"
         } -Verbose:$VerboseOption -ErrorAction Stop
     }
 
@@ -234,7 +237,7 @@ function Invoke-RemoteProfileCleanup {
         copy-LogsFiles -ComputerName $ComputerName -localTempPath $localTempPath
         Write-Host "`r`n Early Exit During UserProfile-Cleanup on $ComputerName.`r`nLog-Files can be found on this Machine under '$localTempPath+\cleanupProfileLog_$currentDateTime.log'.`r`n`r`n"
         #exit
-        $ExitCode[1]=1
+        $ExitCode[3]=1
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
         $global:LASTEXITCODE = $ExitCode
@@ -250,19 +253,35 @@ function Invoke-RemoteProfileCleanup {
                 $regUserPathKey2=Get-Item -Path ("$using:regUserPath\$using:profileListId" +"_Classes")
                 $outputFilePath = "$using:remoteTempPath\HKey_UsersBackup_$using:UserName"+"_$using:currentDateTime.reg"
                 $outputFilePath2 = "$using:remoteTempPath\HKey_Users_Classes_Backup_$using:UserName"+"_$using:currentDateTime.reg"
-                $nfo="[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: Exporting User Key for User $using:UserName from HKEY_USERS."
-                Add-Content -Path $using:cleanupLog -Value "$nfo`r`n`tExporting $regUserPathKey`r`n`tto $outputFilePath"
+
+
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`tExporting ´$($regUserPathKey| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })´`r`n`tto $outputFilePath"
                 Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
-                #Remove ProfileList Key
+                $message = "Exporting User Key for User $using:UserName from ProfileList Successfully.`r`n`tKey: ´$($regUserPathKey| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })´"
+                Write-Verbose $message
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`t$message`r`n"
+
                 Remove-Item -Path $regUserPathKey -Force
-                Add-Content -Path $using:cleanupLog -Value "$nfo`r`n`tExporting $regUserPathKey2`r`n`tto $outputFilePath2"
+                $message = "`tKey deleted: $($profileListKey| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })`r`n"
+                Write-Verbose $message
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`t$message`r`n"
+
+
+                Write-Verbose $message
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`tExporting ´$($regUserPathKey2| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })´`r`n`tto $outputFilePath2"
                 Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
+                $message = "Exporting User Key for User $using:UserName from ProfileList Successfully.`r`n`tKey: ´$($profileListKey| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })´"
+                Write-Verbose $message
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`t$message`r`n"
                 Remove-Item -Path $regUserPathKey2 -Force
+                $message = "`tKey deleted: $($regUserPathKey2| Select-Object -ExpandProperty PSPath | ForEach-Object { $_ -replace 'Microsoft.PowerShell.Core\\Registry::', '' })"
+                Write-Verbose $message
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`t$message`r`n"
                 return $true
             } catch {
                 $message = "Error exporting User Key for User $using:UserName from HKEY_USERS.`r`nError: `r`n$_"
                 Write-Error $message
-                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - ERROR: $message"
+                Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - ERROR: $message`r`n"
                 return $false
             }
         } -Verbose:$VerboseOption -ErrorAction Stop
@@ -272,16 +291,47 @@ function Invoke-RemoteProfileCleanup {
         copy-LogsFiles -ComputerName $ComputerName -localTempPath $localTempPath
         Write-Host "`r`n Early Exit During UserProfile-Cleanup on $ComputerName.`r`nLog-Files can be found on this Machine under '$localTempPath+\cleanupProfileLog_$currentDateTime.log'.`r`n`r`n"
         #exit
-        $ExitCode[1]=2
+        $ExitCode[3]=2
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
         $global:LASTEXITCODE = $ExitCode
         break
     }
 
+    #Rename User-Profile Folder
+    $success=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+        $message = "Renaming User-Profile Folder for User $using:UserName."
+        Write-Verbose $message
+        Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO: $message`r`n"
+        try{
+            $profilePath = "$env:USERPROFILE\$using:UserName"
+            $newProfilePath = "$env:USERPROFILE\$using:UserName"+".bak"
+            Rename-Item -Path $profilePath -NewName $newProfilePath -Force
+            $message = "Renaming User-Profile Folder for User $using:UserName.`r`n`tSuccessful$_"
+            Write-Verbose $message
+            Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - INFO:`r`n`t$message`r`n"
+            return $true
+        } catch {
+            $message = "Error renaming User-Profile Folder for User $using:UserName.`r`nError: `r`n$_"
+            Write-Error $message
+            Add-Content -Path $using:cleanupLog -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] - ERROR: $message`r`n"
+            return $false
+        }
+    } -Verbose:$VerboseOption -ErrorAction Stop
 
-
-
+    if(-not $success){
+        copy-LogsFiles -ComputerName $ComputerName -localTempPath $localTempPath
+        Write-Host "`r`n Early Exit During UserProfile-Cleanup on $ComputerName.`r`nLog-Files can be found on this Machine under '$localTempPath+\cleanupProfileLog_$currentDateTime.log'.`r`n`r`n"
+        #exit
+        $ExitCode[3]=3
+    } else {
+        copy-LogsFiles -ComputerName $ComputerName -localTempPath $localTempPath
+        Write-Host "`r`n UserProfile-Cleanup on $ComputerName completed successfully.`r`nLog-Files can be found on this Machine under '$localTempPath+\cleanupProfileLog_$currentDateTime.log'.`r`n`r`n"
+    }
+    $exitCode=$exitCode | Sort-Object {$_} -Descending
+    $exitCode = $exitCode -join ""
+    $global:LASTEXITCODE = $ExitCode
+    break
 
 }
 
