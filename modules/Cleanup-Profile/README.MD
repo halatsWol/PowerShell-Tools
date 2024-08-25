@@ -5,7 +5,8 @@ This warning will be removed once development has advanced further
 
 ## Overview
 
-The `Repair-System` PowerShell module provides a function to repair Windows systems remotely by running System File Checker (SFC) and Deployment Imaging Service and Management Tool (DISM) commands. It allows for extensive repair capabilities, including scanning and restoring system files, component cleanup, and Windows Update cleanup on a remote machine. The results are logged on the remote computer and are transferred to the local machine upon completion.
+The `Cleanup-Profile` PowerShell module provides a function to cleanup defective User-Profiles remotely by running various Task and Commands. It allows for extensive repair capabilities, including scanning and restoring system files, component cleanup, and Windows Update cleanup on a remote machine. The results are logged on the remote computer and are transferred to the local machine upon completion.
+By default installer CMD-Files to easily set up previously mapped Network-Drives and Printers
 
 ## Functionality
 
@@ -29,6 +30,7 @@ This function performs the following tasks on a specified remote computer:
 - **`-noPrinters`** (Optional): When specified, information about installed Printers will not be fetched.
 - **`-noNetDrives`** (Optional): When specified, mapped network drives will not be fetched. The ``install-NetDrives.cmd``-file will not be created.
 - **`-Quiet`** (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
+- **`-ForceLogout`** (Optional): logs out the Account on the maching if it is logged in
 
 
 #### Examples
