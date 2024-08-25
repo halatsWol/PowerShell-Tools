@@ -188,6 +188,12 @@ function Invoke-RemoteProfileCleanup {
         }
     }
 
+    #TODO: get list of installed printers
+
+
+    #TODO: get list of mapped network drives
+
+
     #get registy profile list id
     $profileListId = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
         $profileList = Get-ChildItem $using:regProfileListPath | Get-ItemProperty | Where-Object { $_.ProfileImagePath -eq "C:\Users\$using:UserName" }
