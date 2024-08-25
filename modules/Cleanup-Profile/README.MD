@@ -55,7 +55,7 @@ Invoke-RemoteProfileCleanup -ComputerName <remote-device> -UserName <UserName> -
     For this, Powershell must be started as the user, which has administrative privileges on the remote computer.
 
 
-### `Cleanup-LocalProfile`
+### `Invoke-LocalProfileCleanup`
 
 This function performs the same tasks as [Invoke-RemoteProfileCleanup](#Invoke-RemoteProfileCleanup) but only on the local machine. Therefore the `-ComputerName` parameter is not available
 
