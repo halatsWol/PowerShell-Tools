@@ -1,5 +1,59 @@
 
 function Cleanup-RemoteProfile {
+
+    <#
+    .SYNOPSIS
+    Cleans up a Windows User-Profile on a remote computer.
+
+    .DESCRIPTION
+    The function cleans up a Windows User-Profile on a remote computer. It deletes the user profile Registy Keys and renames the User-Profile Folder.
+
+    .PARAMETER ComputerName
+    The name of the remote computer.
+
+    .PARAMETER UserName
+    The name of the user whose profile should be cleaned up.
+
+    .PARAMETER noPrinters
+    If set, the function will not check installed printers and create an install-Printers.cmd File.
+
+    .PARAMETER noNetDrives
+    If set, the function will not check mapped network drives and create an install-NetDrives.cmd File.
+
+    .PARAMETER Quiet
+    If set, the function will not output any information.
+
+    .PARAMETER ForceLogout
+    If set, the function will log out the user if logged in, before cleaning the profile.
+
+    .EXAMPLE
+    Cleanup-RemoteProfile -ComputerName "Computer01" -UserName "User01"
+
+    Cleans up the profile of User01 on Computer01.
+
+    .EXAMPLE
+    Cleanup-RemoteProfile -ComputerName "Computer01" -UserName "User01" -ForceLogout
+
+    Cleans up the profile of User01 on Computer01. If User01 is logged in, the function will log out the user before cleaning the profile.
+
+    .NOTES
+    This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
+    WinRM must be enabled and configured on the remote computer for this script to work. Using IP addresses may require additional configuration.
+    Using this script may require administrative privileges on the remote computer.
+    In a Domain, powershell can be executed locally as the user wich has the necessary permissions on the remote computer.
+
+    WARNING:
+    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT PERMISSION OR AUTHORIZATION.
+    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT UNDERSTANDING THE CONSEQUENCES.
+    NEVER RUN SCRIPTS FROM UNTRUSTED SOURCES WITHOUT REVIEWING AND UNDERSTANDING THE CODE.
+    DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING. IT MAY CAUSE DATA LOSS OR SYSTEM INSTABILITY.
+
+
+    Author: Wolfram Halatschek
+    E-Mail: halatschek.wolfram@gmail.com
+    Date: 2024-08-25
+    #>
+
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
