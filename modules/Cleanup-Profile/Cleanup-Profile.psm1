@@ -125,6 +125,7 @@ function Invoke-RemoteProfileCleanup {
                 $_ = $_.insert(22,",").insert(42,",").insert(47,",").insert(56,",").insert(68,",")
                 # Remove every space two or more spaces
                 $_ = $_ -replace "\s\s+",""
+                $_ = $_ -replace ">" , ""
                 # for debug purposes, comment out above row and uncomment row below
                 #$_ = $_ -replace "\s","_"
 
