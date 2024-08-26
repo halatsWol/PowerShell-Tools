@@ -1,0 +1,79 @@
+TOPIC
+    about_Repair-System
+
+SHORT DESCRIPTION
+    The `Repair-System` module provides a set of functions to diagnose and repair common issues on Windows systems.
+
+LONG DESCRIPTION
+    The `Repair-System` module is designed to help system administrators and advanced users diagnose
+    and repair common issues on Windows systems. This module includes a variety of functions that
+    can be used to check system health, repair corrupted system files, manage system services,
+    and perform other maintenance tasks.
+
+    Key features of the `Repair-System` module include:
+
+    - **System Health Checks**: Functions to check the overall health of the system,
+        including disk integrity, system file integrity, and more.
+    - **File Repair**: Functions to repair corrupted system files using tools like
+        SFC (System File Checker) and DISM (Deployment Imaging Service and Management Tool).
+    - **Service Management**: Functions to manage system services, stopping, Cache Cleanup and restarting services.
+    - **Event Log Management**: Functions to query and clear event logs to help diagnose issues.
+    - **Network Diagnostics**: Functions to diagnose and repair network-related issues.
+    - **Automated Maintenance**: Functions to automate common maintenance tasks, ensuring the
+        system remains in optimal condition.
+
+    The module is designed to be user-friendly, with clear parameters and examples provided for each function.
+    By using this module, administrators and advanced users can ensure their systems remain healthy and efficient,
+    reducing downtime and improving overall performance.
+
+EXAMPLES
+    Example 1: Repair corrupted system files remotely
+    --------------------------------
+    PS C:\> Repair-RemoteSystem -ComputerName <remote-device>
+
+    This example repairs corrupted system files using the System File Checker (SFC) tool and runs
+    DISM Scan and if required DISM Restore on a Remote Machine.
+
+    Example 2: Repair corrupted system files locally
+    ----------------------------------------
+    PS C:\> Repair-LocalSystem
+
+    This example repairs corrupted system files using the System File Checker (SFC) tool and runs
+    DISM Scan and if required DISM Restore on the Local Macine.
+
+    Example 3: Repair corrupted system files remotely with Component Cleanup
+    -----------------------------------
+    PS C:\> Repair-RemoteSystem -ComputerName <remote-device> -IncludeComponentCleanup
+
+    This example performs the same Tasks as Example 1 but additionally checks the ComponentStore for issues
+
+    Example 4: Repair corrupted system files locally with Component Cleanup
+    ---------------------------
+    PS C:\> Repair-LocalSystem -IncludeComponentCleanup
+
+    This example performs the same Tasks as Example 2 but additionally checks the ComponentStore for issues
+
+    Example 5: Diagnose network issues
+    ----------------------------------
+    PS C:\> Repair-LocalSystem -WindowsUpdateCleanup
+
+    This example performs the same Tasks as Example 2 but additionally cleans up the Windows Update Cache to fix
+    issues regarding Windows Udates.
+
+FUNCTIONS
+    Repair-RemoteSystem
+    Repair-LocalSystem
+
+SEE ALSO
+    Get-Help
+    Get-Command
+    Get-Member
+
+KEYWORDS
+    System Repair, Maintenance, Troubleshoot, Windows
+
+AUTHOR
+    Your Name
+
+COPYRIGHT
+    © 2023 Your Organization. All rights reserved.
