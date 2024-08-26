@@ -27,10 +27,38 @@ LONG DESCRIPTION
     cleaned up and WinRM is set up accordingly
 
 EXAMPLES
+    Example 1:
+    --------------------------------
     Invoke-RemoteProfileCleanup -ComputerName "Computer01" -UserName "User01"
 
+    Example 2:
+    --------------------------------
     Invoke-RemoteProfileCleanup -ComputerName "Computer01" -UserName "User01" -ForceLogout
 
+    Example 3:
+    --------------------------------
     Invoke-LocalProfileCleanup -UserName "User01"
 
+    Example 4:
+    --------------------------------
     Invoke-LocalProfileCleanup -UserName "User01" -ForceLogout
+
+
+FUNCTIONS
+    Invoke-RemoteProfileCleanup
+    Invoke-LocalProfileCleanup
+
+SEE ALSO
+    Get-Help
+    Get-Command
+    Get-Member
+
+KEYWORDS
+    System Repair, Maintenance, Troubleshoot, Windows
+
+AUTHOR
+    Wolfram Halatschek
+    E-Mail: halatschek.wolfram@gmail.com
+
+COPYRIGHT
+    © 2024 Wolfram Halatschek. All rights reserved.

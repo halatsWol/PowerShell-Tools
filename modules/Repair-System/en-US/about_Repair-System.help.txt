@@ -73,7 +73,8 @@ KEYWORDS
     System Repair, Maintenance, Troubleshoot, Windows
 
 AUTHOR
-    Your Name
+    Wolfram Halatschek
+    E-Mail: halatschek.wolfram@gmail.com
 
 COPYRIGHT
-    © 2023 Your Organization. All rights reserved.
+    © 2024 Wolfram Halatschek. All rights reserved.
