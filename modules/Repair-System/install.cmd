@@ -9,11 +9,11 @@ if not exist "%destinationPath%" (
     mkdir "%destinationPath%"
 )
 if not exist "%destinationPathHelp%" (
-    mkdir "%destinationPathHelp%
+    mkdir "%destinationPathHelp%"
 )
 copy "%sourcePath%Repair-System.psm1" "%destinationPath%"
 copy "%sourcePath%Repair-System.psd1" "%destinationPath%"
-copy "%sourcePath%\en-US\about_Repair-System.help.txt" "%destinationHelpPath%"
+copy "%sourcePath%en-US\about_Repair-System.help.txt" "%destinationPathHelp%"
 
 REM Check if the copy was successful
 if %errorlevel% equ 0 (
