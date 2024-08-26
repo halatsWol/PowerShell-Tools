@@ -3,12 +3,17 @@ setlocal
 
 set "sourcePath=%~dp0"
 set "destinationPath=%programfiles%\WindowsPowerShell\Modules\Repair-System"
+set "destinationPathHelp=%destinationPath%\en-US"
 
 if not exist "%destinationPath%" (
     mkdir "%destinationPath%"
 )
+if not exist "%destinationPathHelp%" (
+    mkdir "%destinationPathHelp%
+)
 copy "%sourcePath%Repair-System.psm1" "%destinationPath%"
 copy "%sourcePath%Repair-System.psd1" "%destinationPath%"
+copy "%sourcePath%\en-US\about_Repair-System.help.txt" "%destinationHelpPath%"
 
 REM Check if the copy was successful
 if %errorlevel% equ 0 (
