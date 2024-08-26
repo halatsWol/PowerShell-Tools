@@ -7,8 +7,13 @@ set "destinationPath=%programfiles%\WindowsPowerShell\Modules\Cleanup-Profile"
 if not exist "%destinationPath%" (
     mkdir "%destinationPath%"
 )
+if not exist "%destinationPath%\en-US" (
+    mkdir "%destinationPath%\en-US"
+)
+
 copy "%sourcePath%Cleanup-Profile.psm1" "%destinationPath%"
 copy "%sourcePath%Cleanup-Profile.psd1" "%destinationPath%"
+copy "%sourcePath%about_Cleanup-Profile.help.txt" "%destinationPath%\en-US\"
 
 REM Check if the copy was successful
 if %errorlevel% equ 0 (
