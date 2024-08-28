@@ -27,6 +27,12 @@ function Repair-RemoteSystem {
     .PARAMETER WindowsUpdateCleanup
     When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
 
+    .PARAMETER KeepLogs
+    When specified, log files will be kept on the remote Device, but still be copied to the Client
+
+    .PARAMETER noCopy
+    When specified, log files will not be copied to the Client. this will automatically use '-KeepLogs'
+
     .EXAMPLE
     Repair-RemoteSystem -ComputerName <remote-device>
 
@@ -96,20 +102,26 @@ function Repair-RemoteSystem {
         [ValidatePattern('^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')]
         [string]$ComputerName,
 
-        [Parameter(Mandatory = $false, Position=1)]
+        [Parameter(Mandatory = $false)]
         [switch]$noSfc,
 
-        [Parameter(Mandatory = $false, Position=2)]
+        [Parameter(Mandatory = $false)]
         [switch]$noDism,
 
-        [Parameter(Mandatory = $false, Position=3)]
+        [Parameter(Mandatory = $false)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory = $false, Position=4)]
+        [Parameter(Mandatory = $false)]
         [switch]$IncludeComponentCleanup,
 
-        [Parameter(Mandatory = $false, Position=5)]
-        [switch]$WindowsUpdateCleanup
+        [Parameter(Mandatory = $false)]
+        [switch]$WindowsUpdateCleanup,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$KeepLogs,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$noCopy
 
     )
     $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
@@ -360,8 +372,8 @@ function Repair-RemoteSystem {
                         Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
                     } catch {
                         $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
-                        Write-Error $softDistErr
                         Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
+                        Write-Error $softDistErr
                         start-service $servicesStart
                         return 2
                     }
@@ -374,8 +386,8 @@ function Repair-RemoteSystem {
                         $softDist = $true
                     } catch {
                         $softDistErr= "[$using:currentDateTime] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
-                        Write-Error $softDistErr
                         Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
+                        Write-Error $softDistErr
                         start-service $servicesStart
                         return 1
                     }
@@ -386,8 +398,8 @@ function Repair-RemoteSystem {
                         Remove-Item -Path $catroot2BackupPath -Recurse -Force
                     } catch {
                         $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
-                        Write-Error $cat2Err
                         Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
+                        Write-Error $cat2Err
                         start-service $servicesStart
                         return 2
                     }
@@ -400,8 +412,8 @@ function Repair-RemoteSystem {
                         $cat2 = $true
                     } catch {
                         $cat2Err= "[$using:currentDateTime] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
-                        Write-Error $cat2Err
                         Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
+                        Write-Error $cat2Err
                         start-service $servicesStart
                         return 1
                     }
@@ -426,8 +438,8 @@ function Repair-RemoteSystem {
                 Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$successMessage"
             } catch {
                 $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
-                Write-Error $errorMessage
                 Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$errorMessage"
+                Write-Error $errorMessage
                 return 1
             }
         } -Verbose:$VerboseOption
@@ -480,8 +492,8 @@ function Repair-RemoteSystem {
                 }
             } catch {
                 $errorMessage = "An error occurred while creating the zip file: $_"
-                Write-Error $message
                 Add-Content -Path $using:zipErrorLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
+                Write-Error $message
                 return 1
             }
             return 0
@@ -492,22 +504,37 @@ function Repair-RemoteSystem {
     }
 
 
+    $extmsg= "`r`nSystem-Repair on $ComputerName successfully performed."
+    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     # Copy log files to local machine
-    if (-not (Test-Path -Path $localTempPath)) {
-        New-Item -Path $localTempPath -ItemType Directory -Force
-    }
-    Copy-Item -Path "\\$ComputerName\C$\_temp\*" -Destination $localTempPath -Recurse -Force
+    if (-not $noCopy){
+        if (-not (Test-Path -Path $localTempPath)) {
+            New-Item -Path $localTempPath -ItemType Directory -Force
+        }
+        Copy-Item -Path "\\$ComputerName\C$\_temp\*" -Destination $localTempPath -Recurse -Force
 
-    # Clear remote _temp folder if copy was successful
-    if ($?) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            Remove-Item -Path "C:\_temp\*" -Recurse -Force
-        } -Verbose:$VerboseOption
-    }
+        # Clear remote _temp folder if copy was successful
 
+        if ($?) {
+            if(-not $KeepLogs){
+                Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                    Remove-Item -Path "C:\_temp\*" -Recurse -Force
+                } -Verbose:$VerboseOption
+                $extmsg+= $extmsglLogP
+            } else {
+                $extmsg+= $extmsgrLogP
+            }
+        } else {
+            $message = "An error occurred while copying the log files from $ComputerName."
+            Write-Error $message
+            $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
+        }
+    } else {
+        $extmsg+= $extmsgrLogP
+    }
     Start-Sleep -Seconds 2
-
-    Write-Host "`r`nSystem-Repair on $ComputerName successfully performed.`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    Write-Host $extmsg
     $exitCode=$exitCode | Sort-Object {$_} -Descending
     $exitCode = $exitCode -join ""
     $global:LASTEXITCODE = $ExitCode

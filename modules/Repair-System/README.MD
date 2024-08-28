@@ -51,13 +51,17 @@ Repair-RemoteSystem -ComputerName <remote-device> -WindowsUpdateCleanup
 - **WinRM**: Must be enabled and configured on the remote computer.
 - **Administrative Privileges**: Running this script may require administrative privileges on the remote computer.
     For this, Powershell must be started as the user, which has administrative privileges on the remote computer.
- 
- 
+
+
 ### `Repair-LocalSystem`
 
 This function performs the same tasks as [Repair-RemoteSystem](#Repair-RemoteSystem) but only on the local machine. Therefore the `-ComputerName` parameter is not available
 
 Additionally `WinRM` is not required for Repair-LocalSystem
+
+**Hint**
+ `Repair-LocalSystem` is currently behind `Repair-RemoteSystem` in functionality (and Error-Handling)
+ please check ```Get-Help Repair-LocalSystem``` for the available functions
 
 ## Notes
 
