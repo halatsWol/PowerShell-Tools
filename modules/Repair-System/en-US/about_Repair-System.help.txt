@@ -27,38 +27,44 @@ LONG DESCRIPTION
     reducing downtime and improving overall performance.
 
 EXAMPLES
+
     Example 1: Repair corrupted system files remotely
-    --------------------------------
+    -----------------------------------------------
     PS C:\> Repair-RemoteSystem -ComputerName <remote-device>
 
     This example repairs corrupted system files using the System File Checker (SFC) tool and runs
     DISM Scan and if required DISM Restore on a Remote Machine.
 
+
     Example 2: Repair corrupted system files locally
-    ----------------------------------------
+    -----------------------------------------------
     PS C:\> Repair-LocalSystem
 
     This example repairs corrupted system files using the System File Checker (SFC) tool and runs
     DISM Scan and if required DISM Restore on the Local Macine.
 
+
     Example 3: Repair corrupted system files remotely with Component Cleanup
-    -----------------------------------
+    -----------------------------------------------
     PS C:\> Repair-RemoteSystem -ComputerName <remote-device> -IncludeComponentCleanup
 
     This example performs the same Tasks as Example 1 but additionally checks the ComponentStore for issues
 
+
     Example 4: Repair corrupted system files locally with Component Cleanup
-    ---------------------------
+    -----------------------------------------------
     PS C:\> Repair-LocalSystem -IncludeComponentCleanup
 
     This example performs the same Tasks as Example 2 but additionally checks the ComponentStore for issues
 
+
     Example 5: Diagnose network issues
-    ----------------------------------
+    -----------------------------------------------
     PS C:\> Repair-LocalSystem -WindowsUpdateCleanup
 
     This example performs the same Tasks as Example 2 but additionally cleans up the Windows Update Cache to fix
     issues regarding Windows Udates.
+
 
 FUNCTIONS
     Repair-RemoteSystem
