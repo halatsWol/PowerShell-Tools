@@ -12,6 +12,10 @@ function Repair-RemoteSystem {
     .PARAMETER ComputerName
     The hostname or IP address of the remote computer where the system repair will be performed.
 
+    .PARAMETER remoteShareDrive
+    The ShareDrive of the Remote-Device on which Windows is installed. If non is provided, Default-Value 'C$' will be used
+    The Command `Repair-RemoteSystem -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path `\\SomeDevice\D$\`
+
     .PARAMETER noSfc
     When specified, the `SCF /SCANNOW` command is skipped.
 
@@ -37,6 +41,12 @@ function Repair-RemoteSystem {
     Repair-RemoteSystem -ComputerName <remote-device>
 
     Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
+
+    .EXAMPLE
+    Repair-RemoteSystem -ComputerName SomeDevice -remoteShareDrive D$
+
+    Will connect to `\\SomeDevice\D$\`. This can be used if the SystemRoot (installation of Windows) is either not on Drive C:,
+    or if the Share-Drive has a different Name (eg access via `\\SomeDevice\C\` instead of C$)
 
     .EXAMPLE
     Repair-RemoteSystem <remote-device> -noDism
@@ -102,6 +112,9 @@ function Repair-RemoteSystem {
         [ValidatePattern('^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')]
         [string]$ComputerName,
 
+        [Parameter(Mandatory=$false,Position=0)]
+        [string]$remoteShareDrive,
+
         [Parameter(Mandatory = $false)]
         [switch]$noSfc,
 
@@ -152,10 +165,14 @@ function Repair-RemoteSystem {
     }
 
 
-
+    $shareDrive="C$"
+    if($remoteShareDrive -ne ""){
+        $shareDrive=$remoteShareDrive
+    }
+    $shareDrivePath="\\$ComputerName\$shareDrive"
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-    $remoteTempPath = "\\$ComputerName\C$\_temp"
+    $remoteTempPath = "$shareDrivePath\_temp"
     $localTempPath = "C:\remote-Files\$ComputerName"
     $sfcLog = "$remoteTempPath\sfc-scannow_$currentDateTime.log"
     $dismScanLog = "$remoteTempPath\dism-scan_$currentDateTime.log"
@@ -178,6 +195,23 @@ function Repair-RemoteSystem {
         }
         Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
         $ExitCode[0]=3
+        $exitCode=$exitCode | Sort-Object {$_} -Descending
+        $exitCode = $exitCode -join ""
+        $global:LASTEXITCODE = $ExitCode
+        break
+    }
+
+    try{
+        Test-Path "$shareDrivePath\Windows"
+    } catch {
+        $errmsg="[$using:currentDateTime] - ERROR:`tNo Windows Directory found on Remote Device`r`nTested:`t'$shareDrivePath\Windows'"
+        $errmsg+="`r`nPlease check if The ShareDrive '$shareDrivePath' exists and is accessible!"
+        Write-Error $errmsg
+        if (-not (Test-Path -Path $localTempPath)) {
+            New-Item -Path $localTempPath -ItemType Directory -Force
+        }
+        Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$errmsg"
+        $ExitCode[0]=4
         $exitCode=$exitCode | Sort-Object {$_} -Descending
         $exitCode = $exitCode -join ""
         $global:LASTEXITCODE = $ExitCode
