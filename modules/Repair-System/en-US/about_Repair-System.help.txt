@@ -58,7 +58,7 @@ EXAMPLES
     This example performs the same Tasks as Example 2 but additionally checks the ComponentStore for issues
 
 
-    Example 5: Diagnose network issues
+    Example 5: Cleanup Windows Update Cache
     -----------------------------------------------
     PS C:\> Repair-LocalSystem -WindowsUpdateCleanup
 
