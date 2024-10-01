@@ -78,7 +78,7 @@ Additionally `WinRM` is not required for Repair-LocalSystem
 
 - **Author**: Wolfram Halatschek
 - **Contact**: halatschek.wolfram@gmail.com
-- **Date**: August 24, 2024
+- **Date**: October 01, 2024
 
 ## Warnings
 
