@@ -437,7 +437,7 @@ function Repair-RemoteSystem {
     }
 
     if ($WindowsUpdateCleanup) {
-        $servicesStart=@("msiserver","bits","wuauserv","appidsvc","cryptsvc")
+        $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver")
         $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             try {
                 Write-Host "Starting Windows Update Cleanup..."
@@ -905,7 +905,7 @@ function Repair-LocalSystem {
             $softDistErr=""
             $cat2= $false
             $cat2Err=""
-            stop-service @("wuauserv","bits","appidsvc","cryptsvc")
+            stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver")
             if (Test-Path -Path $softwareDistributionBackupPath) {
                 Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
                 Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
@@ -936,7 +936,7 @@ function Repair-LocalSystem {
                     Write-Verbose $cat2Err
                 }
             }
-            start-service @("bits","wuauserv","appidsvc","cryptsvc")
+            start-service @("bits","wuauserv","appidsvc","cryptsvc","msiserver")
             $successMessage = "Windows Update Cleanup successfully."
             if($softDist){
                 $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
