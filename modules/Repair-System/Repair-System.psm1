@@ -145,7 +145,7 @@ function Repair-RemoteSystem {
         [switch]$noCopy
 
     )
-    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
+    $ExitCode=0,0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
 
     # check if verbose param is set in command execution
     $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
