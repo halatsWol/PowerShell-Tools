@@ -107,6 +107,10 @@ function Invoke-RemoteProfileCleanup {
     $regUserPath = "HKU:\"
     $ExitCode = 0,0,0,0,0
 
+    if (-not (Test-Path -Path $remoteTempPath)) {
+        New-Item -Path $remoteTempPath -ItemType Directory -Force
+    }
+
 
     # Ping the remote computer to check availability
     $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
@@ -151,8 +155,6 @@ function Invoke-RemoteProfileCleanup {
                 # Remove every space two or more spaces
                 $_ = $_ -replace "\s\s+",""
                 $_ = $_ -replace ">" , ""
-                # for debug purposes, comment out above row and uncomment row below
-                #$_ = $_ -replace "\s","_"
 
                 # output to pipe
                 $_

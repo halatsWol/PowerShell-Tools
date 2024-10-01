@@ -20,11 +20,16 @@ This function performs the following tasks on a specified remote computer:
 #### Parameters
 
 - **`-ComputerName`** (Mandatory): The hostname or IP address of the remote computer.
+- **`-remoteShareDrive`** (Optional):The ShareDrive of the Remote-Device on which Windows is installed. If non is provided, Default-Value 'C$' will be used
+    The Command `Repair-RemoteSystem -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path *\\\\SomeDevice\\D$\\*
 - **`-noSfc`** (Optional): When specified, `sfc /scannow` command will be skipped.
 - **`-noDism`** (Optional): When specified, all DISM commands will be skipped. This cannot be used in combination with `-IncludeComponentCleanup`.
 - **`-Quiet`** (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
 - **`-IncludeComponentCleanup`** (Optional): Analyzes and if recommended cleans up the Windows Component Store. This cannot be used in combination with `-noDism`.
 - **`-WindowsUpdateCleanup`** (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update Cache cleanup.
+- **`-sccmCleanup`** (Optional): deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder
+- **`-KeepLogs`** (Optional): log files will be kept on the remote Device, but still be copied to the Client
+- **`-noCopy`** (Optional): log files will not be copied to the Client. this will automatically use '-KeepLogs'
 
 #### Examples
 

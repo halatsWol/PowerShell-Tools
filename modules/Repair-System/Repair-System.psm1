@@ -28,6 +28,9 @@ function Repair-RemoteSystem {
     .PARAMETER IncludeComponentCleanup
     When specified, performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, performs `DISM /Online /Cleanup-Image /StartComponentCleanup`.
 
+    .PARAMETER sccmCleanup
+    When specified, deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder.
+
     .PARAMETER WindowsUpdateCleanup
     When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
 
@@ -91,8 +94,10 @@ function Repair-RemoteSystem {
     Position 3: Dism Restore Healt
     Position 4: Dism Analyse Component Store
     Position 5: Dism Component Cleanup
-    Position 6: Windows Update Cleanup
-    Position 7: Zip CBS/DISM Logs
+    Position 6: SCCM Cleanup
+    Position 7: Windows Update Cleanup
+    Position 8: Zip CBS/DISM Logs
+
 
     Except for Position 0, the exit code is the return value of the corresponding command.
     If the command was not executed, the exit code is 0.
@@ -103,7 +108,7 @@ function Repair-RemoteSystem {
 
     Author: Wolfram Halatschek
     E-Mail: halatschek.wolfram@gmail.com
-    Date: 2024-08-24
+    Date: 2024-10-01
     #>
 
     [CmdletBinding()]
@@ -129,6 +134,9 @@ function Repair-RemoteSystem {
 
         [Parameter(Mandatory = $false)]
         [switch]$WindowsUpdateCleanup,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$sccmCleanup,
 
         [Parameter(Mandatory=$false)]
         [switch]$KeepLogs,
@@ -182,6 +190,7 @@ function Repair-RemoteSystem {
     $zipFile = "$remoteTempPath\cbsDism-logs_$currentDateTime.zip"
     $zipErrorLog = "$remoteTempPath\zip-errors_$currentDateTime.log"
     $updateCleanupLog = "$remoteTempPath\update-cleanup_$currentDateTime.log"
+    $sccmCleanupLog = "$remoteTempPath\sccm-cleanup_$currentDateTime.log"
 
     try{
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -338,7 +347,7 @@ function Repair-RemoteSystem {
 
             # Check the output and perform cleanup if recommended
             $message = ""
-            if ($analyzeExit -eq 0 ) {
+            if ($analyzeExit -eq 0 -or $analyzeExit -eq "") {
                 $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                     $lines = Get-Content -Path $using:analyzeComponentLog
                     $analyzeComponentLogData = $lines[-1..-($lines.Count)]
@@ -386,8 +395,49 @@ function Repair-RemoteSystem {
 
     }
 
+    if ($sccmCleanup) {
+        $sccmCleanupResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            Write-Verbose "executing SCCM Cleanup"
+            if (Test-Path -Path "$env:windir\ccmcache") {
+                try{
+                    Remove-Item -Path "$env:windir\ccmcache\*" -Recurse -Force
+                    return 0
+                } catch {
+                    $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
+                    Write-Error $errorMessage
+                    Add-Content -Path $using:sccmCleanupLog -Value $errorMessage
+                    return 1
+                }
+            } else {
+                $msg = "CCM Cache folder does not exist. No need to delete."
+                Write-Verbose $msg
+                Add-Content -Path $using:sccmCleanupLog -Value $msg
+                return 0
+            }
+
+            if (Test-Path -Path "$env:windir\SoftwareDistribution\Download") {
+                try{
+                    Remove-Item -Path "$env:windir\SoftwareDistribution\Download\*" -Recurse -Force
+                    return 0
+                } catch {
+                    $errorMessage = "An error occurred while Cleaning SoftwareDistribution\Download: `r`n$_"
+                    Write-Error $errorMessage
+                    Add-Content -Path $using:sccmCleanupLog -Value $errorMessage
+                    return 1
+                }
+            } else {
+                $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
+                Write-Verbose $msg
+                Add-Content -Path $using:sccmCleanupLog -Value $msg
+                return 0
+            }
+        } -Verbose:$VerboseOption
+        $ExitCode[6]=$sccmCleanupResult
+
+    }
+
     if ($WindowsUpdateCleanup) {
-        $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc")
+        $servicesStart=@("msiserver","bits","wuauserv","appidsvc","cryptsvc")
         $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             try {
                 Write-Host "Starting Windows Update Cleanup..."
@@ -399,7 +449,7 @@ function Repair-RemoteSystem {
                 $softDistErr=""
                 $cat2= $false
                 $cat2Err=""
-                stop-service @("wuauserv","bits","appidsvc","cryptsvc")
+                stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver")
                 if (Test-Path -Path $softwareDistributionBackupPath) {
                     Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
                     try{
@@ -480,7 +530,7 @@ function Repair-RemoteSystem {
         if($updateCleanupExit -ne 0){
             Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
         }
-        $ExitCode[6]=$updateCleanupExit
+        $ExitCode[7]=$updateCleanupExit
     }
 
 
@@ -532,9 +582,9 @@ function Repair-RemoteSystem {
             }
             return 0
         } -Verbose:$VerboseOption
-        $ExitCode[7]=$zipErrorCode
+        $ExitCode[8]=$zipErrorCode
     } else {
-        $ExitCode[7]=0
+        $ExitCode[8]=0
     }
 
 
