@@ -181,16 +181,17 @@ function Repair-RemoteSystem {
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
     $remoteTempPath = "$shareDrivePath\_temp"
+    $localremoteTempPath="C:\_temp"
     $localTempPath = "C:\remote-Files\$ComputerName"
-    $sfcLog = "$remoteTempPath\sfc-scannow_$currentDateTime.log"
-    $dismScanLog = "$remoteTempPath\dism-scan_$currentDateTime.log"
-    $dismRestoreLog = "$remoteTempPath\dism-restore_$currentDateTime.log"
-    $analyzeComponentLog = "$remoteTempPath\analyze-component_$currentDateTime.log"
-    $componentCleanupLog = "$remoteTempPath\component-cleanup_$currentDateTime.log"
-    $zipFile = "$remoteTempPath\cbsDism-logs_$currentDateTime.zip"
-    $zipErrorLog = "$remoteTempPath\zip-errors_$currentDateTime.log"
-    $updateCleanupLog = "$remoteTempPath\update-cleanup_$currentDateTime.log"
-    $sccmCleanupLog = "$remoteTempPath\sccm-cleanup_$currentDateTime.log"
+    $sfcLog = "$localremoteTempPath\sfc-scannow_$currentDateTime.log"
+    $dismScanLog = "$localremoteTempPath\dism-scan_$currentDateTime.log"
+    $dismRestoreLog = "$localremoteTempPath\dism-restore_$currentDateTime.log"
+    $analyzeComponentLog = "$localremoteTempPath\analyze-component_$currentDateTime.log"
+    $componentCleanupLog = "$localremoteTempPath\component-cleanup_$currentDateTime.log"
+    $zipFile = "$localremoteTempPath\cbsDism-logs_$currentDateTime.zip"
+    $zipErrorLog = "$localremoteTempPath\zip-errors_$currentDateTime.log"
+    $updateCleanupLog = "$localremoteTempPath\update-cleanup_$currentDateTime.log"
+    $sccmCleanupLog = "$localremoteTempPath\sccm-cleanup_$currentDateTime.log"
 
     try{
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
@@ -401,6 +402,7 @@ function Repair-RemoteSystem {
             if (Test-Path -Path "$env:windir\ccmcache") {
                 try{
                     Remove-Item -Path "$env:windir\ccmcache\*" -Recurse -Force
+                    Add-Content -Path $using:sccmCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$env:windir\ccmcache\ cleaned`r`n"
                     return 0
                 } catch {
                     $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
@@ -418,6 +420,7 @@ function Repair-RemoteSystem {
             if (Test-Path -Path "$env:windir\SoftwareDistribution\Download") {
                 try{
                     Remove-Item -Path "$env:windir\SoftwareDistribution\Download\*" -Recurse -Force
+                    Add-Content -Path $using:sccmCleanupLog -Value "`r`n[$using:currentDateTime] - INFO:`r`n`t$env:windir\SoftwareDistribution\Download\ cleaned`r`n"
                     return 0
                 } catch {
                     $errorMessage = "An error occurred while Cleaning SoftwareDistribution\Download: `r`n$_"
@@ -433,7 +436,6 @@ function Repair-RemoteSystem {
             }
         } -Verbose:$VerboseOption
         $ExitCode[6]=$sccmCleanupResult
-
     }
 
     if ($WindowsUpdateCleanup) {
@@ -541,20 +543,21 @@ function Repair-RemoteSystem {
             try {
                 $cbsLog = "$env:windir\Logs\CBS\CBS.log"
                 $dismLog = "$env:windir\Logs\dism\dism.log"
+                $localtempPath = "$using:localremoteTempPath"
                 $tempPath = "$using:remoteTempPath"
                 $filesToZip = @()
 
                 # Copy CBS.log to the temporary directory if it exists
                 if (Test-Path $cbsLog) {
-                    Copy-Item -Path $cbsLog -Destination $tempPath
-                    $filesToZip += (Join-Path -Path $tempPath -ChildPath "CBS.log")
+                    Copy-Item -Path $cbsLog -Destination $localtempPath
+                    $filesToZip += (Join-Path -Path $localtempPath -ChildPath "CBS.log")
                 }
 
                 # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
                 if (-not $using:noDism) {
                     if (Test-Path $dismLog) {
-                        Copy-Item -Path $dismLog -Destination $tempPath
-                        $filesToZip += (Join-Path -Path $tempPath -ChildPath "dism.log")
+                        Copy-Item -Path $dismLog -Destination $localtempPath
+                        $filesToZip += (Join-Path -Path $localtempPath -ChildPath "dism.log")
                     }
                 }
 
@@ -588,10 +591,6 @@ function Repair-RemoteSystem {
     }
 
 
-    $extmsg= "`r`nSystem-Repair on $ComputerName successfully performed."
-    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$localTempPath'"
-    $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
-    # Copy log files to local machine
     if (-not $noCopy){
         if (-not (Test-Path -Path $localTempPath)) {
             New-Item -Path $localTempPath -ItemType Directory -Force
@@ -617,12 +616,18 @@ function Repair-RemoteSystem {
     } else {
         $extmsg+= $extmsgrLogP
     }
+
+    $extmsg= "`r`nSystem-Repair on $ComputerName successfully performed."
+    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
+    # Copy log files to local machine
     Start-Sleep -Seconds 2
     Write-Host $extmsg
     $exitCode=$exitCode | Sort-Object {$_} -Descending
     $exitCode = $exitCode -join ""
     $global:LASTEXITCODE = $ExitCode
 }
+
 
 function Repair-LocalSystem {
 
