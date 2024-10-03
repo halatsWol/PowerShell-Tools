@@ -468,7 +468,7 @@ function Repair-RemoteSystem {
                 }
                 if (Test-Path -Path $softwareDistributionPath) {
                     try{
-                        Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+                        Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
                         $softDist = $true
                     } catch {
                         $softDistErr= "[$using:currentDateTime] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
@@ -494,7 +494,7 @@ function Repair-RemoteSystem {
                 }
                 if (Test-Path -Path $catroot2Path) {
                     try{
-                        Rename-Item -Path $catroot2Path -NewName catroot2.bak
+                        Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak
                         $cat2 = $true
                     } catch {
                         $cat2Err= "[$using:currentDateTime] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
