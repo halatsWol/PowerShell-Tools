@@ -24,30 +24,41 @@ function Get-Shortcut {
 	)
 
 	$obj = New-Object -ComObject WScript.Shell
-	$pathUser = [System.Environment]::GetFolderPath('StartMenu')
-	$pathCommon = $obj.SpecialFolders.Item('AllUsersStartMenu')
-	$path = Get-ChildItem $pathUser, $pathCommon -Filter *.lnk -Recurse
-	$path = Get-ChildItem $path -Filter *.lnk
+	# Check if Path is a single file or a folder
+	if (Test-Path -Path $Path -PathType Leaf) {
+		# If it's a single file
+		$shortcutFiles = Get-ChildItem $Path -Filter *.lnk
+	} elseif (Test-Path -Path $Path -PathType Container) {
+		# If it's a folder, search for .lnk files recursively
+		$shortcutFiles = Get-ChildItem $Path -Filter *.lnk -Recurse
+	} else {
+		Write-Error "The specified path '$Path' does not exist."
+		return
+	}
 
-	$path | ForEach-Object {
-		if ($_ -is [string]) {
-			$_ = Get-ChildItem $_ -Filter *.lnk
-		}
-		if ($_) {
-			$link = $obj.CreateShortcut($_.FullName)
+	$shortcutFiles | ForEach-Object {
+		try{
+			if ($_ -is [string]) {
+				$_ = Get-ChildItem $_ -Filter *.lnk
+			}
+			if ($_) {
+				$link = $obj.CreateShortcut($_.FullName)
 
-			$info = @{}
-			$info.Hotkey = $link.Hotkey
-			$info.TargetPath = $link.TargetPath
-			$info.LinkPath = $link.FullName
-			$info.Arguments = $link.Arguments
-			$info.Target = try { Split-Path $info.TargetPath -Leaf } catch { 'n/a' }
-			$info.Link = try { Split-Path $info.LinkPath -Leaf } catch { 'n/a' }
-			$info.WindowStyle = $link.WindowStyle
-			$info.IconLocation = $link.IconLocation
-			$info.WorkingDirectory = $link.WorkingDirectory
+				$info = @{}
+				$info.Hotkey = $link.Hotkey
+				$info.TargetPath = $link.TargetPath
+				$info.LinkPath = $link.FullName
+				$info.Arguments = $link.Arguments
+				$info.Target = try { Split-Path $info.TargetPath -Leaf } catch { 'n/a' }
+				$info.Link = try { Split-Path $info.LinkPath -Leaf } catch { 'n/a' }
+				$info.WindowStyle = $link.WindowStyle
+				$info.IconLocation = $link.IconLocation
+				$info.WorkingDirectory = $link.WorkingDirectory
 
-			New-Object PSObject -Property $info
+				New-Object PSObject -Property $info
+			}
+		} catch {
+			Write-Error "Failed to retrieve information for the shortcut: $_"
 		}
 	}
 }
