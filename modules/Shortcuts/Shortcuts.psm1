@@ -114,7 +114,7 @@ function Set-Shortcut {
 
 
 	if(-not $IconLocation){
-		$IconLocation = ',1'
+		$IconLocation = ',0'
 	}
 	# if WorkingDirectory is not set, use the target directory
 	if (-not $PSCmdlet.MyInvocation.BoundParameters.ContainsKey('WorkingDirectory')) {
