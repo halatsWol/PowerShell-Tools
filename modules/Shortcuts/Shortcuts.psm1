@@ -120,4 +120,4 @@ function Set-Shortcut {
 
 }
 
-Export-ModuleMember -Function Set-Shortcut, Get-Shortcut
+Export-ModuleMember -Function Get-Shortcut,Set-Shortcut
