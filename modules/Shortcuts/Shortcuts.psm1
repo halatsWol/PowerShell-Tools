@@ -95,19 +95,19 @@ function Set-Shortcut {
 		[Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
 		[string]$LinkPath,
 
-		[Patameter(Mandatory=$false)]
+		[Parameter(Mandatory=$false)]
 		[string]$Hotkey,
 
-		[Patameter(Mandatory=$false)]
+		[Parameter(Mandatory=$false)]
 		[string]$IconLocation,
 
-		[Patameter(Mandatory=$false)]
+		[Parameter(Mandatory=$false)]
 		[string]$Arguments,
 
-		[Patameter(Mandatory=$true)]
+		[Parameter(Mandatory=$true)]
 		[string]$TargetPath,
 
-		[Patameter(Mandatory=$false)]
+		[Parameter(Mandatory=$false)]
 		[string]$WorkingDirectory
 	)
 
