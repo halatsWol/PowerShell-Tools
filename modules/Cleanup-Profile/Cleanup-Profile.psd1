@@ -24,7 +24,7 @@ GUID = 'da2b9dd1-c2d6-4236-917d-5d5a1a59726d'
 Author = 'Wolfram Halatschek'
 
 # Company or vendor of this module
-CompanyName = 'Unknown'
+#CompanyName = 'Unknown'
 
 # Copyright statement for this module
 Copyright = '(c) Wolfram Halatschek. All rights reserved.'
