@@ -65,7 +65,7 @@ Set-Shortcut -LinkPath 'C:\Users\Public\Desktop\MyShortcut.lnk' -TargetPath 'C:\
 
 - **Author**: Wolfram Halatschek
 - **Contact**: halatschek.wolfram@gmail.com
-- **Date**: October 0, 2024
+- **Date**: October 04, 2024
 
 ## Warnings
 
