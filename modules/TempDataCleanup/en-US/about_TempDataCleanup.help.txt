@@ -1,0 +1,63 @@
+TempDataCleanup PowerShell Module
+=================================
+
+Overview:
+---------
+The TempDataCleanup PowerShell module is designed to clean up temporary files from both user profiles and system folders. It supports local and remote execution, making it useful for freeing up disk space and enhancing system performance across multiple machines. By using this module, you can automate the removal of temporary files, ensuring a cleaner, more efficient environment.
+
+
+Functionality:
+--------------
+Invoke-TempDataCleanup:
+This core function handles the cleanup of temporary files in user profiles and, optionally, system folders. You can specify whether to clean files only from user directories or to include system-wide temporary directories by using the Full switch. This function supports remote execution through PowerShell remoting.
+
+
+Parameters:
+-----------
+- ComputerName (Mandatory): Specifies the computer where the cleanup will be run. Defaults to the local machine (localhost).
+- Full (Optional): When this switch is used, system folders (such as Temp, Prefetch, and SoftwareDistribution) will also be cleaned up.
+
+
+Examples:
+---------
+# Clean up temporary files from user profiles on the local machine
+Invoke-TempDataCleanup -ComputerName "localhost"
+
+# Clean up temporary files from user profiles on a remote computer
+Invoke-TempDataCleanup -ComputerName "Computer01"
+
+# Perform a full cleanup (user and system temp files) on the local computer
+Invoke-TempDataCleanup -ComputerName "localhost" -Full
+
+# Perform a full cleanup (user and system temp files) on a remote computer
+Invoke-TempDataCleanup -ComputerName "Computer01" -Full
+
+
+Requirements:
+-------------
+- Windows PowerShell: This module requires PowerShell to run both locally and on remote machines.
+- WinRM: Windows Remote Management (WinRM) must be enabled and configured on remote computers to run the function remotely.
+- Administrative Privileges: Some tasks, especially those involving system folders, may require administrative rights on the target machine.
+- Network Configuration: If using IP addresses or non-standard network setups, ensure proper configuration for remote execution.
+
+
+Notes:
+------
+- The script is provided "as-is" and is not officially supported by Microsoft.
+- Always test the script thoroughly in non-production environments to prevent unintended file deletions or other system disruptions.
+- Incorrect use of the script may cause system instability or data loss.
+
+
+Author:
+-------
+- Author: Wolfram Halatschek
+- Contact: halatschek.wolfram@gmail.com
+- Date: October 06, 2024
+
+
+Warnings:
+---------
+- ALWAYS REVIEW AND UNDERSTAND THE CODE BEFORE EXECUTING IT.
+- DO NOT RUN THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING.
+- DELETING SYSTEM FILES WITHOUT UNDERSTANDING THEIR FUNCTION CAN CAUSE DATA LOSS OR SYSTEM INSTABILITY.
+- NEVER MAKE CHANGES TO SYSTEM SETTINGS OR DELETE FILES WITHOUT PROPER AUTHORIZATION.
