@@ -85,6 +85,10 @@ function Invoke-TempDataCleanup {
 
     #get user profile folders
     if ($ComputerName -ne $env:ComputerName -and $ComputerName -ne "localhost") {
+        if (-not (Test-Connection -ComputerName $ComputerName -Count 1 -Quiet)) {
+            Write-Warning "Computer $ComputerName is not reachable"
+            return
+        }
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
             foreach ($profile in $userProfiles) {
