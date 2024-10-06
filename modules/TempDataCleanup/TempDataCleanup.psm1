@@ -39,6 +39,20 @@ function Invoke-TempDataCleanup {
 
 
 
+
+    WARNING:
+    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT PERMISSION OR AUTHORIZATION.
+    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT UNDERSTANDING THE CONSEQUENCES.
+    NEVER RUN SCRIPTS FROM UNTRUSTED SOURCES WITHOUT REVIEWING AND UNDERSTANDING THE CODE.
+    DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING. IT MAY CAUSE DATA LOSS OR SYSTEM INSTABILITY.
+
+
+    Author: Wolfram Halatschek
+    E-Mail: halatschek.wolfram@gmail.com
+    Date: 2024-10-06
+    #>
+
+
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
