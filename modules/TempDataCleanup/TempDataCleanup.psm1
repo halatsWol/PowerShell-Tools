@@ -7,7 +7,7 @@ function Invoke-TempDataCleanup {
     This function will clean up temporary files from user profiles and system folders. It can be run on the local computer or on a remote computer.
 
     .PARAMETER ComputerName
-    The name of the computer to run the cleanup on. Default is the local computer.
+    The name of the computer to run the cleanup on. Use "localhost" for the local computer.
 
     .PARAMETER Full
     If this switch is present, the cleanup will also include system folders.

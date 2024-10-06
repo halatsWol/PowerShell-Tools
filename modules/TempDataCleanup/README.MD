@@ -11,7 +11,7 @@ The primary function of this module is `Invoke-TempDataCleanup`, which removes t
 
 #### Parameters
 
-- **`-ComputerName`** (Mandatory): Specifies the name of the computer to run the cleanup on. The default value is the local computer (`localhost`).
+- **`-ComputerName`** (Mandatory): Specifies the name of the computer to run the cleanup on.
 - **`-Full`** (Optional): When this switch is provided, the cleanup will also include system folders such as the Windows `Temp`, `Prefetch`, and `SoftwareDistribution` folders as well as Browser cache of MS Edge, Mozilla Firefox and Google Chrome.
 
 #### Example
