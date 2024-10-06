@@ -1,4 +1,44 @@
 function Invoke-TempDataCleanup {
+    <#
+    .SYNOPSIS
+    Clean up temporary files from user profiles and system folders
+
+    .DESCRIPTION
+    This function will clean up temporary files from user profiles and system folders. It can be run on the local computer or on a remote computer.
+
+    .PARAMETER ComputerName
+    The name of the computer to run the cleanup on. Default is the local computer.
+
+    .PARAMETER Full
+    If this switch is present, the cleanup will also include system folders.
+
+    .EXAMPLE
+    Invoke-TempDataCleanup -ComputerName "Computer01"
+
+    This will clean up temporary files from user profiles on Computer01.
+
+    .EXAMPLE
+    Invoke-TempDataCleanup -ComputerName "Computer01" -Full
+
+    This will clean up temporary files from user profiles and system folders on Computer01.
+
+    .EXAMPLE
+    Invoke-TempDataCleanup -ComputerName "localhost" -Full
+
+    This will clean up temporary files from user profiles and system folders on the local computer.
+
+    .NOTES
+    This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
+    WinRM must be enabled and configured on the remote computer for this script to work. Using IP addresses may require additional configuration.
+    Using this script may require administrative privileges on the remote computer.
+    In a Domain, powershell can be executed locally as the user wich has the necessary permissions on the remote computer.
+
+
+    Further information:
+    https://docs.microsoft.com/en-us/powershell/scripting/learn/remoting/running-remote-commands?view=powershell-5.1
+
+
+
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
@@ -30,16 +70,20 @@ function Invoke-TempDataCleanup {
             )
 
     #get user profile folders
-    if ($ComputerName -ne $env:ComputerName -or $ComputerName -ne "localhost") {
+    if ($ComputerName -ne $env:ComputerName -and $ComputerName -ne "localhost") {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
             foreach ($profile in $userProfiles) {
                 if ($Full){$userTempFolders=$userTempFolders+$extuserTempFolders}
-                foreach ($folder in $userTempFolders) {
-                    $path = "$env:SystemDrive\Users\$profile$folder"
-                    if (Test-Path $path) {
-                        Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                try{
+                    foreach ($folder in $userTempFolders) {
+                        $path = "$env:SystemDrive\Users\$profile$folder"
+                        if (Test-Path $path) {
+                            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                        }
                     }
+                }catch{
+                    Write-Warning "Error while cleaning up $profile :`r`n $_"
                 }
             }
 
@@ -72,5 +116,6 @@ function Invoke-TempDataCleanup {
             }
         }
     }
-
 }
+
+Export-ModuleMember -Function Invoke-TempDataCleanup
