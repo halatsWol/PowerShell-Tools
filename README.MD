@@ -38,6 +38,22 @@ In-Depth documentation and usage help can be retrieved from the README file in e
 The [Repair-System](./modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
 
 
+### [`Shortcuts`](./modules/Shortcuts)
+
+The [Shortcuts](./modules/Shortcuts) module is a tool to print Shortcut-Properties and Create Shortcuts.
+
+
+### [`TempDataCleanup`](./modules/TempDataCleanup)
+
+The [TempDataCleanup](./modules/TempDataCleanup) module is a tool to clean up Temporary Data from a System.
+
+
+### [`Cleanup-Profile`](./modules/Cleanup-Profile)
+
+The [Cleanup-Profile](./modules/Cleanup-Profile) module is a tool to remove a Windows User Profile.
+:bangbang: ``Module not working yet! Do not execute since it will cause damages``
+
+
 ### Upcoming Tools
 
 More scripts and modules will be added to this repository over time. Stay tuned for tools that will assist with:
