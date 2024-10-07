@@ -15,6 +15,9 @@ function Invoke-TempDataCleanup {
     .PARAMETER IncludeBrowserData
     If this switch is present, the cleanup will also include browser cache folders.
 
+    .PARAMETER IncludeMSTeamsCache
+    If this switch is present, the cleanup will also include Microsoft Teams cache folders.
+
     .EXAMPLE
     Invoke-TempDataCleanup -ComputerName "Computer01"
 
@@ -65,7 +68,10 @@ function Invoke-TempDataCleanup {
         [switch]$IncludeSystemData,
 
         [Parameter(Mandatory=$false)]
-        [switch]$IncludeBrowserData
+        [switch]$IncludeBrowserData,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$IncludeMSTeamsCache
 
     )
 
@@ -88,6 +94,8 @@ function Invoke-TempDataCleanup {
         "$env:Windir\Prefetch",
         "$env:Windir\SofwareDistribution\Download"
     )
+    $msTeamsCacheFolder="\AppData\local\Packages\MSTeams_8wekyb3d8bbwe\LocalCache"
+    $teamsClassicPath="\AppData\Roaming\Microsoft\Teams"
 
 
     if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$BrowserData}
@@ -119,12 +127,40 @@ function Invoke-TempDataCleanup {
                     }
                 }
             }
+
+
         }
     } else {
         $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
         foreach ($profile in $userProfiles) {
             foreach ($folder in $userTempFolders) {
                 $path = "$env:SystemDrive\Users\$profile$folder"
+                if (Test-Path $path) {
+                    Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+            if($IncludeMSTeamsCache) {
+                $path = "$env:SystemDrive\Users\$profile$msTeamsCacheFolder"
+                $bgPath="$path\Microsoft\MSTeams"
+                $bgBackupPath="$path\.."
+                #move $msTeamsCacheFolder\Microsoft\MSTeams\Backgrounds to $msTeamsCacheFolder
+                if (Test-Path "$bgPath\Backgrounds") {
+                    Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ErrorAction SilentlyContinue
+                }
+                #cleanup $msTeamsCacheFolder
+                $cpath = "$path\*"
+                if (Test-Path $cpath) {
+                    Remove-Item -Path $cpath -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                #create bgPath
+                if (-not (Test-Path $bgPath)) {
+                    New-Item -Path $bgPath -ItemType Directory -Force -ErrorAction SilentlyContinue
+                }
+                if(Test-Path "$bgBackupPath\Backgrounds") {
+                    Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
+                }
+                #cleanup $teamsClassicPath
+                $path = "$env:SystemDrive\Users\$profile$teamsClassicPath\*"
                 if (Test-Path $path) {
                     Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
                 }

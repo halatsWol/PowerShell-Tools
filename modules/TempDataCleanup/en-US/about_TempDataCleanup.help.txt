@@ -17,6 +17,7 @@ Parameters:
 - ComputerName (Mandatory): Specifies the computer where the cleanup will be run. Defaults to the local machine (localhost).
 - IncludeSystemData (Optional): When this switch is used, system folders (such as Temp, Prefetch, and SoftwareDistribution) will also be cleaned up.
 - IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
+- IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
 
 
 Examples:
