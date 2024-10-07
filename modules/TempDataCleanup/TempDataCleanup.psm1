@@ -33,6 +33,11 @@ function Invoke-TempDataCleanup {
 
     This will clean up temporary files including Browser-Cache Data from user profiles and system folders on the local computer.
 
+    .EXAMPLE
+    Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBrowserData -IncludeMSTeamsCache
+
+    This will clean up temporary files including Browser-Cache Data and Microsoft Teams cache from user profiles and system folders on Computer01.
+
     .NOTES
     This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
     WinRM must be enabled and configured on the remote computer for this script to work. Using IP addresses may require additional configuration.
