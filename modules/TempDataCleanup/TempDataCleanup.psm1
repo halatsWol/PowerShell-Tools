@@ -70,25 +70,27 @@ function Invoke-TempDataCleanup {
     )
 
     $userTempFolders=@(
-            "\AppData\Local\Temp",
-            "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache\0"
-            )
-    $extuserTempFolders=@(
-            "\AppData\Local\Microsoft\Windows\INetCache",
-            "\AppData\Local\Mozilla\Firefox\Profiles\*\cache2",
-            "\AppData\Local\Google\Chrome\User Data\*\Cache",
-            "\AppData\Local\Google\Chrome\User Data\*\Media Cache",
-            "\AppData\Local\Google\Chrome\User Data\*\Code Cache",
-            "\AppData\Local\Google\Chrome\User Data\*\GPUCache",
-            "\AppData\Local\Google\Chrome\User Data\*\Service Worker\CacheStorage",
-            "\AppData\Local\Google\Chrome\User Data\*\Service Worker\ScriptCache"
-            )
+        "\AppData\Local\Temp",
+        "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache\0"
+    )
+    $BrowserData=@(
+        "\AppData\Local\Microsoft\Windows\INetCache",
+        "\AppData\Local\Mozilla\Firefox\Profiles\*\cache2",
+        "\AppData\Local\Google\Chrome\User Data\*\Cache",
+        "\AppData\Local\Google\Chrome\User Data\*\Media Cache",
+        "\AppData\Local\Google\Chrome\User Data\*\Code Cache",
+        "\AppData\Local\Google\Chrome\User Data\*\GPUCache",
+        "\AppData\Local\Google\Chrome\User Data\*\Service Worker\CacheStorage",
+        "\AppData\Local\Google\Chrome\User Data\*\Service Worker\ScriptCache"
+    )
     $systemTempFolders=@(
-            "$env:Windir\Temp",
-            "$env:Windir\Prefetch",
-            "$env:Windir\SofwareDistribution\Download"
-            )
+        "$env:Windir\Temp",
+        "$env:Windir\Prefetch",
+        "$env:Windir\SofwareDistribution\Download"
+    )
 
+
+    if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$BrowserData}
     #get user profile folders
     if ($ComputerName -ne $env:ComputerName -and $ComputerName -ne "localhost") {
         if (-not (Test-Connection -ComputerName $ComputerName -Count 1 -Quiet)) {
@@ -98,7 +100,6 @@ function Invoke-TempDataCleanup {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
             foreach ($profile in $userProfiles) {
-                if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$extuserTempFolders}
                 try{
                     foreach ($folder in $userTempFolders) {
                         $path = "$env:SystemDrive\Users\$profile$folder"
@@ -121,9 +122,7 @@ function Invoke-TempDataCleanup {
         }
     } else {
         $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
-
         foreach ($profile in $userProfiles) {
-            if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$extuserTempFolders}
             foreach ($folder in $userTempFolders) {
                 $path = "$env:SystemDrive\Users\$profile$folder"
                 if (Test-Path $path) {
