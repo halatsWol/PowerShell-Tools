@@ -8,6 +8,9 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 - [Features](#features)
 - [Modules and Scripts](#modules-and-scripts)
   - [Repair-System](#repair-system)
+  - [Shortcuts](./modules/Shortcuts)
+  - [TempDataCleanup](./modules/TempDataCleanup)
+  - [Cleanup-Profile](./modules/Cleanup-Profile)
   - [Upcoming Tools](#upcoming-tools)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -51,7 +54,8 @@ The [TempDataCleanup](./modules/TempDataCleanup) module is a tool to clean up Te
 ### [`Cleanup-Profile`](./modules/Cleanup-Profile)
 
 The [Cleanup-Profile](./modules/Cleanup-Profile) module is a tool to remove a Windows User Profile.
-:bangbang: ``Module not working yet! Do not execute since it will cause damages``
+
+ :bangbang: ``Module not working yet! Do not execute since it will cause damages``
 
 
 ### Upcoming Tools
