@@ -28,11 +28,11 @@ Invoke-TempDataCleanup -ComputerName "localhost"
 # Clean up temporary files from user profiles on a remote computer
 Invoke-TempDataCleanup -ComputerName "Computer01"
 
-# Perform a full cleanup (user and system temp files) on the local computer
-Invoke-TempDataCleanup -ComputerName "localhost" -Full
+# Perform a cleanup (user temp and system temp files) on the local computer
+Invoke-TempDataCleanup -ComputerName "localhost" -IncludeSystemData
 
-# Perform a full cleanup (user and system temp files) on a remote computer
-Invoke-TempDataCleanup -ComputerName "Computer01" -Full
+# Perform a full cleanup (user temp, Browser Cache, MSTeams Cache and system temp files) on a remote computer
+Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBrowserData -IncludeMSTeamsCache
 
 
 Requirements:
