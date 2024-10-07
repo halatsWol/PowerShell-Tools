@@ -15,7 +15,8 @@ This core function handles the cleanup of temporary files in user profiles and, 
 Parameters:
 -----------
 - ComputerName (Mandatory): Specifies the computer where the cleanup will be run. Defaults to the local machine (localhost).
-- Full (Optional): When this switch is used, system folders (such as Temp, Prefetch, and SoftwareDistribution) will also be cleaned up.
+- IncludeSystemData (Optional): When this switch is used, system folders (such as Temp, Prefetch, and SoftwareDistribution) will also be cleaned up.
+- IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
 
 
 Examples:

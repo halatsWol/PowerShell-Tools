@@ -9,8 +9,11 @@ function Invoke-TempDataCleanup {
     .PARAMETER ComputerName
     The name of the computer to run the cleanup on. Use "localhost" for the local computer.
 
-    .PARAMETER Full
+    .PARAMETER IncludeSystemData
     If this switch is present, the cleanup will also include system folders.
+
+    .PARAMETER IncludeBrowserData
+    If this switch is present, the cleanup will also include browser cache folders.
 
     .EXAMPLE
     Invoke-TempDataCleanup -ComputerName "Computer01"
@@ -18,14 +21,14 @@ function Invoke-TempDataCleanup {
     This will clean up temporary files from user profiles on Computer01.
 
     .EXAMPLE
-    Invoke-TempDataCleanup -ComputerName "Computer01" -Full
+    Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData
 
     This will clean up temporary files from user profiles and system folders on Computer01.
 
     .EXAMPLE
-    Invoke-TempDataCleanup -ComputerName "localhost" -Full
+    Invoke-TempDataCleanup -ComputerName "localhost" -IncludeSystemData -IncludeBrowserData
 
-    This will clean up temporary files from user profiles and system folders on the local computer.
+    This will clean up temporary files including Browser-Cache Data from user profiles and system folders on the local computer.
 
     .NOTES
     This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
@@ -59,7 +62,10 @@ function Invoke-TempDataCleanup {
         [string]$ComputerName,
 
         [Parameter(Mandatory=$false)]
-        [switch]$Full
+        [switch]$IncludeSystemData,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$IncludeBrowserData
 
     )
 
@@ -92,7 +98,7 @@ function Invoke-TempDataCleanup {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
             foreach ($profile in $userProfiles) {
-                if ($Full){$userTempFolders=$userTempFolders+$extuserTempFolders}
+                if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$extuserTempFolders}
                 try{
                     foreach ($folder in $userTempFolders) {
                         $path = "$env:SystemDrive\Users\$profile$folder"
@@ -105,7 +111,7 @@ function Invoke-TempDataCleanup {
                 }
             }
 
-            if($Full) {
+            if($IncludeSystemData) {
                 foreach ($folder in $systemTempFolders) {
                     if (Test-Path $folder) {
                         Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
@@ -117,7 +123,7 @@ function Invoke-TempDataCleanup {
         $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
 
         foreach ($profile in $userProfiles) {
-            if ($Full){$userTempFolders=$userTempFolders+$extuserTempFolders}
+            if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$extuserTempFolders}
             foreach ($folder in $userTempFolders) {
                 $path = "$env:SystemDrive\Users\$profile$folder"
                 if (Test-Path $path) {
@@ -126,7 +132,7 @@ function Invoke-TempDataCleanup {
             }
         }
 
-        if($Full) {
+        if($IncludeSystemData) {
             foreach ($folder in $systemTempFolders) {
                 if (Test-Path $folder) {
                     Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
