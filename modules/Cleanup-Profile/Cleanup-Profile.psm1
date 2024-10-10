@@ -37,9 +37,11 @@ function Invoke-RemoteProfileCleanup {
 
     .PARAMETER noPrinters
     If set, the function will not check installed printers and create an install-Printers.cmd File.
+    Not implemented yet.
 
     .PARAMETER noNetDrives
     If set, the function will not check mapped network drives and create an install-NetDrives.cmd File.
+    Not implemented yet.
 
     .PARAMETER Quiet
     If set, the function will not output any information.
@@ -101,7 +103,7 @@ function Invoke-RemoteProfileCleanup {
     $remoteTempPath = "$env:HOMEDRIVE\_temp"
     $cleanupLog=$remoteTempPath+"\cleanupProfileLog_$currentDateTime.log"
     $localTempPath = "C:\remote-Files\$ComputerName"
-    $profilePath = "$env:USERPROFILE\$ProfileName"
+    $profilePath = "$env:HOMEDRIVE\Users\$ProfileName"
     $regProfileListPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
     New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS
     $regUserPath = "HKU:\"
