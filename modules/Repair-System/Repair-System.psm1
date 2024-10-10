@@ -440,94 +440,94 @@ function Repair-RemoteSystem {
 
     if ($WindowsUpdateCleanup) {
         $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            try {
-                Write-Host "Starting Windows Update Cleanup..."
-                $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller")
-                $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
-                $catroot2Path = "$Env:systemroot\system32\catroot2"
-                $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
-                $catroot2BackupPath = "$catroot2Path.bak"
-                $softDist = $false
-                $softDistErr=""
-                $cat2= $false
-                $cat2Err=""
-                stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller")
-                if (Test-Path -Path $softwareDistributionBackupPath) {
-                    Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-                    try{
-                        Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
-                    } catch {
-                        $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
-                        Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
-                        Write-Error $softDistErr
-                        start-service $servicesStart
-                        return 2
-                    }
-                } else {
-                    Write-Verbose "Backup directory does not exist. No need to delete."
+            # try {
+            Write-Host "Starting Windows Update Cleanup..."
+            $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller")
+            $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
+            $catroot2Path = "$Env:systemroot\system32\catroot2"
+            $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
+            $catroot2BackupPath = "$catroot2Path.bak"
+            $softDist = $false
+            $softDistErr=""
+            $cat2= $false
+            $cat2Err=""
+            stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller")
+            if (Test-Path -Path $softwareDistributionBackupPath) {
+                Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
+                try{
+                    Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
+                } catch {
+                    $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
+                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
+                    Write-Error $softDistErr
+                    start-service $servicesStart
+                    return 2
                 }
-                if (Test-Path -Path $softwareDistributionPath) {
-                    try{
-                        Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
-                        $softDist = $true
-                    } catch {
-                        $softDistErr= "[$using:currentDateTime] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
-                        Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
-                        Write-Error $softDistErr
-                        start-service $servicesStart
-                        return 1
-                    }
-                }
-                if (Test-Path -Path $catroot2BackupPath) {
-                    Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-                    try{
-                        Remove-Item -Path $catroot2BackupPath -Recurse -Force
-                    } catch {
-                        $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
-                        Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
-                        Write-Error $cat2Err
-                        start-service $servicesStart
-                        return 2
-                    }
-                } else {
-                    Write-Verbose "Backup directory does not exist. No need to delete."
-                }
-                if (Test-Path -Path $catroot2Path) {
-                    try{
-                        Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak
-                        $cat2 = $true
-                    } catch {
-                        $cat2Err= "[$using:currentDateTime] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
-                        Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
-                        Write-Error $cat2Err
-                        start-service $servicesStart
-                        return 1
-                    }
-                } else {
-                    Write-Verbose "catroot2 folder does not exist. No need to rename."
-                }
-                start-service $servicesStart
-                $successMessage = "Windows Update Cleanup successful."
-                if($softDist){
-                    $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
-                } else {
-                    $successMessage += "`r`n[STATUS]`tRenaming SoftwareDistribution: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-                    if($softDistErr -ne ""){$successMessage += "`r`n[ERROR]`t$softDistErr"}
-                }
-                if($cat2){
-                    $successMessage += "`r`n[SUCCESS]`tcatroot2 folder has been renamed."
-                }else {
-                    $successMessage += "`r`n[STATUS]`tRenaming catroot2: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-                    if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
-                }
-                Write-Verbose $successMessage
-                Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$successMessage"
-            } catch {
-                $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
-                Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$errorMessage"
-                Write-Error $errorMessage
-                return 1
+            } else {
+                Write-Verbose "Backup directory does not exist. No need to delete."
             }
+            if (Test-Path -Path $softwareDistributionPath) {
+                try{
+                    Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak -ErrorAction Continue
+                    $softDist = $true
+                } catch {
+                    $softDistErr= "[$using:currentDateTime] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
+                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
+                    Write-Error $softDistErr
+                    start-service $servicesStart
+                    return 1
+                }
+            }
+            if (Test-Path -Path $catroot2BackupPath) {
+                Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
+                try{
+                    Remove-Item -Path $catroot2BackupPath -Recurse -Force
+                } catch {
+                    $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
+                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
+                    Write-Error $cat2Err
+                    start-service $servicesStart
+                    return 2
+                }
+            } else {
+                Write-Verbose "Backup directory does not exist. No need to delete."
+            }
+            if (Test-Path -Path $catroot2Path) {
+                try{
+                    Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak -ErrorAction Continue
+                    $cat2 = $true
+                } catch {
+                    $cat2Err= "[$using:currentDateTime] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
+                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
+                    Write-Error $cat2Err
+                    start-service $servicesStart
+                    return 1
+                }
+            } else {
+                Write-Verbose "catroot2 folder does not exist. No need to rename."
+            }
+            start-service $servicesStart
+            $successMessage = "Windows Update Cleanup successful."
+            if($softDist){
+                $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
+            } else {
+                $successMessage += "`r`n[STATUS]`tRenaming SoftwareDistribution: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
+                if($softDistErr -ne ""){$successMessage += "`r`n[ERROR]`t$softDistErr"}
+            }
+            if($cat2){
+                $successMessage += "`r`n[SUCCESS]`tcatroot2 folder has been renamed."
+            }else {
+                $successMessage += "`r`n[STATUS]`tRenaming catroot2: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
+                if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
+            }
+            Write-Verbose $successMessage
+            Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$successMessage"
+            # } catch {
+            #     $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
+            #     Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$errorMessage"
+            #     Write-Error $errorMessage
+            #     return 1
+            # }
         } -Verbose:$VerboseOption
         if($updateCleanupExit -ne 0){
             Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
