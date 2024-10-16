@@ -12,6 +12,9 @@ function Invoke-TempDataCleanup {
     .PARAMETER IncludeSystemData
     If this switch is present, the cleanup will also include system folders.
 
+    .PARAMETER IncludeCCMCache
+    If this switch is present, the cleanup will also include the Configuration Manager cache folder, if it exists.
+
     .PARAMETER IncludeBrowserData
     If this switch is present, the cleanup will also include browser cache folders.
 
@@ -73,6 +76,9 @@ function Invoke-TempDataCleanup {
         [switch]$IncludeSystemData,
 
         [Parameter(Mandatory=$false)]
+        [switch]$IncludeCCMCache,
+
+        [Parameter(Mandatory=$false)]
         [switch]$IncludeBrowserData,
 
         [Parameter(Mandatory=$false)]
@@ -101,6 +107,7 @@ function Invoke-TempDataCleanup {
     )
     $msTeamsCacheFolder="\AppData\local\Packages\MSTeams_8wekyb3d8bbwe\LocalCache"
     $teamsClassicPath="\AppData\Roaming\Microsoft\Teams"
+    $ccmCachePath="$env:Windir\ccmcache"
 
 
     if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$BrowserData}
@@ -128,8 +135,14 @@ function Invoke-TempDataCleanup {
             if($IncludeSystemData) {
                 foreach ($folder in $systemTempFolders) {
                     if (Test-Path $folder) {
-                        Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
+                        Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
                     }
+                }
+            }
+
+            if($IncludeCCMCache) {
+                if (Test-Path $ccmCachePath) {
+                    Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
                 }
             }
 
@@ -175,8 +188,14 @@ function Invoke-TempDataCleanup {
         if($IncludeSystemData) {
             foreach ($folder in $systemTempFolders) {
                 if (Test-Path $folder) {
-                    Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
                 }
+            }
+        }
+
+        if($IncludeCCMCache) {
+            if (Test-Path $ccmCachePath) {
+                Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
