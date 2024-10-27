@@ -591,6 +591,9 @@ function Repair-RemoteSystem {
     }
 
 
+    $extmsg= "`r`nSystem-Repair on $ComputerName performed."
+    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     if (-not $noCopy){
         if (-not (Test-Path -Path $localTempPath)) {
             New-Item -Path $localTempPath -ItemType Directory -Force
@@ -617,9 +620,7 @@ function Repair-RemoteSystem {
         $extmsg+= $extmsgrLogP
     }
 
-    $extmsg= "`r`nSystem-Repair on $ComputerName successfully performed."
-    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$localTempPath'"
-    $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
+
     # Copy log files to local machine
     Start-Sleep -Seconds 2
     Write-Host $extmsg
