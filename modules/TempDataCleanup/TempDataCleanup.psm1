@@ -88,13 +88,20 @@ function Invoke-TempDataCleanup {
 
     $userTempFolders=@(
         "\AppData\Local\Temp",
-        "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache"
+        "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache",
+        "\AppData\Local\Microsoft\Office\15.0\Lync\Tracing",
+        "\AppData\Local\Microsoft\Office\16.0\Lync\Tracing",
+        "\AppData\Local\Packages\Microsoft.Windows.Photos_*\LocalCache",
+        "\AppData\Local\Packages\Microsoft.WindowsCamera_*\LocalCache",
+        "\AppData\Local\Microsoft\EdgeWebView\Cache",
+        "\AppData\LocalLow\Sun\Java\Deployment\cache"
     )
     $BrowserData=@(
         # Microsoft Internet Explorer
         "\AppData\Local\Microsoft\Windows\INetCache",
         "\AppData\Local\Microsoft\Windows\INetCookies",
         # Microsoft Edge (Chromium)
+        "\AppData\Local\Microsoft\Edge\User Data\*\Temp",
         "\AppData\Local\Microsoft\Edge\User Data\*\Cache",
         "\AppData\Local\Microsoft\Edge\User Data\*\Media Cache",
         "\AppData\Local\Microsoft\Edge\User Data\*\Code Cache",
@@ -105,6 +112,7 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\Mozilla\Firefox\Profiles\*\cache2",
         "\AppData\Local\Mozilla\Firefox\Profiles\*\storage\default",
         # Google Chrome
+        "\AppData\Local\Google\Chrome\User Data\*\Temp",
         "\AppData\Local\Google\Chrome\User Data\*\Cache",
         "\AppData\Local\Google\Chrome\User Data\*\Media Cache",
         "\AppData\Local\Google\Chrome\User Data\*\Code Cache",
@@ -112,6 +120,7 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\Google\Chrome\User Data\*\Service Worker\CacheStorage",
         "\AppData\Local\Google\Chrome\User Data\*\Service Worker\ScriptCache"
         # Opera
+        "\AppData\Local\Opera Software\Opera Stable\Temp",
         "\AppData\Local\Opera Software\Opera Stable\Cache",
         "\AppData\Local\Opera Software\Opera Stable\Media Cache",
         "\AppData\Local\Opera Software\Opera Stable\Code Cache",
@@ -119,6 +128,7 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\Opera Software\Opera Stable\Service Worker\CacheStorage",
         "\AppData\Local\Opera Software\Opera Stable\Service Worker\ScriptCache",
         # Vivaldi
+        "\AppData\Local\Vivaldi\User Data\*\Temp",
         "\AppData\Local\Vivaldi\User Data\*\Cache",
         "\AppData\Local\Vivaldi\User Data\*\Media Cache",
         "\AppData\Local\Vivaldi\User Data\*\Code Cache",
@@ -126,6 +136,7 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\Vivaldi\User Data\*\Service Worker\CacheStorage",
         "\AppData\Local\Vivaldi\User Data\*\Service Worker\ScriptCache"
         # Brave
+        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Temp",
         "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Cache",
         "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Media Cache",
         "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Code Cache",
