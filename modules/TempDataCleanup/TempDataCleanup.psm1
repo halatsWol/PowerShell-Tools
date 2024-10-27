@@ -88,17 +88,52 @@ function Invoke-TempDataCleanup {
 
     $userTempFolders=@(
         "\AppData\Local\Temp",
-        "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache\0"
+        "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache"
     )
     $BrowserData=@(
+        # Microsoft Internet Explorer
         "\AppData\Local\Microsoft\Windows\INetCache",
+        "\AppData\Local\Microsoft\Windows\INetCookies",
+        # Microsoft Edge (Chromium)
+        "\AppData\Local\Microsoft\Edge\User Data\*\Cache",
+        "\AppData\Local\Microsoft\Edge\User Data\*\Media Cache",
+        "\AppData\Local\Microsoft\Edge\User Data\*\Code Cache",
+        "\AppData\Local\Microsoft\Edge\User Data\*\GPUCache",
+        "\AppData\Local\Microsoft\Edge\User Data\*\Service Worker\CacheStorage",
+        "\AppData\Local\Microsoft\Edge\User Data\*\Service Worker\ScriptCache",
+        # Mozilla Firefox
         "\AppData\Local\Mozilla\Firefox\Profiles\*\cache2",
+        "\AppData\Local\Mozilla\Firefox\Profiles\*\storage\default",
+        # Google Chrome
         "\AppData\Local\Google\Chrome\User Data\*\Cache",
         "\AppData\Local\Google\Chrome\User Data\*\Media Cache",
         "\AppData\Local\Google\Chrome\User Data\*\Code Cache",
         "\AppData\Local\Google\Chrome\User Data\*\GPUCache",
         "\AppData\Local\Google\Chrome\User Data\*\Service Worker\CacheStorage",
         "\AppData\Local\Google\Chrome\User Data\*\Service Worker\ScriptCache"
+        # Opera
+        "\AppData\Local\Opera Software\Opera Stable\Cache",
+        "\AppData\Local\Opera Software\Opera Stable\Media Cache",
+        "\AppData\Local\Opera Software\Opera Stable\Code Cache",
+        "\AppData\Local\Opera Software\Opera Stable\GPUCache",
+        "\AppData\Local\Opera Software\Opera Stable\Service Worker\CacheStorage",
+        "\AppData\Local\Opera Software\Opera Stable\Service Worker\ScriptCache",
+        # Vivaldi
+        "\AppData\Local\Vivaldi\User Data\*\Cache",
+        "\AppData\Local\Vivaldi\User Data\*\Media Cache",
+        "\AppData\Local\Vivaldi\User Data\*\Code Cache",
+        "\AppData\Local\Vivaldi\User Data\*\GPUCache",
+        "\AppData\Local\Vivaldi\User Data\*\Service Worker\CacheStorage",
+        "\AppData\Local\Vivaldi\User Data\*\Service Worker\ScriptCache"
+        # Brave
+        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Cache",
+        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Media Cache",
+        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Code Cache",
+        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\GPUCache",
+        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\CacheStorage",
+        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\ScriptCache"
+
+
     )
     $systemTempFolders=@(
         "$env:Windir\Temp",
@@ -132,7 +167,7 @@ function Invoke-TempDataCleanup {
                     foreach ($folder in $using:userTempFolders) {
                         $path = "$env:SystemDrive\Users\$profile$folder"
                         if (Test-Path $path) {
-                            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                            Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                             Add-Content -Path $using:logfile -Value "`t`t> $path"
                         }
                     }
@@ -149,9 +184,9 @@ function Invoke-TempDataCleanup {
                         Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ErrorAction SilentlyContinue
                     }
                     #cleanup $msTeamsCacheFolder
-                    $cpath = "$path\*"
+                    $cpath = "$path"
                     if (Test-Path $cpath) {
-                        Remove-Item -Path $cpath -Recurse -Force -ErrorAction SilentlyContinue
+                        Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
                         Add-Content -Path $using:logfile -Value "`t`t> $cpath"
                     }
                     #create bgPath
@@ -162,9 +197,9 @@ function Invoke-TempDataCleanup {
                         Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
                     }
                     #cleanup $teamsClassicPath
-                    $path = "$env:SystemDrive\Users\$profile$teamsClassicPath\*"
+                    $path = "$env:SystemDrive\Users\$profile$teamsClassicPath"
                     if (Test-Path $path) {
-                        Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                         Add-Content -Path $using:logfile -Value "`t`t> $path"
                     }
                 }
@@ -219,7 +254,7 @@ function Invoke-TempDataCleanup {
             foreach ($folder in $userTempFolders) {
                 $path = "$env:SystemDrive\Users\$profile$folder"
                 if (Test-Path $path) {
-                    Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t> $path"
                 }
             }
@@ -232,9 +267,9 @@ function Invoke-TempDataCleanup {
                     Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ErrorAction SilentlyContinue
                 }
                 #cleanup $msTeamsCacheFolder
-                $cpath = "$path\*"
+                $cpath = "$path"
                 if (Test-Path $cpath) {
-                    Remove-Item -Path $cpath -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t> $cpath"
                 }
                 #create bgPath
@@ -245,9 +280,9 @@ function Invoke-TempDataCleanup {
                     Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
                 }
                 #cleanup $teamsClassicPath
-                $path = "$env:SystemDrive\Users\$profile$teamsClassicPath\*"
+                $path = "$env:SystemDrive\Users\$profile$teamsClassicPath"
                 if (Test-Path $path) {
-                    Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t> $path"
                 }
             }
