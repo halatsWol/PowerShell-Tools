@@ -17,7 +17,8 @@ function Log-Message {
     param(
         [string]$message
     )
-    $message = "$(Get-Date) - $message"
+    $message = "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] - $message"
+    Write-Host $message
     $message | Out-File -FilePath $cleanupLog -Append
 }
 
@@ -51,7 +52,7 @@ if (-not (Test-Path -Path $TempPath)) {
 
 
 if ($user -eq $UserName) {
-    Write-Error "User $UserName is still logged in on $env:computername . Please log out the user before cleaning the profile."
+    Write-Error "`r`nUser $UserName is still logged in on $env:computername . Please log out the user before cleaning the profile."
 }
 else{
     $profileList = Get-ChildItem $regProfileListPath | Get-ItemProperty | Where-Object { $_.ProfileImagePath -eq "C:\Users\$UserName" }
@@ -66,7 +67,7 @@ else{
             Log-Message "Backing up Registry Profile List of $UserName to $outputFilePath"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileListKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
             Log-Message "Deleting $profileListKey"
-            # Remove-Item -Path $profileListKey -Force
+            Remove-Item -Path $profileListKey -Force
             $regUserPathKey2 = Get-Item -Path $regUserPath\$profileListId
             $regUserPathKey3=Get-Item -Path ("$regUserPath\$profileListId" +"_Classes")
             $outputFilePath2 = "$remoteTempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
@@ -74,14 +75,14 @@ else{
             Log-Message "Backing up User Profile Registry to $outputFilePath2"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
             Log-Message "Deleting $regUserPathKey2"
-            # Remove-Item -Path $regUserPathKey2 -Force
+            Remove-Item -Path $regUserPathKey2 -Force
             Log-Message "Backing up User Profile Registry Classes to $outputFilePath3"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey3`" `"$outputFilePath3`" /y" -NoNewWindow -Wait
             Log-Message "Deleting $regUserPathKey3"
-            # Remove-Item -Path $regUserPathKey3 -Force
+            Remove-Item -Path $regUserPathKey3 -Force
             Log-Message "Registry Profile List and User Profile Backup completed"
             Log-Message "Renaming Profile Folder $profilePath"
-            # Rename-Item -Path $profilePath -NewName $profilePathOld
+            Rename-Item -Force -Path $profilePath -NewName $profilePathOld
             Log-Message "Profile Folder renamed to $profilePathOld"
         } catch {
             Log-Message "Error occurred while deleting profile"
