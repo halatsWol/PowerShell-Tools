@@ -21,6 +21,12 @@ function Invoke-TempDataCleanup {
     .PARAMETER IncludeMSTeamsCache
     If this switch is present, the cleanup will also include Microsoft Teams cache folders.
 
+    .PARAMETER IncludeAllPackages
+    If this switch is present, the cleanup will also include the LocalCache folders of all packages in $env:localappdata\Packages.
+    This will render IncludeMSTeamsCache irrelevant.
+
+    USE WITH CAUTION! This will Clean Up all LocalCache folders of all packages in $env:localappdata\Packages.
+
     .EXAMPLE
     Invoke-TempDataCleanup -ComputerName "Computer01"
 
@@ -82,7 +88,10 @@ function Invoke-TempDataCleanup {
         [switch]$IncludeBrowserData,
 
         [Parameter(Mandatory=$false)]
-        [switch]$IncludeMSTeamsCache
+        [switch]$IncludeMSTeamsCache,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$IncludeAllPackages
 
     )
 
@@ -91,11 +100,20 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache",
         "\AppData\Local\Microsoft\Office\15.0\Lync\Tracing",
         "\AppData\Local\Microsoft\Office\16.0\Lync\Tracing",
-        "\AppData\Local\Packages\Microsoft.Windows.Photos_*\LocalCache",
-        "\AppData\Local\Packages\Microsoft.WindowsCamera_*\LocalCache",
         "\AppData\Local\Microsoft\EdgeWebView\Cache",
         "\AppData\LocalLow\Sun\Java\Deployment\cache"
     )
+    $commonUserPackages=@(
+        "\AppData\Local\Packages\Microsoft.Windows.Photos_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.WindowsCamera_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.DiagnosticDataViewer_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.ScreenSketch_8wekyb3d8bbwe\LocalCache",
+    )
+    $allPackagesCacheFolder="\AppData\Local\Packages\*\LocalCache"
     $BrowserData=@(
         # Microsoft Internet Explorer
         "\AppData\Local\Microsoft\Windows\INetCache",
@@ -160,8 +178,9 @@ function Invoke-TempDataCleanup {
     $logdir="C:\_temp"
     $logfile="$logdir\TempDataCleanup_$currentDateTime.log"
 
-
-    if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$BrowserData}
+    $utemp=$userTempFolders
+    if ($IncludeAllPackages){$utemp=$utemp+$allPackagesCacheFolder}else {$utemp=$utemp+$commonUserPackages}
+    if ($IncludeBrowserData){$userTempFolders=$utemp+$BrowserData}
     #get user profile folders
     if ($ComputerName -ne $env:ComputerName -and $ComputerName -ne "localhost") {
         if (-not (Test-Connection -ComputerName $ComputerName -Count 1 -Quiet)) {
@@ -171,7 +190,7 @@ function Invoke-TempDataCleanup {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
             New-Item -Path $using:logdir -ItemType Directory -Force > $null
-            Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] User Profile cleanup on $env:ComputerName:"
+            Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName:"
             foreach ($profile in $userProfiles) {
                 Add-Content -Path $using:logfile -Value "`tUser Profile: $profile"
                 try{
@@ -218,7 +237,7 @@ function Invoke-TempDataCleanup {
             }
 
             if($using:IncludeSystemData) {
-                Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] System cleanup on $env:ComputerName:"
+                Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
                 foreach ($folder in $systemTempFolders) {
                     if (Test-Path $folder) {
                         Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
@@ -229,7 +248,7 @@ function Invoke-TempDataCleanup {
 
             if($using:IncludeCCMCache) {
                 if(-not $using:IncludeSystemData){
-                    Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] System cleanup on $env:ComputerName:"
+                    Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
                 }
                 if (Test-Path $using:ccmCachePath) {
                     Remove-Item -Path "$using:ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
@@ -259,7 +278,7 @@ function Invoke-TempDataCleanup {
     } else {
         $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
         New-Item -Path $logdir -ItemType Directory -Force > $null
-        Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] User Profile cleanup on $env:ComputerName:"
+        Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName:"
         foreach ($profile in $userProfiles) {
             Add-Content -Path $logfile -Value "`tUser Profile: $profile"
             foreach ($folder in $userTempFolders) {
@@ -300,7 +319,7 @@ function Invoke-TempDataCleanup {
         }
 
         if($IncludeSystemData) {
-            Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] System cleanup on $env:ComputerName:"
+            Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
             foreach ($folder in $systemTempFolders) {
                 if (Test-Path $folder) {
                     Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
@@ -311,7 +330,7 @@ function Invoke-TempDataCleanup {
 
         if($IncludeCCMCache) {
             if(-not $IncludeSystemData){
-                Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] System cleanup on $env:ComputerName:"
+                Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
             }
             if (Test-Path $ccmCachePath) {
                 Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
