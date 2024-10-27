@@ -111,7 +111,7 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalCache",
         "\AppData\Local\Packages\Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe\LocalCache",
         "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.ScreenSketch_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.ScreenSketch_8wekyb3d8bbwe\LocalCache"
     )
     $allPackagesCacheFolder="\AppData\Local\Packages\*\LocalCache"
     $BrowserData=@(
@@ -177,6 +177,16 @@ function Invoke-TempDataCleanup {
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
     $logdir="C:\_temp"
     $logfile="$logdir\TempDataCleanup_$currentDateTime.log"
+
+    if($IncludeAllPackages){
+        $confirmation=Read-Host "Are you sure you want to include ALL Packages in the cleanup?`r`nThis will render IncludeMSTeamsCache irrelevant. Do you want to continue?`r`n(enter [yes] to continue with this option)"
+        if($confirmation -ne "yes"){
+            $IncludeAllPackages=$false
+        }
+        else{
+            $IncludeMSTeamsCache=$false
+        }
+    }
 
     $utemp=$userTempFolders
     if ($IncludeAllPackages){$utemp=$utemp+$allPackagesCacheFolder}else {$utemp=$utemp+$commonUserPackages}
