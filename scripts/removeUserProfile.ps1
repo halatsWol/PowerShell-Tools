@@ -9,7 +9,7 @@ $cleanupLog=$TempPath+"\cleanupProfileLog_$((Get-Date).ToString("yyyy-MM-dd_HH-m
 $profilePath = "$env:HOMEDRIVE\Users\$ProfileName"
 $profilePathOld = "$env:HOMEDRIVE\Users\$ProfileName-$currentDateTime.old"
 $regProfileListPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
-New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS
+New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS > $null
 $regUserPath = "HKU:\"
 
 # Function to log messages
