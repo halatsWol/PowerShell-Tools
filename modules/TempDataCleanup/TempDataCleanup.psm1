@@ -182,15 +182,17 @@ function Invoke-TempDataCleanup {
         $confirmation=Read-Host "Are you sure you want to include ALL Packages in the cleanup?`r`nThis will render IncludeMSTeamsCache irrelevant. Do you want to continue?`r`n(enter [yes] to continue with this option)"
         if($confirmation -ne "yes"){
             $IncludeAllPackages=$false
+            Write-Host "Cleanup will not use IncludeAllPackages"
         }
         else{
             $IncludeMSTeamsCache=$false
+            Write-Host "Cleanup will use IncludeAllPackages"
         }
     }
 
-    $utemp=$userTempFolders
-    if ($IncludeAllPackages){$utemp=$utemp+$allPackagesCacheFolder}else {$utemp=$utemp+$commonUserPackages}
-    if ($IncludeBrowserData){$userTempFolders=$utemp+$BrowserData}
+
+    if ($IncludeAllPackages){$userTempFolders=$userTempFolders+$allPackagesCacheFolder}else{$userTempFolders=$userTempFolders+$commonUserPackages}
+    if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$BrowserData}
     #get user profile folders
     if ($ComputerName -ne $env:ComputerName -and $ComputerName -ne "localhost") {
         if (-not (Test-Connection -ComputerName $ComputerName -Count 1 -Quiet)) {
@@ -266,7 +268,7 @@ function Invoke-TempDataCleanup {
                 }
             }
 
-
+            Add-Content -Path $using:logfile -Value "`r`n"
         }
 
         if (-not (Test-Path -Path $localTargetPath)) {
@@ -347,7 +349,9 @@ function Invoke-TempDataCleanup {
                 Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
             }
         }
+        Add-Content -Path $logfile -Value "`r`n"
     }
+
 }
 
 Export-ModuleMember -Function Invoke-TempDataCleanup
