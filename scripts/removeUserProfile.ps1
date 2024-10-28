@@ -93,18 +93,33 @@ else{
                 }
             }
             
-            Log-Message "Deleting $regProfileListPath\$profileListId"
-            Remove-Item -Path $regProfileListPath\$profileListId -Force -Recurse
+            
+            if(Test-Path $regUserPath\$profileListId){
+                Log-Message "Deleting $regProfileListPath\$profileListId"
+                Remove-Item -Path $regProfileListPath\$profileListId -Force -Recurse
+            } else {
+                Log-Message "Item $regProfileListPath\$profileListId does not exist"
+            }
             $outputFilePath2 = "$remoteTempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
             $outputFilePath3 = "$remoteTempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
             Log-Message "Backing up User Profile Registry to $outputFilePath2"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
-            Log-Message "Deleting $regUserPath\$profileListId"
-            Remove-Item -Path $regUserPath\$profileListId -Force -Recurse
+            
+            if(Test-Path $regUserPath\$profileListId){
+                Log-Message "Deleting $regUserPath\$profileListId"
+                Remove-Item -Path $regUserPath\$profileListId -Force -Recurse
+            } else {
+                Log-Message "Item $regUserPath\$profileListId does not exist"
+            }
             Log-Message "Backing up User Profile Registry Classes to $outputFilePath3"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey3`" `"$outputFilePath3`" /y" -NoNewWindow -Wait
-            Log-Message $("Deleting $regUserPath\$profileListId" +"_Classes")
-            Remove-Item -Path ("$regUserPath\$profileListId" +"_Classes") -Force -Recurse
+            $classesPath "$regUserPath\$profileListId" +"_Classes"
+            if(Test-Path $classesPath){
+                Log-Message "Deleting $classesPath"
+                Remove-Item -Path $classesPath -Force -Recurse
+            } else {
+                Log-Message "Item $classesPath does not exist"
+            }  
             Log-Message "Registry Profile List and User Profile Backup completed"
             Log-Message "Renaming Profile Folder $profilePath"
             Rename-Item -Force -Path $profilePath -NewName $profilePathOld
