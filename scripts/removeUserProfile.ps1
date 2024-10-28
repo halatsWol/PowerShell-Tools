@@ -6,8 +6,8 @@ if($UserName -eq "") {
 $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
 $TempPath = "$env:HOMEDRIVE\_ProfileCleanup"
 $cleanupLog=$TempPath+"\cleanupProfileLog_$((Get-Date).ToString("yyyy-MM-dd_HH-mm")).log"
-$profilePath = "$env:HOMEDRIVE\Users\$ProfileName"
-$profilePathOld = "$env:HOMEDRIVE\Users\$ProfileName-$currentDateTime.old"
+$profilePath = "$env:HOMEDRIVE\Users\$UserName"
+$profilePathOld = "$env:HOMEDRIVE\Users\$UserName-$currentDateTime.old"
 $regProfileListPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
 New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS > $null
 $regUserPath = "HKU:\"
