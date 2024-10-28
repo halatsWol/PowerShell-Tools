@@ -19,7 +19,7 @@ function Log-Message {
     param(
         [string]$message
     )
-    $message = "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm"))] - $message"
+    $message = "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss.fff"))] - $message"
     Write-Host $message
     $message | Out-File -FilePath $cleanupLog -Append
 }
