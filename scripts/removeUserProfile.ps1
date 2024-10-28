@@ -113,7 +113,7 @@ else{
             }
             Log-Message "Backing up User Profile Registry Classes to $outputFilePath3"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey3`" `"$outputFilePath3`" /y" -NoNewWindow -Wait
-            $classesPath "$regUserPath\$profileListId" +"_Classes"
+            $classesPath = "$regUserPath\$profileListId" +"_Classes"
             if(Test-Path $classesPath){
                 Log-Message "Deleting $classesPath"
                 Remove-Item -Path $classesPath -Force -Recurse
