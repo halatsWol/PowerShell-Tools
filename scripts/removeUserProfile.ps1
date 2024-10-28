@@ -122,12 +122,18 @@ else{
             }  
             Log-Message "Registry Profile List and User Profile Backup completed"
             Log-Message "Renaming Profile Folder $profilePath"
-            Rename-Item -Force -Path $profilePath -NewName $profilePathOld
-            Log-Message "Profile Folder renamed to $profilePathOld"
+            try{
+                Rename-Item -Force -Path $profilePath -NewName $profilePathOld
+                Log-Message "Profile Folder renamed to $profilePathOld"
+            } catch {
+                $errormsg = "Error occurred while deleting profile`r`n$_.Exception.Message"
+                Log-Message $errormsg
+            }
 
         } catch {
-            Log-Message "Error occurred while deleting profile"
+            Log-Message "Error occurred during profile cleanup"
             Log-Message $_.Exception.Message
+            return
         }
     } else {
         Log-Message "Profile with Username $UserName not found in registry"
