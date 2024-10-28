@@ -100,8 +100,8 @@ else{
             } else {
                 Log-Message "Item $regProfileListPath\$profileListId does not exist"
             }
-            $outputFilePath2 = "$remoteTempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
-            $outputFilePath3 = "$remoteTempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
+            $outputFilePath2 = "$TempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
+            $outputFilePath3 = "$TempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
             Log-Message "Backing up User Profile Registry to $outputFilePath2"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
             
