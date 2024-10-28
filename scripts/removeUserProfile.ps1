@@ -83,6 +83,17 @@ else{
                 Log-Message "`t> $letter`t'$remotePath'"
             }
 
+            $printers = Get-Item -Path "$regUserPath\$profileListId\Printers\ConvertUserDevModesCount\" | Select-Object Property
+            #get items of ConvertUserDevModesCount
+            $defaultPrinters=@("OneNote (Desktop)","Microsoft XPS Document Writer","Microsoft Print to PDF","Fax","Adobe PDF","WinDisc","TIFF Printer","ImagePrinter Pro")
+            Log-Message "Exporting Printers to $printerListFile"
+            foreach ($printer in $printers.Property) {
+                # Check if the printer is not in the default list and does not contain the computer name
+                if (-not ($defaultPrinters -contains $printer) -and ($printer -notlike "*$env:ComputerName*")) {
+                    Log-Message "`t> $printer"
+                    Add-Content -Path $printerListFile -Value $printer
+                }
+            }
 
 
             $outputFilePath2 = "$remoteTempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
