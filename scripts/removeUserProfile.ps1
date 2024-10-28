@@ -4,13 +4,15 @@ if($UserName -eq "") {
     exit
 }
 $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-$TempPath = "$env:HOMEDRIVE\_temp"
+$TempPath = "$env:HOMEDRIVE\_ProfileCleanup"
 $cleanupLog=$TempPath+"\cleanupProfileLog_$((Get-Date).ToString("yyyy-MM-dd_HH-mm")).log"
 $profilePath = "$env:HOMEDRIVE\Users\$ProfileName"
 $profilePathOld = "$env:HOMEDRIVE\Users\$ProfileName-$currentDateTime.old"
 $regProfileListPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
 New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS > $null
 $regUserPath = "HKU:\"
+$netDrivesCMDfile="$TempPath\NetDrives_$UserName.cmd"
+$printerListFile="$TempPath\PrinterList_$UserName.txt"
 
 # Function to log messages
 function Log-Message {
@@ -50,7 +52,6 @@ if (-not (Test-Path -Path $TempPath)) {
     New-Item -Path $TempPath -ItemType Directory -Force
 }
 
-
 if ($user -eq $UserName) {
     Write-Error "`r`nUser $UserName is still logged in on $env:computername . Please log out the user before cleaning the profile."
 }
@@ -64,12 +65,26 @@ else{
             Log-Message "Backing up Registry Profile List to $profilePathOld"
             $profileListKey = Get-Item -Path $regProfileListPath\$profileListId
             $outputFilePath = "$TempPath\ProfileListBackup_$UserName"+"_$currentDateTime.reg"
+            $regUserPathKey2 = Get-Item -Path $regUserPath\$profileListId
+            $regUserPathKey3=Get-Item -Path ("$regUserPath\$profileListId" +"_Classes")
             Log-Message "Backing up Registry Profile List of $UserName to $outputFilePath"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileListKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
             Log-Message "Deleting $profileListKey"
             Remove-Item -Path $profileListKey -Force
-            $regUserPathKey2 = Get-Item -Path $regUserPath\$profileListId
-            $regUserPathKey3=Get-Item -Path ("$regUserPath\$profileListId" +"_Classes")
+
+            # get network drives
+            $drives = Get-ChildItem -Path "$regUserPath\$profileListId\Network"
+            Log-Message "Exporting Network Drives to $netDrivesCMDfile"
+            foreach($drive in $drives ){
+                $letter=$drive.PSChildName
+                $remotePath=$drive.GetValue("RemotePath")
+                $netuselet="net use $($letter): '$remotePath' /persistent:yes"
+                Add-Content -Path $netDrivesCMDfile -Value $netuselet
+                Log-Message "`t> $letter`t'$remotePath'"
+            }
+
+
+
             $outputFilePath2 = "$remoteTempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
             $outputFilePath3 = "$remoteTempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
             Log-Message "Backing up User Profile Registry to $outputFilePath2"
@@ -84,6 +99,7 @@ else{
             Log-Message "Renaming Profile Folder $profilePath"
             Rename-Item -Force -Path $profilePath -NewName $profilePathOld
             Log-Message "Profile Folder renamed to $profilePathOld"
+
         } catch {
             Log-Message "Error occurred while deleting profile"
             Log-Message $_.Exception.Message
