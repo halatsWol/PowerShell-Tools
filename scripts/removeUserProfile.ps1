@@ -69,8 +69,8 @@ else{
             $regUserPathKey3=Get-Item -Path ("$regUserPath\$profileListId" +"_Classes")
             Log-Message "Backing up Registry Profile List of $UserName to $outputFilePath"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileListKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
-            Log-Message "Deleting $profileListKey"
-            Remove-Item -Path $profileListKey -Force
+            Log-Message "Deleting $regProfileListPath\$profileListId"
+            Remove-Item -Path $regProfileListPath\$profileListId -Force
 
             # get network drives
             $drives = Get-ChildItem -Path "$regUserPath\$profileListId\Network"
@@ -100,12 +100,12 @@ else{
             $outputFilePath3 = "$remoteTempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
             Log-Message "Backing up User Profile Registry to $outputFilePath2"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
-            Log-Message "Deleting $regUserPathKey2"
-            Remove-Item -Path $regUserPathKey2 -Force
+            Log-Message "Deleting $regUserPath\$profileListId"
+            Remove-Item -Path $regUserPath\$profileListId -Force
             Log-Message "Backing up User Profile Registry Classes to $outputFilePath3"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey3`" `"$outputFilePath3`" /y" -NoNewWindow -Wait
-            Log-Message "Deleting $regUserPathKey3"
-            Remove-Item -Path $regUserPathKey3 -Force
+            Log-Message $("Deleting $regUserPath\$profileListId" +"_Classes")
+            Remove-Item -Path ("$regUserPath\$profileListId" +"_Classes") -Force
             Log-Message "Registry Profile List and User Profile Backup completed"
             Log-Message "Renaming Profile Folder $profilePath"
             Rename-Item -Force -Path $profilePath -NewName $profilePathOld
