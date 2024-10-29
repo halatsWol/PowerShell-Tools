@@ -250,7 +250,7 @@ function Invoke-TempDataCleanup {
 
             if($using:IncludeSystemData) {
                 Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
-                foreach ($folder in $systemTempFolders) {
+                foreach ($folder in $using:systemTempFolders) {
                     if (Test-Path $folder) {
                         Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
                         Add-Content -Path $using:logfile -Value "`t`t> $folder"

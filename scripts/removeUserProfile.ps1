@@ -6,8 +6,8 @@ if($UserName -eq "") {
 $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
 $TempPath = "$env:HOMEDRIVE\_ProfileCleanup"
 $cleanupLog=$TempPath+"\cleanupProfileLog_$((Get-Date).ToString("yyyy-MM-dd_HH-mm")).log"
-$profilePath = "$env:HOMEDRIVE\Users\$ProfileName"
-$profilePathOld = "$env:HOMEDRIVE\Users\$ProfileName-$currentDateTime.old"
+$profilePath = "$env:HOMEDRIVE\Users\$UserName"
+$profilePathOld = "$env:HOMEDRIVE\Users\$UserName-$currentDateTime.old"
 $regProfileListPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
 New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS > $null
 $regUserPath = "HKU:\"
@@ -69,8 +69,6 @@ else{
             $regUserPathKey3=Get-Item -Path ("$regUserPath\$profileListId" +"_Classes")
             Log-Message "Backing up Registry Profile List of $UserName to $outputFilePath"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileListKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
-            Log-Message "Deleting $profileListKey"
-            Remove-Item -Path $profileListKey -Force
 
             # get network drives
             $drives = Get-ChildItem -Path "$regUserPath\$profileListId\Network"
@@ -94,26 +92,48 @@ else{
                     Add-Content -Path $printerListFile -Value $printer
                 }
             }
-
-
-            $outputFilePath2 = "$remoteTempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
-            $outputFilePath3 = "$remoteTempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
+            
+            
+            if(Test-Path $regUserPath\$profileListId){
+                Log-Message "Deleting $regProfileListPath\$profileListId"
+                Remove-Item -Path $regProfileListPath\$profileListId -Force -Recurse
+            } else {
+                Log-Message "Item $regProfileListPath\$profileListId does not exist"
+            }
+            $outputFilePath2 = "$TempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
+            $outputFilePath3 = "$TempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
             Log-Message "Backing up User Profile Registry to $outputFilePath2"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
-            Log-Message "Deleting $regUserPathKey2"
-            Remove-Item -Path $regUserPathKey2 -Force
+            
+            if(Test-Path $regUserPath\$profileListId){
+                Log-Message "Deleting $regUserPath\$profileListId"
+                Remove-Item -Path $regUserPath\$profileListId -Force -Recurse
+            } else {
+                Log-Message "Item $regUserPath\$profileListId does not exist"
+            }
             Log-Message "Backing up User Profile Registry Classes to $outputFilePath3"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey3`" `"$outputFilePath3`" /y" -NoNewWindow -Wait
-            Log-Message "Deleting $regUserPathKey3"
-            Remove-Item -Path $regUserPathKey3 -Force
+            $classesPath = "$regUserPath\$profileListId" +"_Classes"
+            if(Test-Path $classesPath){
+                Log-Message "Deleting $classesPath"
+                Remove-Item -Path $classesPath -Force -Recurse
+            } else {
+                Log-Message "Item $classesPath does not exist"
+            }  
             Log-Message "Registry Profile List and User Profile Backup completed"
             Log-Message "Renaming Profile Folder $profilePath"
-            Rename-Item -Force -Path $profilePath -NewName $profilePathOld
-            Log-Message "Profile Folder renamed to $profilePathOld"
+            try{
+                Rename-Item -Force -Path $profilePath -NewName $profilePathOld
+                Log-Message "Profile Folder renamed to $profilePathOld"
+            } catch {
+                $errormsg = "Error occurred while deleting profile`r`n$_.Exception.Message"
+                Log-Message $errormsg
+            }
 
         } catch {
-            Log-Message "Error occurred while deleting profile"
+            Log-Message "Error occurred during profile cleanup"
             Log-Message $_.Exception.Message
+            return
         }
     } else {
         Log-Message "Profile with Username $UserName not found in registry"
