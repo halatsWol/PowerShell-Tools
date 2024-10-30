@@ -12,7 +12,14 @@ function Write-Log {
         [switch]$logOnly
     )
     if(-not $logOnly) {Write-Host $message}
-    Add-Content -Path $logFile -Value "[$(Get-Date -Format "yyyy-MM-dd_HH-mm-ss.fff")]`t- $message"
+    $mes=""
+    if ($message -ne "`r`n") {
+        $mes = "[$(Get-Date -Format "yyyy-MM-dd_HH-mm-ss.fff")]`t- $message"
+    } else {
+        $mes = $message
+    }
+
+    Add-Content -Path $logFile -Value $mes
 }
 
 Write-Log "User-Input: '$vendor'" $logfile
