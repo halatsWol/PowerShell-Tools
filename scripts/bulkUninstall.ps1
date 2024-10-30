@@ -47,17 +47,21 @@ if ($packages) {
 
     foreach ($pkg in $packages) {
         Write-Host "Uninstalling " -NoNewline
-        Write-Host "$($pkg.Name)..." -ForegroundColor Green
-        Write-Log "Uninstalling $($pkg.Name)..." $logfile -logOnly
+        Write-Host "'$($pkg.Name)'..." -ForegroundColor Green
+        Write-Log "Uninstalling '$($pkg.Name)'..." $logfile -logOnly
         try {
             $output = $pkg.Uninstall()
-            Write-Log -message $output -logFile $logfile
+            Write-Log -message $($output | Format-List | Out-String) -logFile $logfile
             $returnValue = $output | ForEach-Object { $_.ReturnValue }
             if($returnValue -ne 0) {
-                Write-Log "`r`nError uninstalling $($pkg.Name):`tExit[$returnValue])" $logfile
+                Write-Host "Error uninstalling " -NoNewline -ForegroundColor Red
+                Write-Host "'$($pkg.Name)':`tExit[$returnValue]"
+                Write-Log "Error uninstalling $($pkg.Name):`tExit[$returnValue])" $logfile -logOnly
                 $fails.add("[$returnValue]`t- $($pkg.Name)") > $null
             } else {
-                Write-Log "$($pkg.Name) has been uninstalled successfully." $logfile
+                Write-Host "Uninstall '$($pkg.Name)' "-NoNewline
+                Write-Host "successful." -ForegroundColor Green
+                Write-Log "Uninstall '$($pkg.Name)' successful." $logfile -logOnly
             }
         } catch {
             Write-Log "`r`nError uninstalling $($pkg.Name):`r`n$($_.Exception.Message)" $logfile
@@ -72,8 +76,10 @@ if ($packages) {
         $suc="fully"
     }
     Write-Log "`r`nPackages from vendor '$vendor' have been $suc uninstalled." $logfile
-    Write-Log "`r`nFollowing Packages were not removed and may need a restart of the Computer or simply cannot be uninstalled this way:`r`n$fails" $logfile
-} else {
+    if($fails -ne $null) {
+        Write-Log "`r`nFollowing Packages were not removed and may need a restart of the Computer or simply cannot be uninstalled this way:`r`n$fails" $logfile
+    }
+    } else {
     Write-Log "`r`n" $logfile
     Write-Log "No packages found from vendor '$vendor'."  $logfile
 }
