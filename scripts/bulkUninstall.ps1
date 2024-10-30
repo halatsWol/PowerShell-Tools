@@ -33,8 +33,6 @@ if ("*Microsoft*".Contains($vendor)) {
 $packages = Get-WmiObject -Class Win32_Product | Where-Object { $_.Vendor -like "*$vendor*" }
 
 if ($packages) {
-
-    Write-Log "`r`n" $logfile
     Write-Log "`r`nThe following packages will be uninstalled:`r`n`r`n $($packages | ForEach-Object { $_.Name.Trim() + "`r`n"})" $logfile
     $confirm = Read-Host "Do you want to continue? (Y/N)"
 
@@ -51,7 +49,7 @@ if ($packages) {
         Write-Log "Uninstalling '$($pkg.Name)'..." $logfile -logOnly
         try {
             $output = $pkg.Uninstall()
-            Write-Log -message $($output | Format-List | Out-String) -logFile $logfile
+            Write-Log -message $($output | Format-List | Out-String) -logFile $logfile -logOnly
             $returnValue = $output | ForEach-Object { $_.ReturnValue }
             if($returnValue -ne 0) {
                 Write-Host "Error uninstalling " -NoNewline -ForegroundColor Red
@@ -68,18 +66,19 @@ if ($packages) {
 
         }
     }
-    Write-Log "`r`n" $logfile
     $suc=""
     if($fails -ne $null) {
         $suc = "partially"
     } else {
         $suc="fully"
     }
-    Write-Log "`r`nPackages from vendor '$vendor' have been $suc uninstalled." $logfile
+    Write-Log "Packages from vendor '$vendor' have been $suc uninstalled." $logfile
     if($fails -ne $null) {
         Write-Log "`r`nFollowing Packages were not removed and may need a restart of the Computer or simply cannot be uninstalled this way:`r`n$fails" $logfile
     }
-    } else {
+
+    write-host "`r`n`r`nLog written to: $logfile"
+} else {
     Write-Log "`r`n" $logfile
     Write-Log "No packages found from vendor '$vendor'."  $logfile
 }
