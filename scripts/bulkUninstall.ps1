@@ -1,5 +1,3 @@
-
-
 $vendor = Read-Host "Enter the Vendor-Name"
 $logpath="C:\_temp\"
 New-Item -ItemType Directory -Force -Path $logpath > $null
