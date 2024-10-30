@@ -65,7 +65,13 @@ if ($packages) {
         }
     }
     Write-Log "`r`n" $logfile
-    Write-Log "Packages from vendor '$vendor' have been uninstalled." $logfile
+    $suc=""
+    if($fails -ne $null) {
+        $suc = "partially"
+    } else {
+        $suc="fully"
+    }
+    Write-Log "`r`nPackages from vendor '$vendor' have been $suc uninstalled." $logfile
     Write-Log "`r`nFollowing Packages were not removed and may need a restart of the Computer or simply cannot be uninstalled this way:`r`n$fails" $logfile
 } else {
     Write-Log "`r`n" $logfile
