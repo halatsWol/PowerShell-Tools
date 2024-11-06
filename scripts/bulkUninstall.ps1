@@ -53,9 +53,9 @@ if ($packages) {
 
         $confirm = Read-Host "Do you want to continue? ([Y]es/[N]o/[C]hange)"
         if ($confirm -like "C") {
-            Write-Log "`r`nUser wants to change the selection(remove)." $logfile
+            Write-Log "`r`nUser wants to change the selection(remove)." $logfile -logOnly
             $change = Read-Host "Enter the number of the package(s) you want to remove (e.g., 1,5,6)"
-            Write-Log "User-Input: '$change'" $logfile
+            Write-Log "User-Input: '$change'" $logfile -logOnly
 
             # Convert input to an array of indices, trimming each element before converting to [int]
             $changeIndices = $change -split "," | ForEach-Object { [int]($_.Trim()) - 1 }
