@@ -54,11 +54,14 @@ if ($packages) {
         $confirm = Read-Host "Do you want to continue? ([Y]es/[N]o/[C]hange)"
         if ($confirm -like "C") {
             Write-Log "`r`nUser wants to change the selection(remove)." $logfile -logOnly
-            $change = Read-Host "Enter the number of the package(s) you want to remove (e.g., 1,5,6)"
+            $change = Read-Host "Enter the number of the package(s) you want to remove (e.g.: 1,5,6)"
             Write-Log "User-Input: '$change'" $logfile -logOnly
-
+            $changeIndices = @()
             # Convert input to an array of indices, trimming each element before converting to [int]
             $changeIndices = $change -split "," | ForEach-Object { [int]($_.Trim()) - 1 }
+
+            #drop list element that equals 0
+            $changeIndices = $changeIndices | Where-Object { $_ -ge 0 }
 
             # Filter out the packages by excluding selected indices
             $packages = $packages | Where-Object { $packages.IndexOf($_) -notin $changeIndices }
