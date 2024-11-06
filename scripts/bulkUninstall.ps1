@@ -38,11 +38,38 @@ if ("*Microsoft*".Contains($vendor)) {
 $packages = Get-WmiObject -Class Win32_Product | Where-Object { $_.Vendor -like "*$vendor*" }
 
 if ($packages) {
-    Write-Log "`r`nThe following packages will be uninstalled:`r`n`r`n $($packages | ForEach-Object { $_.Name.Trim() + "`r`n"})" $logfile
-    $confirm = Read-Host "Do you want to continue? (Y/N)"
+    $confirm="C"
+    while ($confirm -like "C") {
+        $packages = @($packages)
+        if ($packages.Count -eq 0) {
+            break
+        }
+        Write-Log "`r`nThe following packages will be uninstalled:`r`n" $logfile
+        $pkgCount = $packages.Count
 
-    if ($confirm -notlike "Y") {
-        Write-Log "`r`nOperation cancelled." $logfile
+        for ($i = 0; $i -lt $pkgCount; $i++) {
+            Write-Log "  [$($i + 1)] $($packages[$i].Name.Trim())" $logfile
+        }
+
+        $confirm = Read-Host "Do you want to continue? ([Y]es/[N]o/[C]hange)"
+        if ($confirm -like "C") {
+            Write-Log "`r`nUser wants to change the selection(remove)." $logfile
+            $change = Read-Host "Enter the number of the package(s) you want to remove (e.g., 1,5,6)"
+            Write-Log "User-Input: '$change'" $logfile
+
+            # Convert input to an array of indices, trimming each element before converting to [int]
+            $changeIndices = $change -split "," | ForEach-Object { [int]($_.Trim()) - 1 }
+
+            # Filter out the packages by excluding selected indices
+            $packages = $packages | Where-Object { $packages.IndexOf($_) -notin $changeIndices }
+        } elseif ($confirm -notlike "Y") {
+            Write-Log "`r`nOperation cancelled." $logfile
+            return
+        }
+    }
+
+    if ($packages.Count -eq 0) {
+        Write-Log "`r`nNo packages selected for uninstallation." $logfile
         return
     }
 
