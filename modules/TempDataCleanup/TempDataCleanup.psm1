@@ -91,6 +91,9 @@ function Invoke-TempDataCleanup {
         [switch]$IncludeMSTeamsCache,
 
         [Parameter(Mandatory=$false)]
+        [switch]$IncludeExplorerCache,
+
+        [Parameter(Mandatory=$false)]
         [switch]$IncludeAllPackages
 
     )
@@ -161,9 +164,12 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\GPUCache",
         "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\CacheStorage",
         "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\ScriptCache"
-
-
     )
+
+    $explorerCacheDir="\AppData\Local\Microsoft\Windows\Explorer"
+    $localIconCacheDB="\AppData\Local\IconCache.db"
+
+
     $systemTempFolders=@(
         "$env:Windir\Temp",
         "$env:Windir\Prefetch",
@@ -203,22 +209,38 @@ function Invoke-TempDataCleanup {
             $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
             New-Item -Path $using:logdir -ItemType Directory -Force > $null
             Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName:"
-            foreach ($profile in $userProfiles) {
-                Add-Content -Path $using:logfile -Value "`tUser Profile: $profile"
+            foreach ($userProfile in $userProfiles) {
+                Add-Content -Path $using:logfile -Value "`tUser Profile: $userProfile"
                 try{
                     foreach ($folder in $using:userTempFolders) {
-                        $path = "$env:SystemDrive\Users\$profile$folder"
+                        $path = "$env:SystemDrive\Users\$userProfile$folder"
                         if (Test-Path $path) {
                             Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                             Add-Content -Path $using:logfile -Value "`t`t> $path"
                         }
+
+                    }
+                    if ($using:IncludeExplorerCache) {
+                        $path = "$env:SystemDrive\Users\$userProfile$using:explorerCacheDir"
+                        Add-Content -Path $using:logfile -Value "`t`tcleaning Icon & ThumbCache:"
+                        $pathI = "$path\iconcache*.db"
+                        $pathT = "$path\thumbcache*.db"
+                        $pathLI = "$env:SystemDrive\Users\$userProfile$using:localIconCacheDB"
+                        if (Test-Path $path) {
+                            Remove-Item -Path "$pathI" -Force -ErrorAction SilentlyContinue
+                            Add-Content -Path $using:logfile -Value "`t`t`t> $pathI"
+                            Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
+                            Add-Content -Path $using:logfile -Value "`t`t`t> $pathT"
+                            Remove-Item -Path "$using:pathLI" -Force -ErrorAction SilentlyContinue
+                            Add-Content -Path $using:logfile -Value "`t`t`t> $pathLI"
+                        }
                     }
                 }catch{
-                    Write-Warning "Error while cleaning up $profile :`r`n $_"
+                    Write-Warning "Error while cleaning up $userProfile :`r`n $_"
                 }
 
                 if($using:IncludeMSTeamsCache) {
-                    $path = "$env:SystemDrive\Users\$profile$using:msTeamsCacheFolder"
+                    $path = "$env:SystemDrive\Users\$userProfile$using:msTeamsCacheFolder"
                     $bgPath="$path\Microsoft\MSTeams"
                     $bgBackupPath="$path\.."
                     #move $msTeamsCacheFolder\Microsoft\MSTeams\Backgrounds to $msTeamsCacheFolder
@@ -239,7 +261,7 @@ function Invoke-TempDataCleanup {
                         Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
                     }
                     #cleanup $teamsClassicPath
-                    $path = "$env:SystemDrive\Users\$profile$teamsClassicPath"
+                    $path = "$env:SystemDrive\Users\$userProfile$teamsClassicPath"
                     if (Test-Path $path) {
                         Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                         Add-Content -Path $using:logfile -Value "`t`t> $path"
@@ -257,6 +279,8 @@ function Invoke-TempDataCleanup {
                     }
                 }
             }
+
+
 
             if($using:IncludeCCMCache) {
                 if(-not $using:IncludeSystemData){
@@ -291,17 +315,38 @@ function Invoke-TempDataCleanup {
         $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
         New-Item -Path $logdir -ItemType Directory -Force > $null
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName:"
-        foreach ($profile in $userProfiles) {
-            Add-Content -Path $logfile -Value "`tUser Profile: $profile"
-            foreach ($folder in $userTempFolders) {
-                $path = "$env:SystemDrive\Users\$profile$folder"
-                if (Test-Path $path) {
-                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
-                    Add-Content -Path $logfile -Value "`t`t> $path"
+        foreach ($userProfile in $userProfiles) {
+            Add-Content -Path $logfile -Value "`tUser Profile: $userProfile"
+            try{
+                foreach ($folder in $userTempFolders) {
+                    $path = "$env:SystemDrive\Users\$userProfile$folder"
+                    if (Test-Path $path) {
+                        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                        Add-Content -Path $logfile -Value "`t`t> $path"
+                    }
+
                 }
+                if ($IncludeExplorerCache) {
+                    $path = "$env:SystemDrive\Users\$userProfile$explorerCacheDir"
+                    Add-Content -Path $logfile -Value "`t`tcleaning Icon & ThumbCache:"
+                    $pathI = "$path\iconcache*.db"
+                    $pathT = "$path\thumbcache*.db"
+                    $pathLI = "$env:SystemDrive\Users\$userProfile$localIconCacheDB"
+                    if (Test-Path $path) {
+                        Remove-Item -Path "$pathI" -Force -ErrorAction SilentlyContinue
+                        Add-Content -Path $logfile -Value "`t`t`t> $pathI"
+                        Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
+                        Add-Content -Path $logfile -Value "`t`t`t> $pathT"
+                        Remove-Item -Path "$pathLI" -Force -ErrorAction SilentlyContinue
+                        Add-Content -Path $logfile -Value "`t`t`t> $pathLI"
+                    }
+                }
+            }catch{
+                Write-Warning "Error while cleaning up $userProfile :`r`n $_"
             }
+
             if($IncludeMSTeamsCache) {
-                $path = "$env:SystemDrive\Users\$profile$msTeamsCacheFolder"
+                $path = "$env:SystemDrive\Users\$userProfile$msTeamsCacheFolder"
                 $bgPath="$path\Microsoft\MSTeams"
                 $bgBackupPath="$path\.."
                 #move $msTeamsCacheFolder\Microsoft\MSTeams\Backgrounds to $msTeamsCacheFolder
@@ -322,12 +367,13 @@ function Invoke-TempDataCleanup {
                     Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
                 }
                 #cleanup $teamsClassicPath
-                $path = "$env:SystemDrive\Users\$profile$teamsClassicPath"
+                $path = "$env:SystemDrive\Users\$userProfile$teamsClassicPath"
                 if (Test-Path $path) {
                     Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t> $path"
                 }
             }
+
         }
 
         if($IncludeSystemData) {
@@ -340,6 +386,8 @@ function Invoke-TempDataCleanup {
             }
         }
 
+
+
         if($IncludeCCMCache) {
             if(-not $IncludeSystemData){
                 Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
@@ -349,6 +397,7 @@ function Invoke-TempDataCleanup {
                 Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
             }
         }
+
         Add-Content -Path $logfile -Value "`r`n"
     }
 
