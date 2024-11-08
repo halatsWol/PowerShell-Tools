@@ -19,6 +19,8 @@ Parameters:
 - IncludeCCMCache (Optional): When this switch is provided, the cleanup will also include the Configuration Management Cache folder, if it exists.
 - IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
 - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
+- IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
+- IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
 
 
 Examples:

@@ -21,6 +21,9 @@ function Invoke-TempDataCleanup {
     .PARAMETER IncludeMSTeamsCache
     If this switch is present, the cleanup will also include Microsoft Teams cache folders.
 
+    .PARAMETER IncludeIconCache
+    If this switch is present, the cleanup will also include the User Icon & ThumbCache files.
+
     .PARAMETER IncludeAllPackages
     If this switch is present, the cleanup will also include the LocalCache folders of all packages in $env:localappdata\Packages.
     This will render IncludeMSTeamsCache irrelevant.
@@ -91,7 +94,7 @@ function Invoke-TempDataCleanup {
         [switch]$IncludeMSTeamsCache,
 
         [Parameter(Mandatory=$false)]
-        [switch]$IncludeExplorerCache,
+        [switch]$IncludeIconCache,
 
         [Parameter(Mandatory=$false)]
         [switch]$IncludeAllPackages
@@ -220,7 +223,7 @@ function Invoke-TempDataCleanup {
                         }
 
                     }
-                    if ($using:IncludeExplorerCache) {
+                    if ($using:IncludeIconCache) {
                         $path = "$env:SystemDrive\Users\$userProfile$using:explorerCacheDir"
                         Add-Content -Path $using:logfile -Value "`t`tcleaning Icon & ThumbCache:"
                         $pathI = "$path\iconcache*.db"
@@ -326,7 +329,7 @@ function Invoke-TempDataCleanup {
                     }
 
                 }
-                if ($IncludeExplorerCache) {
+                if ($IncludeIconCache) {
                     $path = "$env:SystemDrive\Users\$userProfile$explorerCacheDir"
                     Add-Content -Path $logfile -Value "`t`tcleaning Icon & ThumbCache:"
                     $pathI = "$path\iconcache*.db"
