@@ -14,8 +14,11 @@ The primary function of this module is `Invoke-TempDataCleanup`, which removes t
 - **`-ComputerName`** (Mandatory): Specifies the name of the computer to run the cleanup on.
 - **`-IncludeSystemData`** (Optional): When this switch is provided, the cleanup will also include system folders such as the Windows `Temp`, `Prefetch`, and `SoftwareDistribution` folders.
 - **`-IncludeCCMCache`** (Optional): When this switch is provided, the cleanup will also include the Configuration Management Cache folder, if it exists.
-- **`IncludeBrowserData`** (Optional): When this switch is provided, the cleanup will also include Browser cache of MS Edge, Mozilla Firefox and Google Chrome
-- **`IncludeMSTeamsCache`** (Optional): When this switch is provided, the cleanup will also include the Microsoft Teams cache folders
+- **`-IncludeBrowserData`** (Optional): When this switch is provided, the cleanup will also include Browser cache of MS Edge, Mozilla Firefox and Google Chrome
+- **`-IncludeMSTeamsCache`** (Optional): When this switch is provided, the cleanup will also include the Microsoft Teams cache folders.
+- **`-IncludeIconCache`** (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
+- **`-IncludeAllPackages`** (Optional): When this switch is used, all packages in `$env:localappdata\Packages\` will be cleaned up.
+
 
 #### Example
 
@@ -50,7 +53,7 @@ Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBro
 
 - **Author**: Wolfram Halatschek
 - **Contact**: halatschek.wolfram@gmail.com
-- **Date**: October 16, 2024
+- **Date**: 2024-11-08
 
 ## Warnings
 
