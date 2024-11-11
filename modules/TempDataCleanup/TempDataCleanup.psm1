@@ -234,7 +234,7 @@ function Invoke-TempDataCleanup {
                             Add-Content -Path $using:logfile -Value "`t`t`t> $pathI"
                             Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
                             Add-Content -Path $using:logfile -Value "`t`t`t> $pathT"
-                            Remove-Item -Path "$using:pathLI" -Force -ErrorAction SilentlyContinue
+                            Remove-Item -Path "$pathLI" -Force -ErrorAction SilentlyContinue
                             Add-Content -Path $using:logfile -Value "`t`t`t> $pathLI"
                         }
                     }
