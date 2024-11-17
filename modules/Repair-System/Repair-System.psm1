@@ -911,16 +911,24 @@ function Repair-LocalSystem {
             $softDistErr=""
             $cat2= $false
             $cat2Err=""
-            stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver")
+            $services=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller")
+            # check if ccmexec exists at all
+            if (Get-Service -Name "ccmexec" -ErrorAction SilentlyContinue) {
+                $services+="ccmexec"
+            }
+            stop-service $services
+            if(Get-Process -Name "ccmexec" -ErrorAction SilentlyContinue){
+                Stop-Proces -Name "ccmexec" -Force -ErrorAction SilentlyContinue
+            }
             if (Test-Path -Path $softwareDistributionBackupPath) {
                 Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-                Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
+                Remove-Item -ErrorAction Ignore -Path $softwareDistributionBackupPath -Recurse -Force
             } else {
                 Write-Verbose "Backup directory does not exist. No need to delete."
             }
             if (Test-Path -Path $softwareDistributionPath) {
                 try{
-                    Rename-Item -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
+                    Rename-Item -ErrorAction Ignore -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
                     $softDist = $true
                 } catch {
                     $softDistErr= "Error renaming SoftwareDistribution folder: `r`n$_"
@@ -929,21 +937,21 @@ function Repair-LocalSystem {
             }
             if (Test-Path -Path $catroot2BackupPath) {
                 Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-                Remove-Item -Path $catroot2BackupPath -Recurse -Force
+                Remove-Item -ErrorAction Ignore -Path $catroot2BackupPath -Recurse -Force
             } else {
                 Write-Verbose "Backup directory does not exist. No need to delete."
             }
             if (Test-Path -Path $catroot2Path) {
                 try{
-                    Rename-Item -Path $catroot2Path -NewName catroot2.bak
+                    Rename-Item -ErrorAction Ignore -Path $catroot2Path -NewName catroot2.bak
                     $cat2 = $true
                 } catch {
                     $cat2Err= "Error renaming catroot2 folder: `r`n$_"
                     Write-Verbose $cat2Err
                 }
             }
-            start-service @("bits","wuauserv","appidsvc","cryptsvc","msiserver")
-            $successMessage = "Windows Update Cleanup successfully."
+            start-service $services
+            $successMessage = "Windows Update Cleanup performed."
             if($softDist){
                 $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
             } else {
@@ -1027,7 +1035,7 @@ function Repair-LocalSystem {
         Remove-Item -Path "$TempPath\*" -Recurse -Force
     }
 
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 
     Write-Host "`r`nLocal System-Repair successfully performed.`r`nLog-Files can be found on this Machine under '$logPath'"
 
