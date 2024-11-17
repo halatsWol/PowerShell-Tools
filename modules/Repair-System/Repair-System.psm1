@@ -544,7 +544,6 @@ function Repair-RemoteSystem {
                 $cbsLog = "$env:windir\Logs\CBS\CBS.log"
                 $dismLog = "$env:windir\Logs\dism\dism.log"
                 $localtempPath = "$using:localremoteTempPath"
-                $tempPath = "$using:remoteTempPath"
                 $filesToZip = @()
 
                 # Copy CBS.log to the temporary directory if it exists
