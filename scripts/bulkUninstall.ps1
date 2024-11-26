@@ -90,7 +90,7 @@ if ($packages) {
                 Write-Host "Error uninstalling " -NoNewline -ForegroundColor Red
                 Write-Host "'$($pkg.Name)':`tExit[$returnValue]"
                 Write-Log "Error uninstalling $($pkg.Name):`tExit[$returnValue])" $logfile -logOnly
-                $fails.add("[$returnValue]`t- $($pkg.Name)") > $null
+                $fails.add("[$returnValue]`t- $($pkg.Name)`r`n") > $null
             } else {
                 Write-Host "Uninstall '$($pkg.Name)' "-NoNewline
                 Write-Host "successful." -ForegroundColor Green
