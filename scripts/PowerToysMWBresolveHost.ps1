@@ -3,6 +3,40 @@ $remoteMAC="" # e.g. "E2-56-9C-42-E7-A4"
 $remoteIP="" # will be resolved from MAC
 
 $mwbSettings="$env:localappdata\Microsoft\PowerToys\MouseWithoutBorders\settings.json"
+$shortcutName = "PowerToys*"
+
+function Get-PowerToysExe {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$shortcutName
+    )
+
+    $startMenuPaths = @(
+        "$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
+        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+    )
+
+    # Function to resolve the target of a shortcut
+    function Get-ShortcutTarget {
+        param([string]$shortcutPath)
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        return $shortcut.TargetPath
+    }
+
+    foreach ($startMenuPath in $startMenuPaths) {
+        $shortcuts = Get-ChildItem -Path $startMenuPath -Recurse -Filter "$shortcutName.lnk" -ErrorAction SilentlyContinue
+        if ($shortcuts) {
+            return Get-ShortcutTarget -shortcutPath $shortcuts[0].FullName
+        }
+    }
+
+    # Return $null if no shortcut is found
+    return $null
+}
+
+
 try {
     $remoteIP=Get-NetNeighbor -LinkLayerAddress $remoteMAC | Where-Object State -EQ "Reachable" | Select-Object -ExpandProperty IPAddress
 
@@ -37,8 +71,13 @@ try {
         # Restart PowerToys
         Get-Process -Name PowerToys -ErrorAction SilentlyContinue | Stop-Process -Force
         Start-Sleep -Seconds 2
-        $powerToysPath = "$env:ProgramFiles\PowerToys\PowerToys.exe"
-        Start-Process -FilePath $powerToysPath
+        $powerToysPath = Get-PowerToysExe -shortcutName $shortcutName
+        try{
+            Start-Process -FilePath $powerToysPath
+            Write-Host "PowerToys restarted successfully from Path: '$powerToysPath'" -ForegroundColor Green
+        } catch {
+            Write-Error "Failed to restart PowerToys from Path: '$powerToysPath'"
+        }
         Write-Host "Updated Name2IP in settings.json successfully. Have Fun!" -ForegroundColor Green
         Read-Host "Press [Enter] to Continue ..."
         exit 0
