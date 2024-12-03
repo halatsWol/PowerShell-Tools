@@ -522,6 +522,7 @@ function Repair-RemoteSystem {
             }
             Write-Verbose $successMessage
             Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$successMessage"
+            return 0
             # } catch {
             #     $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
             #     Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$errorMessage"
