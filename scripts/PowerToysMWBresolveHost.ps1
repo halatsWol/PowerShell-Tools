@@ -13,8 +13,8 @@ function Get-PowerToysExe {
     )
 
     $startMenuPaths = @(
-        "$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
-        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
+        "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
     )
 
     # Function to resolve the target of a shortcut
