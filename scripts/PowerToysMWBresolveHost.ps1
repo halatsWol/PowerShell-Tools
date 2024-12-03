@@ -38,7 +38,7 @@ function Get-PowerToysExe {
 
 
 try {
-    $remoteIP=Get-NetNeighbor -LinkLayerAddress $remoteMAC | Where-Object State -EQ "Reachable" | Select-Object -ExpandProperty IPAddress
+    $remoteIP=Get-NetNeighbor -LinkLayerAddress $remoteMAC | Where-Object {$_.IPAddress -match '\d+\.\d+\.\d+\.\d+'} | Select-Object -ExpandProperty IPAddress
 
     if ($remoteHost -eq "") {
         Write-Error "No Remote Hostname provided. Please set the variable remoteHost in this Script-File."
