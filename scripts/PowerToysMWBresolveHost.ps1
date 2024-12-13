@@ -1,5 +1,19 @@
-$remoteHost="PDN1289" # e.g. "MyRemotePC"
-$remoteMAC="F4-26-79-7E-21-01" # e.g. "E2-56-9C-42-E7-A4"
+# Description: Script to resolve the IP of a remote host via MAC Address and update the settings of 'PowerToys Mouse Without Borders'
+# All Hosts must be in the same Network, and the Remote Host must be reachable via ARP (e.g. in the same Subnet)
+# The Script may not work if Random MAC-Addresses are used
+
+# The Script will restart PowerToys after updating the settings
+# Use when DHCP assigned new addresses to the Hosts, or when another Network is used
+
+# Prerequisites: PowerToys Mouse Without Borders must be installed and configured
+# PowerToys Mouse Without Borders Documentation: https://learn.microsoft.com/en-us/windows/powertoys/mouse-without-borders
+
+# Author: Wolfram Halatschek
+# Date: 2021-12-10
+
+
+$remoteHost="" # e.g. "MyRemotePC"
+$remoteMAC="" # e.g. "E2-56-9C-42-E7-A4"
 $remoteIP="" # will be resolved from MAC
 
 $mwbSettings="$env:localappdata\Microsoft\PowerToys\MouseWithoutBorders\settings.json"
