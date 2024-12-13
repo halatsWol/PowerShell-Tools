@@ -452,7 +452,7 @@ function Repair-RemoteSystem {
             $softDistErr=""
             $cat2= $false
             $cat2Err=""
-            stop-service -force $sercicesStop
+            stop-service $sercicesStop
             if (Test-Path -Path $softwareDistributionBackupPath) {
                 Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
                 try{
