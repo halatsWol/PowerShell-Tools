@@ -442,7 +442,7 @@ function Repair-RemoteSystem {
         $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             # try {
             Write-Host "Starting Windows Update Cleanup..."
-            $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller")
+            $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec")
             $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
             $catroot2Path = "$Env:systemroot\system32\catroot2"
             $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
@@ -451,7 +451,7 @@ function Repair-RemoteSystem {
             $softDistErr=""
             $cat2= $false
             $cat2Err=""
-            stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller")
+            stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec")
             if (Test-Path -Path $softwareDistributionBackupPath) {
                 Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
                 try{
