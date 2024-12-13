@@ -443,6 +443,7 @@ function Repair-RemoteSystem {
             # try {
             Write-Host "Starting Windows Update Cleanup..."
             $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec")
+            $sercicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec")
             $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
             $catroot2Path = "$Env:systemroot\system32\catroot2"
             $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
@@ -451,7 +452,7 @@ function Repair-RemoteSystem {
             $softDistErr=""
             $cat2= $false
             $cat2Err=""
-            stop-service @("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec")
+            stop-service -force $sercicesStop
             if (Test-Path -Path $softwareDistributionBackupPath) {
                 Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
                 try{
@@ -466,6 +467,7 @@ function Repair-RemoteSystem {
             } else {
                 Write-Verbose "Backup directory does not exist. No need to delete."
             }
+            stop-service -force $sercicesStop
             if (Test-Path -Path $softwareDistributionPath) {
                 try{
                     Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak -ErrorAction Continue
@@ -492,6 +494,7 @@ function Repair-RemoteSystem {
             } else {
                 Write-Verbose "Backup directory does not exist. No need to delete."
             }
+            stop-service -force $sercicesStop
             if (Test-Path -Path $catroot2Path) {
                 try{
                     Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak -ErrorAction Continue
