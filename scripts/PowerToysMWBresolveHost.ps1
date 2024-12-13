@@ -1,5 +1,5 @@
-$remoteHost="" # e.g. "MyRemotePC"
-$remoteMAC="" # e.g. "E2-56-9C-42-E7-A4"
+$remoteHost="PDN1289" # e.g. "MyRemotePC"
+$remoteMAC="F4-26-79-7E-21-01" # e.g. "E2-56-9C-42-E7-A4"
 $remoteIP="" # will be resolved from MAC
 
 $mwbSettings="$env:localappdata\Microsoft\PowerToys\MouseWithoutBorders\settings.json"
