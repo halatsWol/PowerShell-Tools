@@ -442,8 +442,8 @@ function Repair-RemoteSystem {
         $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
             # try {
             Write-Host "Starting Windows Update Cleanup..."
-            $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec")
-            $sercicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec")
+            $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
+            $sercicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
             $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
             $catroot2Path = "$Env:systemroot\system32\catroot2"
             $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
@@ -453,6 +453,8 @@ function Repair-RemoteSystem {
             $cat2= $false
             $cat2Err=""
             stop-service $sercicesStop
+            if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
+            if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
             if (Test-Path -Path $softwareDistributionBackupPath) {
                 Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
                 try{
@@ -468,6 +470,8 @@ function Repair-RemoteSystem {
                 Write-Verbose "Backup directory does not exist. No need to delete."
             }
             stop-service -force $sercicesStop
+            if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
+            if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
             if (Test-Path -Path $softwareDistributionPath) {
                 try{
                     Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak -ErrorAction Continue
@@ -495,6 +499,8 @@ function Repair-RemoteSystem {
                 Write-Verbose "Backup directory does not exist. No need to delete."
             }
             stop-service -force $sercicesStop
+            if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
+            if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
             if (Test-Path -Path $catroot2Path) {
                 try{
                     Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak -ErrorAction Continue
@@ -601,11 +607,12 @@ function Repair-RemoteSystem {
         if (-not (Test-Path -Path $localTempPath)) {
             New-Item -Path $localTempPath -ItemType Directory -Force
         }
-        Copy-Item -Path "\\$ComputerName\C$\_temp\*" -Destination $localTempPath -Recurse -Force
+        try{
+            Copy-Item -Path "\\$ComputerName\C$\_temp\*" -Destination $localTempPath -Recurse -Force
 
-        # Clear remote _temp folder if copy was successful
+            # Clear remote _temp folder if copy was successful
 
-        if ($?) {
+
             if(-not $KeepLogs){
                 Invoke-Command -ComputerName $ComputerName -ScriptBlock {
                     Remove-Item -Path "C:\_temp\*" -Recurse -Force
@@ -614,7 +621,7 @@ function Repair-RemoteSystem {
             } else {
                 $extmsg+= $extmsgrLogP
             }
-        } else {
+        } catch {
             $message = "An error occurred while copying the log files from $ComputerName."
             Write-Error $message
             $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
