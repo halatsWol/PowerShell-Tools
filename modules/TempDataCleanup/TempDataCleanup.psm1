@@ -12,6 +12,9 @@ function Invoke-TempDataCleanup {
     .PARAMETER IncludeSystemData
     If this switch is present, the cleanup will also include system folders.
 
+    .PARAMETER IncludeSystemLogs
+    If this switch is present, the cleanup will also include system log files like $env:WinDir\Logs\,  $env:WinDir\Minidmp\.
+
     .PARAMETER IncludeCCMCache
     If this switch is present, the cleanup will also include the Configuration Manager cache folder, if it exists.
 
@@ -85,6 +88,9 @@ function Invoke-TempDataCleanup {
         [switch]$IncludeSystemData,
 
         [Parameter(Mandatory=$false)]
+        [switch]$IncludeSystemLogs,
+
+        [Parameter(Mandatory=$false)]
         [switch]$IncludeCCMCache,
 
         [Parameter(Mandatory=$false)]
@@ -117,10 +123,14 @@ function Invoke-TempDataCleanup {
         "\AppData\Local\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalCache",
         "\AppData\Local\Packages\Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe\LocalCache",
         "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.ScreenSketch_8wekyb3d8bbwe\LocalCache"
+        "\AppData\Local\Packages\Microsoft.ScreenSketch_8wekyb3d8bbwe\LocalCache",
+        "\AppData\Local\Packages\Microsoft.WindowsFeedbackHub_8wekyb3d8bbwe\TempState",
+        "\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TempState"
     )
     $allPackagesCacheFolder="\AppData\Local\Packages\*\LocalCache"
     $BrowserData=@(
+        # general
+        "\AppData\LocalLow\Microsoft\CryptnetUrlCache\MetaData",
         # Microsoft Internet Explorer
         "\AppData\Local\Microsoft\Windows\INetCache",
         "\AppData\Local\Microsoft\Windows\INetCookies",
@@ -182,6 +192,27 @@ function Invoke-TempDataCleanup {
     $teamsClassicPath="\AppData\Roaming\Microsoft\Teams"
     $ccmCachePath="$env:Windir\ccmcache"
 
+    $userReportingDirs=@(
+        "\AppData\Local\CrashDumps",
+        "\Appdata\Local\D3DSCache",
+        "\AppData\Local\Microsoft\Windows\WER\ReportQueue",
+        "\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache"
+    )
+
+    $sysReportingDirs=@(
+        "$env:Windir\Logs",
+        "$env:Windir\Minidump",
+        "$env:Windir\LiveKernelReports",
+        "$env:Windir\System32\LogFiles\WMI",
+        "$env:Windir\System32\LogFiles\setupcln",
+        "$env:Windir\ServiceProfiles\LocalService\AppData\Local\CrashDumps",
+        "$env:Windir\sysWOW64\config\systemprofile\AppData\Local\CrashDumps",
+        "$env:Windir\system32\config\systemprofile\AppData\Local\CrashDumps",
+        "$env:Windir\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache",
+        "$env:ProgramData\Microsoft\Windows\WER\ReportQueue",
+        "$env:ProgramData\Microsoft\Windows\WER\ReportArchive"
+    )
+
     $localTargetPath = "C:\remote-Files\$ComputerName"
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
     $logdir="C:\_temp"
@@ -222,6 +253,15 @@ function Invoke-TempDataCleanup {
                             Add-Content -Path $using:logfile -Value "`t`t> $path"
                         }
 
+                    }
+                    if ($using:IncludeSystemLogs) {
+                        foreach ($folder in $using:userReportingDirs) {
+                            $path = "$env:SystemDrive\Users\$userProfile$folder"
+                            if (Test-Path $path) {
+                                Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                                Add-Content -Path $using:logfile -Value "`t`t> $path"
+                            }
+                        }
                     }
                     if ($using:IncludeIconCache) {
                         $path = "$env:SystemDrive\Users\$userProfile$using:explorerCacheDir"
@@ -273,9 +313,22 @@ function Invoke-TempDataCleanup {
 
             }
 
-            if($using:IncludeSystemData) {
+            if( $using:IncludeSystemData -or $using:IncludeSystemLogs -or $using:IncludeCCMCache) {
                 Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
+            }
+
+            if($using:IncludeSystemData) {
                 foreach ($folder in $using:systemTempFolders) {
+                    if (Test-Path $folder) {
+                        Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
+                        Add-Content -Path $using:logfile -Value "`t`t> $folder"
+                    }
+                }
+                Start-Sleep -Milliseconds 200
+            }
+
+            if($using:IncludeSystemLogs) {
+                foreach ($folder in $using:sysReportingDirs) {
                     if (Test-Path $folder) {
                         Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
                         Add-Content -Path $using:logfile -Value "`t`t> $folder"
@@ -286,9 +339,6 @@ function Invoke-TempDataCleanup {
 
 
             if($using:IncludeCCMCache) {
-                if(-not $using:IncludeSystemData){
-                    Add-Content -Path $using:logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
-                }
                 if (Test-Path $using:ccmCachePath) {
                     Remove-Item -Path "$using:ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $using:logfile -Value "`t`t> $ccmCachePath"
@@ -328,6 +378,15 @@ function Invoke-TempDataCleanup {
                         Add-Content -Path $logfile -Value "`t`t> $path"
                     }
 
+                }
+                if ($IncludeSystemLogs) {
+                    foreach ($folder in $userReportingDirs) {
+                        $path = "$env:SystemDrive\Users\$userProfile$folder"
+                        if (Test-Path $path) {
+                            Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                            Add-Content -Path $logfile -Value "`t`t> $path"
+                        }
+                    }
                 }
                 if ($IncludeIconCache) {
                     $path = "$env:SystemDrive\Users\$userProfile$explorerCacheDir"
@@ -379,9 +438,22 @@ function Invoke-TempDataCleanup {
 
         }
 
-        if($IncludeSystemData) {
+        if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
             Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
+        }
+
+        if($IncludeSystemData) {
             foreach ($folder in $systemTempFolders) {
+                if (Test-Path $folder) {
+                    Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Add-Content -Path $logfile -Value "`t`t> $folder"
+                }
+            }
+            Start-Sleep -Milliseconds 200
+        }
+
+        if($IncludeSystemLogs) {
+            foreach ($folder in $sysReportingDirs) {
                 if (Test-Path $folder) {
                     Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t> $folder"
@@ -390,11 +462,7 @@ function Invoke-TempDataCleanup {
         }
 
 
-
         if($IncludeCCMCache) {
-            if(-not $IncludeSystemData){
-                Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
-            }
             if (Test-Path $ccmCachePath) {
                 Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
