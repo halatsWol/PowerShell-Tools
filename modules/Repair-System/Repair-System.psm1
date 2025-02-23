@@ -1,4 +1,187 @@
-function Repair-RemoteSystem {
+function Create-TempFolder {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$tempFolder
+    )
+    if (-not (Test-Path -Path $tempFolder)) {New-Item -Path $tempFolder -ItemType Directory -Force}
+}
+
+function Invoke-SFC {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$sfcLog,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Verbose
+
+
+    )
+    Write-Verbose "executing SFC"
+        try{
+            if ($Quiet) {
+                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
+            } else {
+                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
+            }
+            $sfcExitCode=$LASTEXITCODE
+            $logContent = Get-Content $sfcLog -Raw
+            $logContent = $logContent -replace [char]0
+            Set-Content $sfcLog -Value $logContent
+            return $sfcExitCode
+        } catch {
+            $errorMessage = "An error occurred while performing SFC: `r`n$_"
+            Write-Error $errorMessage
+            Add-Content -Path $sfcLog -Value $errorMessage
+            return 1
+        }
+}
+
+function Invoke-DISMScan {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$dismScanLog,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Verbose
+    )
+    Write-Verbose "executing DISM/ScanHealth"
+    try{
+        if ($Quiet) {
+            dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
+        } else {
+            dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
+        }
+        return $LASTEXITCODE
+    } catch {
+        $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
+        Write-Error $errorMessage
+        Add-Content -Path $dismScanLog -Value $errorMessage
+        return 1
+    }
+}
+
+function Get-DISMScanResult {
+    [Parameter(Mandatory=$true)]
+    [String]$dismScanLog
+    $ScanResult = 1
+    $lines=Get-Content -Path $using:dismScanLog
+    $ScanResultData=$lines[-1..-($lines.Count)]
+    foreach ($line in $ScanResultData) {
+        if ($line -match 'The component store is repairable.') {
+            return 1
+        } elseif ($line -match 'No component store corruption detected.') {
+            return 0
+
+        }
+    }
+    return 1
+}
+
+function Invoke-DISMRestore {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$dismRestoreLog,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Verbose
+    )
+
+    Write-Verbose "executing DISM/RestoreHealth"
+    try{
+        if ($Quiet) {
+            dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
+        } else {
+            dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $dismRestoreLog
+        }
+        return $LASTEXITCODE
+    } catch {
+        $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
+        Write-Error $errorMessage
+        Add-Content -Path $dismRestoreLog -Value $errorMessage
+        return 1
+    }
+}
+
+function Invoke-DISMAnalyzeComponentStore {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$analyzeComponentLog,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Verbose
+    )
+
+    try{
+        if ($Quiet) {
+            dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
+        } else {
+            dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
+        }
+        return $LASTEXITCODE
+    } catch {
+        $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
+        Write-Error $errorMessage
+        Add-Content -Path $analyzeComponentLog -Value $errorMessage
+        return 1
+    }
+}
+
+function Get-DISMAnalyzeComponentStoreResult {
+    [Parameter(Mandatory=$true)]
+    [String]$analyzeComponentLog
+
+    $lines = Get-Content -Path $using:analyzeComponentLog
+    $analyzeComponentLogData = $lines[-1..-($lines.Count)]
+    foreach ($line in $analyzeComponentLogData) {
+        if ($line -match 'Component Store Cleanup Recommended : Yes') {
+            return $true
+        } elseif ($line -match 'Component Store Cleanup Recommended : No') {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Invoke-DISMComponentStoreCleanup {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$componentCleanupLog,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Verbose
+    )
+
+    try{
+        if ($Quiet) {
+            dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
+        } else {
+            dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
+        }
+        $message = "Component store cleanup performed."
+        Write-Verbose $message
+        Add-Content -Path $componentCleanupLog -Value $message
+    } catch {
+        $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
+        Write-Error $message
+        Add-Content -Path $componentCleanupLog -Value $message
+    }
+}
+function Repair-System {
     <#
     .SYNOPSIS
     Repairs the system by running SFC and DISM commands on a remote computer.
@@ -113,7 +296,7 @@ function Repair-RemoteSystem {
 
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory=$false, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
         [ValidatePattern('^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')]
         [string]$ComputerName,
 
@@ -146,9 +329,16 @@ function Repair-RemoteSystem {
 
     )
     $ExitCode=0,0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
-
+    $shareDrive="C$"
+    $remote=$false
+    $shareDrivePath=""
     # check if verbose param is set in command execution
     $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
+
+
+    if($ComputerName -ne "" -and $ComputerName -ne $env:COMPUTERNAME -and $ComputerName -ne "localhost"){
+        $remote=$true
+    }
 
     # Validation to ensure -IncludeComponentCleanup is not used with -noDism
     if ($noDism -and $IncludeComponentCleanup) {
@@ -160,28 +350,32 @@ function Repair-RemoteSystem {
         break
     }
 
-    # Ping the remote computer to check availability
-    $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
+    if($remote){
+        # Ping the remote computer to check availability
+        $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
 
-    if (-not $pingResult) {
-        Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
-        $ExitCode[0]=2
-        $exitCode=$exitCode | Sort-Object {$_} -Descending
-        $exitCode = $exitCode -join ""
-        $global:LASTEXITCODE = $ExitCode
-        break
+        if (-not $pingResult) {
+            Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
+            $ExitCode[0]=2
+            $exitCode=$exitCode | Sort-Object {$_} -Descending
+            $exitCode = $exitCode -join ""
+            $global:LASTEXITCODE = $ExitCode
+            break
+        }
+
+        if($remoteShareDrive -ne ""){
+            $shareDrive=$remoteShareDrive
+        }
+        $shareDrivePath="\\$ComputerName\$shareDrive"
     }
 
 
-    $shareDrive="C$"
-    if($remoteShareDrive -ne ""){
-        $shareDrive=$remoteShareDrive
-    }
-    $shareDrivePath="\\$ComputerName\$shareDrive"
+
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-    $remoteTempPath = "$shareDrivePath\_temp"
-    $localremoteTempPath="C:\_temp"
+    $tempFolder="_temp"
+    $remoteTempPath = "$shareDrivePath\$tempFolder"
+    $localremoteTempPath="C:\$tempFolder"
     $localTempPath = "C:\remote-Files\$ComputerName"
     $sfcLog = "$localremoteTempPath\sfc-scannow_$currentDateTime.log"
     $dismScanLog = "$localremoteTempPath\dism-scan_$currentDateTime.log"
@@ -193,198 +387,129 @@ function Repair-RemoteSystem {
     $updateCleanupLog = "$localremoteTempPath\update-cleanup_$currentDateTime.log"
     $sccmCleanupLog = "$localremoteTempPath\sccm-cleanup_$currentDateTime.log"
 
-    try{
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            Get-Process | Out-Null
-        } -Verbose:$VerboseOption -ErrorAction Stop
-    } catch {
-        $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration.`r`n `r`n `r`nError: $_"
-        Write-Error $winRMexit
-        if (-not (Test-Path -Path $localTempPath)) {
-            New-Item -Path $localTempPath -ItemType Directory -Force
+    if($remote){
+        # Check if the remote computer is reachable via WinRM
+        $winRMexit = ""
+        try{
+            Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                Write-Host "Connected to $env:COMPUTERNAME"
+            } -Verbose:$VerboseOption -ErrorAction Stop
+        } catch {
+            $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration.`r`n `r`n `r`nError: $_"
+            Write-Error $winRMexit
+            if (-not (Test-Path -Path $localTempPath)) {
+                New-Item -Path $localTempPath -ItemType Directory -Force
+            }
+            Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
+            $ExitCode[0]=3
+            $exitCode=$exitCode | Sort-Object {$_} -Descending
+            $exitCode = $exitCode -join ""
+            $global:LASTEXITCODE = $ExitCode
+            break
         }
-        Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
-        $ExitCode[0]=3
-        $exitCode=$exitCode | Sort-Object {$_} -Descending
-        $exitCode = $exitCode -join ""
-        $global:LASTEXITCODE = $ExitCode
-        break
+        try{
+            Test-Path "$shareDrivePath\Windows"
+        } catch {
+            $errmsg="[$using:currentDateTime] - ERROR:`tNo Windows Directory found on Remote Device`r`nTested:`t'$shareDrivePath\Windows'"
+            $errmsg+="`r`nPlease check if The ShareDrive '$shareDrivePath' exists and is accessible!"
+            Write-Error $errmsg
+            if (-not (Test-Path -Path $localTempPath)) {
+                New-Item -Path $localTempPath -ItemType Directory -Force
+            }
+            Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$errmsg"
+            $ExitCode[0]=4
+            $exitCode=$exitCode | Sort-Object {$_} -Descending
+            $exitCode = $exitCode -join ""
+            $global:LASTEXITCODE = $ExitCode
+            break
+        }
     }
 
-    try{
-        Test-Path "$shareDrivePath\Windows"
-    } catch {
-        $errmsg="[$using:currentDateTime] - ERROR:`tNo Windows Directory found on Remote Device`r`nTested:`t'$shareDrivePath\Windows'"
-        $errmsg+="`r`nPlease check if The ShareDrive '$shareDrivePath' exists and is accessible!"
-        Write-Error $errmsg
-        if (-not (Test-Path -Path $localTempPath)) {
-            New-Item -Path $localTempPath -ItemType Directory -Force
-        }
-        Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$errmsg"
-        $ExitCode[0]=4
-        $exitCode=$exitCode | Sort-Object {$_} -Descending
-        $exitCode = $exitCode -join ""
-        $global:LASTEXITCODE = $ExitCode
-        break
-    }
 
-    if (-not (Test-Path -Path $remoteTempPath)) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            New-Item -Path "C:\_temp" -ItemType Directory -Force
-        } -Verbose:$VerboseOption
+
+    if ($remote) {
+        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-TempFolder} -ArgumentList $localremoteTempPath -Verbose:$VerboseOption
+    } else {
+        create-TempFolder -tempFolder $localremoteTempPath
     }
 
     if(-not $noSfc){
-        # Execute sfc /scannow
-            $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            Write-Verbose "executing SFC"
-            try{
-                if ($using:Quiet) {
-                    sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $using:sfcLog 2>&1
-                } else {
-                    sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $using:sfcLog -OutBuffer 1
-                }
-                $sfcExitCode=$LASTEXITCODE
-                $logContent = Get-Content $using:sfcLog -Raw
-                $logContent = $logContent -replace [char]0
-                Set-Content $using:sfcLog -Value $logContent
-                return $sfcExitCode
-            } catch {
-                $errorMessage = "An error occurred while performing SFC: `r`n$_"
-                Write-Error $errorMessage
-                Add-Content -Path $using:sfcLog -Value $errorMessage
-                return 1
-            }
-        } -Verbose:$VerboseOption
-        $ExitCode[1]=$sfcExitCode
+        $sfcExitCode=0
+        if($remote){
+            $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
+        } else {$sfcExitCode=Invoke-SFC -sfcLog $sfcLog -Quiet $Quiet -Verbose $VerboseOption}
+            $ExitCode[1]=$sfcExitCode
     }
 
     if (-not $noDism) {
-        # Execute dism /online /Cleanup-Image /Scanhealth
-        $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            Write-Verbose "executing DISM/ScanHealth"
-            try{
-                if ($using:Quiet) {
-                    dism /online /Cleanup-Image /Scanhealth > $using:dismScanLog 2>&1
-                } else {
-                    dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $using:dismScanLog
-                }
-                return $LASTEXITCODE
-            } catch {
-                $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
-                Write-Error $errorMessage
-                Add-Content -Path $using:dismScanLog -Value $errorMessage
-                return 1
-            }
-        } -Verbose:$VerboseOption
+        $dismScanResult=0
+        if($remote){
+            $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $Quiet, $VerboseOption
+        } else { $dismScanResult=Invoke-DISMScan -dismScanLog $dismScanLog -Quiet $Quiet -Verbose $VerboseOption}
         $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
         $ExitCode[2]=$dismScanResult
         $dismScanResultString = $dismScanResult.ToString()
 
 
-
-        # Explicitly check the exit code to decide on RestoreHealth
         if ($dismScanResultString -eq 0) {
             # Component store is repairable, proceed with RestoreHealth
-            $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-
-                $ScanResult = 1
-                $lines=Get-Content -Path $using:dismScanLog
-                $ScanResultData=$lines[-1..-($lines.Count)]
-                foreach ($line in $ScanResultData) {
-                    if ($line -match 'The component store is repairable.') {
-                        break
-                    } elseif ($line -match 'No component store corruption detected.') {
-                        $ScanResult=0
-                        break
-                    }
-                }
-                if ($ScanResult -eq 1) {
-                    Write-Verbose "executing DISM/RestoreHealth"
-                    try{
-                        if ($using:Quiet) {
-                            dism /online /Cleanup-Image /RestoreHealth > $using:dismRestoreLog 2>&1
-                        } else {
-                            dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $using:dismRestoreLog
-                        }
-                        return $LASTEXITCODE
-                    } catch {
-                        $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
-                        Write-Error $errorMessage
-                        Add-Content -Path $using:dismRestoreLog -Value $errorMessage
-                        return 1
-                    }
-                }
-            } -Verbose:$VerboseOption
+            $dismScanExit=1
+            $dismRestoreExit=0
+            if($remote){
+                $dismScanExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Get-DISMScanResult} -ArgumentList $dismScanLog
+            } else { $dismScanExit=Get-DISMScanResult -dismScanLog $dismScanLog}
+            if ($dismScanExit -eq 1) {
+                if ($remote) {
+                    $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $Quiet, $VerboseOption
+                } else { $dismRestoreExit=Invoke-DISMRestore -dismRestoreLog $dismRestoreLog -Quiet $Quiet -Verbose $VerboseOption }
             $ExitCode[3]=$dismRestoreExit
         } else {
             $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
             Write-Verbose $message
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                param ($logPath, $logMessage)
-                Add-Content -Path $logPath -Value $logMessage
-            }  -Verbose:$VerboseOption -ArgumentList $dismRestoreLog, $message
+            if ($remote) {
+                Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                    param ($logPath, $logMessage)
+                    Add-Content -Path $logPath -Value $logMessage
+                }  -Verbose:$VerboseOption -ArgumentList $dismRestoreLog, $message
+            } else {
+                Add-Content -Path $dismRestoreLog -Value $message
+                Write-Output $message
+            }
         }
 
         if ($IncludeComponentCleanup) {
             # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
-            $analyzeExit = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                try{
-                    if ($using:Quiet) {
-                        dism /Online /Cleanup-Image /AnalyzeComponentStore > $using:analyzeComponentLog 2>&1
-                    } else {
-                        dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $using:analyzeComponentLog
-                    }
-                    return $LASTEXITCODE
-                } catch {
-                    $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
-                    Write-Error $errorMessage
-                    Add-Content -Path $using:analyzeComponentLog -Value $errorMessage
-                    return 1
-                }
-            } -Verbose:$VerboseOption
+            $analyzeExit=0
+            if ($remote) {
+                $analyzeExit = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $Quiet, $VerboseOption
+            } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore -analyzeComponentLog $analyzeComponentLog -Quiet $Quiet -Verbose $VerboseOption }
             $ExitCode[4]=$analyzeExit
-
 
             # Check the output and perform cleanup if recommended
             $message = ""
             if ($analyzeExit -eq 0 -or $analyzeExit -eq "") {
-                $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                    $lines = Get-Content -Path $using:analyzeComponentLog
-                    $analyzeComponentLogData = $lines[-1..-($lines.Count)]
-                    $analyzeResult = 0
-                    foreach ($line in $analyzeComponentLogData) {
-                        if ($line -match 'Component Store Cleanup Recommended : Yes') {
-                            $analyzeResult= 1
-                            break
-                        } elseif ($line -match 'Component Store Cleanup Recommended : No') {
-                            $analyzeResult= 0
-                            break
-                        }
-                    }
-
-
-                    if ($analyzeResult -eq 1) {
-                        try{
-                            if ($using:Quiet) {
-                                dism /Online /Cleanup-Image /StartComponentCleanup > $using:componentCleanupLog 2>&1
-                            } else {
-                                dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $using:componentCleanupLog
-                            }
-                            $message = "Component store cleanup was performed on $using:ComputerName."
-                            Write-Verbose $message
-                            Add-Content -Path $using:componentCleanupLog -Value $message
-                        } catch {
-                            $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
-                            Write-Error $message
-                            Add-Content -Path $using:componentCleanupLog -Value $message
-                        }
+                $analyzeResult=$true
+                if ($remote) {
+                    $analyzeResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Get-DISMAnalyzeComponentStoreResult} -ArgumentList $analyzeComponentLog
+                } else { $analyzeResult=Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeComponentLog }
+                $componentCleanupExit=0
+                if ($analyzeResult) {
+                    if ($remote) {
+                        $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $Quiet, $VerboseOption
+                    } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup -componentCleanupLog $componentCleanupLog -Quiet $Quiet -Verbose $VerboseOption }
+                } else {
+                    $message = "No component store cleanup was needed on $ComputerName."
+                    if($remote) {
+                        Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                            param ($logPath, $logMessage)
+                            Add-Content -Path $logPath -Value $logMessage
+                        }  -Verbose:$VerboseOption -ArgumentList $componentCleanupLog, $message
                     } else {
-                        $message = "No component store cleanup was needed on $using:ComputerName."
                         Write-Verbose $message
-                        Add-Content -Path $using:componentCleanupLog -Value $message
+                        Add-Content -Path $componentCleanupLog -Value $message
                     }
-                } -Verbose:$VerboseOption
+                }
+
                 $ExitCode[5]=$componentCleanupExit
             } else {
                 $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
@@ -392,8 +517,6 @@ function Repair-RemoteSystem {
                 Add-Content -Path $componentCleanupLog -Value $message
             }
         }
-
-
     }
 
     if ($sccmCleanup) {
