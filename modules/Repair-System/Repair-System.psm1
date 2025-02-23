@@ -181,6 +181,227 @@ function Invoke-DISMComponentStoreCleanup {
         Add-Content -Path $componentCleanupLog -Value $message
     }
 }
+
+function Invoke-SCCMCleanup {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$sccmCleanupLog,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Verbose
+    )
+
+    Write-Verbose "executing SCCM Cleanup"
+    $returnVal=0
+    if (Test-Path -Path "$env:windir\ccmcache") {
+        try{
+            Remove-Item -Path "$env:windir\ccmcache\*" -Recurse -Force
+            Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$env:windir\ccmcache\ cleaned`r`n"
+            $returnVal = 0
+        } catch {
+            $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
+            Write-Error $errorMessage
+            Add-Content -Path $sccmCleanupLog -Value $errorMessage
+            $returnVal = 1
+        }
+    } else {
+        $msg = "CCM Cache folder does not exist. No need to delete."
+        Write-Verbose $msg
+        Add-Content -Path $sccmCleanupLog -Value $msg
+        $returnVal = 0
+    }
+
+    if (Test-Path -Path "$env:windir\SoftwareDistribution\Download") {
+        try{
+            Remove-Item -Path "$env:windir\SoftwareDistribution\Download\*" -Recurse -Force
+            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$env:windir\SoftwareDistribution\Download\ cleaned`r`n"
+            $returnVal = 0
+        } catch {
+            $errorMessage = "An error occurred while Cleaning SoftwareDistribution\Download: `r`n$_"
+            Write-Error $errorMessage
+            Add-Content -Path $sccmCleanupLog -Value $errorMessage
+            $returnVal = 1
+        }
+    } else {
+        $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
+        Write-Verbose $msg
+        Add-Content -Path $using:sccmCleanupLog -Value $msg
+        $returnVal = 0
+    }
+    return $returnVal
+}
+
+function Invoke-WindowsUpdateCleanup {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$updateCleanupLog,
+
+        [Parameter(Mandatory=$true)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true)]
+        [switch]$Verbose
+    )
+
+    Write-Host "Starting Windows Update Cleanup..."
+    $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
+    $sercicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
+    $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
+    $catroot2Path = "$Env:systemroot\system32\catroot2"
+    $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
+    $catroot2BackupPath = "$catroot2Path.bak"
+    $softDist = $false
+    $softDistErr=""
+    $cat2= $false
+    $cat2Err=""
+    stop-service $sercicesStop
+    if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
+    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
+    if (Test-Path -Path $softwareDistributionBackupPath) {
+        Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
+        try{
+            Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
+        } catch {
+            $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
+            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
+            Write-Error $softDistErr
+            start-service $servicesStart
+            return 2
+        }
+    } else {
+        Write-Verbose "Backup directory does not exist. No need to delete."
+    }
+    stop-service -force $sercicesStop
+    if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
+    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
+    if (Test-Path -Path $softwareDistributionPath) {
+        try{
+            Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak -ErrorAction Continue
+            $softDist = $true
+        } catch {
+            $softDistErr= "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
+            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
+            Write-Error $softDistErr
+            start-service $servicesStart
+            return 1
+        }
+    }
+    if (Test-Path -Path $catroot2BackupPath) {
+        Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
+        try{
+            Remove-Item -Path $catroot2BackupPath -Recurse -Force
+        } catch {
+            $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
+            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
+            Write-Error $cat2Err
+            start-service $servicesStart
+            return 2
+        }
+    } else {
+        Write-Verbose "Backup directory does not exist. No need to delete."
+    }
+    stop-service -force $sercicesStop
+    if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
+    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
+    if (Test-Path -Path $catroot2Path) {
+        try{
+            Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak -ErrorAction Continue
+            $cat2 = $true
+        } catch {
+            $cat2Err= "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
+            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
+            Write-Error $cat2Err
+            start-service $servicesStart
+            return 1
+        }
+    } else {
+        Write-Verbose "catroot2 folder does not exist. No need to rename."
+    }
+    start-service $servicesStart
+    $successMessage = "Windows Update Cleanup successful."
+    if($softDist){
+        $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
+    } else {
+        $successMessage += "`r`n[STATUS]`tRenaming SoftwareDistribution: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
+        if($softDistErr -ne ""){$successMessage += "`r`n[ERROR]`t$softDistErr"}
+    }
+    if($cat2){
+        $successMessage += "`r`n[SUCCESS]`tcatroot2 folder has been renamed."
+    }else {
+        $successMessage += "`r`n[STATUS]`tRenaming catroot2: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
+        if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
+    }
+    Write-Verbose $successMessage
+    Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$successMessage"
+    return 0
+}
+
+function Create-ZipFile {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$localremoteTempPath,
+
+        [Parameter(Mandatory=$true)]
+        [string]$zipFile,
+
+        [Parameter(Mandatory=$true)]
+        [string]$zipErrorLog,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$noDism,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Verbose
+    )
+
+    try {
+        $cbsLog = "$env:windir\Logs\CBS\CBS.log"
+        $dismLog = "$env:windir\Logs\dism\dism.log"
+        $localtempPath = "$localremoteTempPath"
+        $filesToZip = @()
+
+        # Copy CBS.log to the temporary directory if it exists
+        if (Test-Path $cbsLog) {
+            Copy-Item -Path $cbsLog -Destination $localtempPath
+            $filesToZip += (Join-Path -Path $localtempPath -ChildPath "CBS.log")
+        }
+
+        # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
+        if (-not $noDism) {
+            if (Test-Path $dismLog) {
+                Copy-Item -Path $dismLog -Destination $localtempPath
+                $filesToZip += (Join-Path -Path $localtempPath -ChildPath "dism.log")
+            }
+        }
+
+        # Delete existing zip file if it exists
+        if (Test-Path $zipFile) {
+            Remove-Item -Path $zipFile -Force
+        }
+
+        # Create a new zip file
+        if ($filesToZip.Count -gt 0) {
+            Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
+        }
+
+        # Remove the copied logs from the temporary directory
+        foreach ($file in $filesToZip) {
+            if (Test-Path $file) {
+                Remove-Item -Path $file -Force
+            }
+        }
+    } catch {
+        $errorMessage = "An error occurred while creating the zip file: $_"
+        Add-Content -Path $zipErrorLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n$errorMessage"
+        Write-Error $message
+        return 1
+    }
+    return 0
+}
+
 function Repair-System {
     <#
     .SYNOPSIS
@@ -373,7 +594,7 @@ function Repair-System {
 
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-    $tempFolder="_temp"
+    $tempFolder="_IT-temp"
     $remoteTempPath = "$shareDrivePath\$tempFolder"
     $localremoteTempPath="C:\$tempFolder"
     $localTempPath = "C:\remote-Files\$ComputerName"
@@ -438,7 +659,7 @@ function Repair-System {
         if($remote){
             $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
         } else {$sfcExitCode=Invoke-SFC -sfcLog $sfcLog -Quiet $Quiet -Verbose $VerboseOption}
-            $ExitCode[1]=$sfcExitCode
+        $ExitCode[1]=$sfcExitCode
     }
 
     if (-not $noDism) {
@@ -462,7 +683,8 @@ function Repair-System {
                 if ($remote) {
                     $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $Quiet, $VerboseOption
                 } else { $dismRestoreExit=Invoke-DISMRestore -dismRestoreLog $dismRestoreLog -Quiet $Quiet -Verbose $VerboseOption }
-            $ExitCode[3]=$dismRestoreExit
+                $ExitCode[3]=$dismRestoreExit
+            }
         } else {
             $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
             Write-Verbose $message
@@ -520,148 +742,20 @@ function Repair-System {
     }
 
     if ($sccmCleanup) {
-        $sccmCleanupResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            Write-Verbose "executing SCCM Cleanup"
-            if (Test-Path -Path "$env:windir\ccmcache") {
-                try{
-                    Remove-Item -Path "$env:windir\ccmcache\*" -Recurse -Force
-                    Add-Content -Path $using:sccmCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$env:windir\ccmcache\ cleaned`r`n"
-                    return 0
-                } catch {
-                    $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
-                    Write-Error $errorMessage
-                    Add-Content -Path $using:sccmCleanupLog -Value $errorMessage
-                    return 1
-                }
-            } else {
-                $msg = "CCM Cache folder does not exist. No need to delete."
-                Write-Verbose $msg
-                Add-Content -Path $using:sccmCleanupLog -Value $msg
-                return 0
-            }
+        $sccmCleanupResult=0
+        if ($remote) {
+            $sccmCleanupResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList $sccmCleanupLog, $Quiet, $VerboseOption
+        } else { $sccmCleanupResult=Invoke-SCCMCleanup -sccmCleanupLog $sccmCleanupLog -Quiet $Quiet -Verbose $VerboseOption }
 
-            if (Test-Path -Path "$env:windir\SoftwareDistribution\Download") {
-                try{
-                    Remove-Item -Path "$env:windir\SoftwareDistribution\Download\*" -Recurse -Force
-                    Add-Content -Path $using:sccmCleanupLog -Value "`r`n[$using:currentDateTime] - INFO:`r`n`t$env:windir\SoftwareDistribution\Download\ cleaned`r`n"
-                    return 0
-                } catch {
-                    $errorMessage = "An error occurred while Cleaning SoftwareDistribution\Download: `r`n$_"
-                    Write-Error $errorMessage
-                    Add-Content -Path $using:sccmCleanupLog -Value $errorMessage
-                    return 1
-                }
-            } else {
-                $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
-                Write-Verbose $msg
-                Add-Content -Path $using:sccmCleanupLog -Value $msg
-                return 0
-            }
-        } -Verbose:$VerboseOption
         $ExitCode[6]=$sccmCleanupResult
     }
 
     if ($WindowsUpdateCleanup) {
-        $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            # try {
-            Write-Host "Starting Windows Update Cleanup..."
-            $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
-            $sercicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
-            $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
-            $catroot2Path = "$Env:systemroot\system32\catroot2"
-            $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
-            $catroot2BackupPath = "$catroot2Path.bak"
-            $softDist = $false
-            $softDistErr=""
-            $cat2= $false
-            $cat2Err=""
-            stop-service $sercicesStop
-            if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
-            if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
-            if (Test-Path -Path $softwareDistributionBackupPath) {
-                Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-                try{
-                    Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
-                } catch {
-                    $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
-                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
-                    Write-Error $softDistErr
-                    start-service $servicesStart
-                    return 2
-                }
-            } else {
-                Write-Verbose "Backup directory does not exist. No need to delete."
-            }
-            stop-service -force $sercicesStop
-            if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
-            if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
-            if (Test-Path -Path $softwareDistributionPath) {
-                try{
-                    Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak -ErrorAction Continue
-                    $softDist = $true
-                } catch {
-                    $softDistErr= "[$using:currentDateTime] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
-                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$softDistErr"
-                    Write-Error $softDistErr
-                    start-service $servicesStart
-                    return 1
-                }
-            }
-            if (Test-Path -Path $catroot2BackupPath) {
-                Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-                try{
-                    Remove-Item -Path $catroot2BackupPath -Recurse -Force
-                } catch {
-                    $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
-                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
-                    Write-Error $cat2Err
-                    start-service $servicesStart
-                    return 2
-                }
-            } else {
-                Write-Verbose "Backup directory does not exist. No need to delete."
-            }
-            stop-service -force $sercicesStop
-            if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
-            if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
-            if (Test-Path -Path $catroot2Path) {
-                try{
-                    Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak -ErrorAction Continue
-                    $cat2 = $true
-                } catch {
-                    $cat2Err= "[$using:currentDateTime] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
-                    Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$cat2Err"
-                    Write-Error $cat2Err
-                    start-service $servicesStart
-                    return 1
-                }
-            } else {
-                Write-Verbose "catroot2 folder does not exist. No need to rename."
-            }
-            start-service $servicesStart
-            $successMessage = "Windows Update Cleanup successful."
-            if($softDist){
-                $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
-            } else {
-                $successMessage += "`r`n[STATUS]`tRenaming SoftwareDistribution: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-                if($softDistErr -ne ""){$successMessage += "`r`n[ERROR]`t$softDistErr"}
-            }
-            if($cat2){
-                $successMessage += "`r`n[SUCCESS]`tcatroot2 folder has been renamed."
-            }else {
-                $successMessage += "`r`n[STATUS]`tRenaming catroot2: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-                if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
-            }
-            Write-Verbose $successMessage
-            Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - INFO:`r`n`t$successMessage"
-            return 0
-            # } catch {
-            #     $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
-            #     Add-Content -Path $using:updateCleanupLog -Value "[$using:currentDateTime] - ERROR:`r`n`t$errorMessage"
-            #     Write-Error $errorMessage
-            #     return 1
-            # }
-        } -Verbose:$VerboseOption
+        $updateCleanupExit=0
+        if ($remote) {
+            $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $Quiet, $VerboseOption
+        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup -ComputerName $ComputerName -updateCleanupLog $updateCleanupLog -Quiet $Quiet -Verbose $VerboseOption }
+
         if($updateCleanupExit -ne 0){
             Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
         }
@@ -669,54 +763,15 @@ function Repair-System {
     }
 
 
-
     # Zip CBS.log and DISM.log
     if (-not $noSfc -or -not $noDism) {
-        $zipErrorCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            try {
-                $cbsLog = "$env:windir\Logs\CBS\CBS.log"
-                $dismLog = "$env:windir\Logs\dism\dism.log"
-                $localtempPath = "$using:localremoteTempPath"
-                $filesToZip = @()
+        $zipErrorCode=0
+        if ($remote) {
+            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-ZipFile} -ArgumentList $localremoteTempPath, $zipFile, $zipErrorLog, $noDism, $VerboseOption
+        } else {
+            $zipErrorCode=Create-ZipFile -localremoteTempPath $localremoteTempPath -zipFile $zipFile -zipErrorLog $zipErrorLog -noDism $noDism -Verbose $VerboseOption
+        }
 
-                # Copy CBS.log to the temporary directory if it exists
-                if (Test-Path $cbsLog) {
-                    Copy-Item -Path $cbsLog -Destination $localtempPath
-                    $filesToZip += (Join-Path -Path $localtempPath -ChildPath "CBS.log")
-                }
-
-                # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
-                if (-not $using:noDism) {
-                    if (Test-Path $dismLog) {
-                        Copy-Item -Path $dismLog -Destination $localtempPath
-                        $filesToZip += (Join-Path -Path $localtempPath -ChildPath "dism.log")
-                    }
-                }
-
-                # Delete existing zip file if it exists
-                if (Test-Path $using:zipFile) {
-                    Remove-Item -Path $using:zipFile -Force
-                }
-
-                # Create a new zip file
-                if ($filesToZip.Count -gt 0) {
-                    Compress-Archive -Path $filesToZip -DestinationPath $using:zipFile -Force
-                }
-
-                # Remove the copied logs from the temporary directory
-                foreach ($file in $filesToZip) {
-                    if (Test-Path $file) {
-                        Remove-Item -Path $file -Force
-                    }
-                }
-            } catch {
-                $errorMessage = "An error occurred while creating the zip file: $_"
-                Add-Content -Path $using:zipErrorLog -Value "[$using:currentDateTime] - ERROR:`r`n$errorMessage"
-                Write-Error $message
-                return 1
-            }
-            return 0
-        } -Verbose:$VerboseOption
         $ExitCode[8]=$zipErrorCode
     } else {
         $ExitCode[8]=0
@@ -731,7 +786,7 @@ function Repair-System {
             New-Item -Path $localTempPath -ItemType Directory -Force
         }
         try{
-            Copy-Item -Path "\\$ComputerName\C$\_temp\*" -Destination $localTempPath -Recurse -Force
+            Copy-Item -Path "$remoteTempPath\*" -Destination $localTempPath -Recurse -Force
 
             # Clear remote _temp folder if copy was successful
 
@@ -763,419 +818,5 @@ function Repair-System {
 }
 
 
-function Repair-LocalSystem {
 
- <#
-    .SYNOPSIS
-    Repairs the system by running SFC and DISM commands on the local computer.
-
-    .DESCRIPTION
-    This function performs a series of system repair commands on the local computer. It first checks the availability of the machine by pinging it.
-    Then, depending on the options specified, it executes `sfc /scannow` and  `DISM` commands to scan and repair the Windows image.
-
-    The results are logged both on the machine and optionally shown on the local console. Logs and relevant system files are then transferred to the %HomeDrive%\Repair-System Directory.
-
-    .PARAMETER noSfc
-    When specified, the `SCF /SCANNOW` command is skipped.
-
-    .PARAMETER noDism
-    When specified, the `DISM` commands are skipped.
-
-    .PARAMETER Quiet
-    Suppresses console output on the local machine. The output is always logged to files on the local machine instead.
-
-    .PARAMETER IncludeComponentCleanup
-    When specified, performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, performs `DISM /Online /Cleanup-Image /StartComponentCleanup`.
-
-    .PARAMETER WindowsUpdateCleanup
-    When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
-
-    .EXAMPLE
-    Repair-LocalSystem
-
-    Runs the `sfc /scannow` and `DISM` commands on the  computer. Outputs are shown on the console and logged to files.
-
-    .EXAMPLE
-    Repair-LocalSystem -noDism
-
-    Runs only the `sfc /scannow` command on the  computer. Outputs are shown on the console and logged to files.
-
-    .EXAMPLE
-    Repair-LocalSystem -Quiet
-
-    Runs the `sfc /scannow` and `DISM` commands on the  computer. Outputs are logged to files but not shown on the console.
-
-    .EXAMPLE
-    Repair-LocalSystem -IncludeComponentCleanup
-
-    Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-noDism'
-
-    .EXAMPLE
-    Repair-LocalSystem -WindowsUpdateCleanup
-    stops the Windows Update and related Services, renames the SoftwareDistribution and catroot2 folders, and restarts the services.
-
-    .NOTES
-    This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
-    Using this script may require administrative privileges on the local computer.
-
-    WARNING:
-    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT PERMISSION OR AUTHORIZATION.
-    NEVER CHANGE SYSTEM SETTINGS OR DELETE FILES WITHOUT UNDERSTANDING THE CONSEQUENCES.
-    NEVER RUN SCRIPTS FROM UNTRUSTED SOURCES WITHOUT REVIEWING AND UNDERSTANDING THE CODE.
-    DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING. IT MAY CAUSE DATA LOSS OR SYSTEM INSTABILITY.
-
-
-    Exit-Codes:
-    Repair-System Module returns an exit code that can be used to determine the success or failure of the script.
-    0 if the script was executed successfully. Any other value indicates an error.
-    The exit code is a string of 8 digits, each representing the exit code of a specific step in the script.
-    The exit codes possitions are as follows:
-    Position 0: Startup (Synthax Error)
-    Position 1: SFC
-    Position 2: DISM Scan Health
-    Position 3: Dism Restore Healt
-    Position 4: Dism Analyse Component Store
-    Position 5: Dism Component Cleanup
-    Position 6: Windows Update Cleanup
-    Position 7: Zip CBS/DISM Logs
-
-    Except for Position 0, the exit code is the return value of the corresponding command.
-    If the command was not executed, the exit code is 0.
-    Furthermore only if startup fails, the Repair-System will quit and return the exit code.
-    All other errors will not interrupt the script.
-
-
-    Author: Wolfram Halatschek
-    E-Mail: halatschek.wolfram@gmail.com
-    Date: 2024-08-24
-    #>
-
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $false, Position=0)]
-        [switch]$noSfc,
-
-        [Parameter(Mandatory = $false, Position=1)]
-        [switch]$noDism,
-
-        [Parameter(Mandatory = $false, Position=2)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory = $false, Position=3)]
-        [switch]$IncludeComponentCleanup,
-
-        [Parameter(Mandatory = $false, Position=4)]
-        [switch]$WindowsUpdateCleanup
-    )
-
-    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
-
-    # Validation to ensure -IncludeComponentCleanup is not used with -noDism
-    if ($noDism -and $IncludeComponentCleanup) {
-        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
-        $ExitCode[0]=1
-        $exitCode=$exitCode | Sort-Object {$_} -Descending
-        $exitCode = $exitCode -join ""
-        $global:LASTEXITCODE = $ExitCode
-        break
-    }
-    # Set up paths and file names for logging
-    $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-    $TempPath = "$env:HOMEDRIVE\_temp"
-    $logPath = "C:\Repair-System\"
-    $sfcLog = "$TempPath\sfc-scannow_$currentDateTime.log"
-    $dismScanLog = "$TempPath\dism-scan_$currentDateTime.log"
-    $dismRestoreLog = "$TempPath\dism-restore_$currentDateTime.log"
-    $analyzeComponentLog = "$TempPath\analyze-component_$currentDateTime.log"
-    $componentCleanupLog = "$TempPath\component-cleanup_$currentDateTime.log"
-    $updateCleanupLog = "$TempPath\update-cleanup_$currentDateTime.log"
-    $zipFile = "$TempPath\cbsDism-logs_$currentDateTime.zip"
-    $zipErrorLog = "$TempPath\zip-errors_$currentDateTime.log"
-    $ExitCode=0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
-
-    if(-not $noSfc){
-        # Execute sfc /scannow
-
-        Write-Verbose "executing SFC"
-        try{
-            if ($Quiet) {
-                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
-            } else {
-                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
-            }
-            $ExitCode[1]=$LASTEXITCODE
-            $logContent = Get-Content $sfcLog -Raw
-            $logContent = $logContent -replace [char]0
-            Set-Content $sfcLog -Value $logContent
-        } catch {
-            $errorMessage = "An error occurred while performing SFC: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $sfcLog -Value $errorMessage
-            $ExitCode[1]=1
-        }
-    }
-
-    if (-not $noDism) {
-        # Execute dism /online /Cleanup-Image /Scanhealth
-        Write-Verbose "executing DISM/ScanHealth"
-        try{
-            if ($Quiet) {
-                dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
-            } else {
-                dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
-            }
-            $ExitCode[2]=$LASTEXITCODE
-        } catch {
-            $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $dismScanLog -Value $errorMessage
-            $ExitCode[2]=1
-        }
-
-        # Explicitly check the exit code to decide on RestoreHealth
-        $message = ""
-        if ($ExitCode[2] -eq 0) {
-            $ScanResult = 1
-            $lines = Get-Content -Path $dismScanLog
-            $ScanResultData=$lines[-1..-($lines.Count)]
-            foreach ($line in $ScanResultData) {
-                if ($line -match 'The component store is repairable.') {
-                    break
-                } elseif ($line -match 'No component store corruption detected.') {
-                    $ScanResult=0
-                    break
-                }
-            }
-            if ($ScanResult -eq 1) {
-                Write-Verbose "executing DISM/RestoreHealth"
-                try{
-                    if ($Quiet) {
-                        dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
-                    } else {
-                        dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $dismRestoreLog
-                    }
-                    $ExitCode[3]=$LASTEXITCODE
-                } catch {
-                    $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
-                    Write-Error $errorMessage
-                    Add-Content -Path $dismRestoreLog -Value $errorMessage
-                    $ExitCode[3]=1
-                }
-            }
-        } else {
-            $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResult). Please review the logs."
-
-        }
-        if($message -ne ""){
-            Write-Verbose $message
-            Add-Content -Path $dismRestoreLog -Value $message
-        }
-
-        if ($IncludeComponentCleanup) {
-            # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
-            Write-Verbose "executing DISM/AnalyzeComponentStore"
-            try{
-                if ($Quiet) {
-                    dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
-                } else {
-                    dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
-                }
-                $ExitCode[4]=$LASTEXITCODE
-            } catch {
-                $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
-                Write-Error $errorMessage
-                Add-Content -Path $analyzeComponentLog -Value $errorMessage
-                $ExitCode[4]=1
-            }
-
-            $lines = Get-Content -Path $analyzeComponentLog
-            $analyzeComponentLogData = $lines[-1..-($lines.Count)]
-            $analyzeResult = 0
-            foreach ($line in $analyzeComponentLogData) {
-                if ($line -match 'Component Store Cleanup Recommended : Yes') {
-                    $analyzeResult= 1
-                    break
-                } elseif ($line -match 'Component Store Cleanup Recommended : No') {
-                    $analyzeResult= 0
-                    break
-                }
-            }
-
-
-            # Check the output and perform cleanup if recommended
-            $message = ""
-            if ($ExitCode[4] -eq 0 -and $analyzeResult -eq 1) {
-                Write-Verbose "executing DISM/StartComponentCleanup"
-                try{
-                    if ($Quiet) {
-                        dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
-                    } else {
-                        dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
-                    }
-                    $ExitCode[5]=$LASTEXITCODE
-                    $message = "Component store cleanup was performed."
-                } catch {
-                    $errorMessage = "An error occurred while performing Component Store Cleanup: `r`n$_"
-                    Write-Error $errorMessage
-                    Add-Content -Path $componentCleanupLog -Value $errorMessage
-                    $ExitCode[5]=1
-                }
-
-
-            } elseif ($analyzeExit -eq 0 -and $analyzeResult -eq 0) {
-                $message = "No Component store cleanup recommended."
-            }else { $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."}
-            if($message -ne ""){
-                Write-Verbose $message
-                Add-Content -Path $componentCleanupLog -Value $message
-            }
-        }
-
-    }
-
-    if ($WindowsUpdateCleanup) {
-        try {
-            Write-Host "Starting Windows Update Cleanup..."
-            $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
-            $catroot2Path = "$Env:systemroot\system32\catroot2"
-            $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
-            $catroot2BackupPath = "$catroot2Path.bak"
-            $softDist = $false
-            $softDistErr=""
-            $cat2= $false
-            $cat2Err=""
-            $services=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller")
-            # check if ccmexec exists at all
-            if (Get-Service -Name "ccmexec" -ErrorAction SilentlyContinue) {
-                $services+="ccmexec"
-            }
-            stop-service $services
-            if(Get-Process -Name "ccmexec" -ErrorAction SilentlyContinue){
-                Stop-Proces -Name "ccmexec" -Force -ErrorAction SilentlyContinue
-            }
-            if (Test-Path -Path $softwareDistributionBackupPath) {
-                Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-                Remove-Item -ErrorAction Ignore -Path $softwareDistributionBackupPath -Recurse -Force
-            } else {
-                Write-Verbose "Backup directory does not exist. No need to delete."
-            }
-            if (Test-Path -Path $softwareDistributionPath) {
-                try{
-                    Rename-Item -ErrorAction Ignore -Path $softwareDistributionPath -NewName SoftwareDistribution.bak
-                    $softDist = $true
-                } catch {
-                    $softDistErr= "Error renaming SoftwareDistribution folder: `r`n$_"
-                    Write-Verbose $softDistErr
-                }
-            }
-            if (Test-Path -Path $catroot2BackupPath) {
-                Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-                Remove-Item -ErrorAction Ignore -Path $catroot2BackupPath -Recurse -Force
-            } else {
-                Write-Verbose "Backup directory does not exist. No need to delete."
-            }
-            if (Test-Path -Path $catroot2Path) {
-                try{
-                    Rename-Item -ErrorAction Ignore -Path $catroot2Path -NewName catroot2.bak
-                    $cat2 = $true
-                } catch {
-                    $cat2Err= "Error renaming catroot2 folder: `r`n$_"
-                    Write-Verbose $cat2Err
-                }
-            }
-            start-service $services
-            $successMessage = "Windows Update Cleanup performed."
-            if($softDist){
-                $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
-            } else {
-                $successMessage += "`r`n[STATUS]`tRenaming SoftwareDistribution: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-                if($softDistErr -ne ""){$successMessage += "`r`n[ERROR]`t$softDistErr"}
-            }
-            if($cat2){
-                $successMessage += "`r`ncatroot2 folder has been renamed."
-            }else {
-                $successMessage += "`r`n[STATUS]`tRenaming catroot2: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-                if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
-            }
-            Write-Verbose $successMessage
-            Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - INFO:`r`n`t$successMessage"
-        } catch {
-            $errorMessage = "An error occurred while performing Windows Update Cleanup: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $updateCleanupLog -Value "[$currentDateTime] - ERROR:`r`n`t$errorMessage"
-            $ExitCode[6]=1
-        }
-    }
-
-
-    if (-not $noSfc -or -not $noDism) {
-        try {
-            $cbsLog = "$env:windir\Logs\CBS\CBS.log"
-            $dismLog = "$env:windir\Logs\dism\dism.log"
-
-            $filesToZip = @()
-
-            # Copy CBS.log to the temporary directory if it exists and the noSfc flag is not set
-            if (-not $noSfc) {
-                if (Test-Path $cbsLog) {
-                    Copy-Item -Path $cbsLog -Destination $TempPath
-                    $filesToZip += (Join-Path -Path $TempPath -ChildPath "CBS.log")
-                }
-            }
-
-            # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
-            if (-not $noDism) {
-                if (Test-Path $dismLog) {
-                    Copy-Item -Path $dismLog -Destination $TempPath
-                    $filesToZip += (Join-Path -Path $TempPath -ChildPath "dism.log")
-                }
-            }
-
-            # Delete existing zip file if it exists
-            if (Test-Path $zipFile) {
-                Remove-Item -Path $zipFile -Force
-            }
-
-            # Create a new zip file
-            if ($filesToZip.Count -gt 0) {
-                Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
-            }
-
-            # Remove the copied logs from the temporary directory
-            foreach ($file in $filesToZip) {
-                if (Test-Path $file) {
-                    Remove-Item -Path $file -Force
-                }
-            }
-        } catch {
-            $errorMessage = "An error occurred while creating the zip file: $_"
-            Write-Error $message
-            Add-Content -Path $zipErrorLog -Value "[$currentDateTime] - ERROR:`r`n$errorMessage"
-            $ExitCode[7]= 1
-        }
-    }
-
-
-
-    # Copy log files to local machine
-    if (-not (Test-Path -Path $logPath)) {
-        New-Item -Path $logPath -ItemType Directory -Force
-    }
-    Copy-Item -Path "$TempPath\*" -Destination $logPath -Recurse -Force
-
-    # Clear remote _temp folder if copy was successful
-    if ($?) {
-        Remove-Item -Path "$TempPath\*" -Recurse -Force
-    }
-
-    Start-Sleep -Seconds 1
-
-    Write-Host "`r`nLocal System-Repair successfully performed.`r`nLog-Files can be found on this Machine under '$logPath'"
-
-    $exitCode=$exitCode | Sort-Object {$_} -Descending
-    $exitCode = $exitCode -join ""
-    $global:LASTEXITCODE = $ExitCode
-}
-
-
-Export-ModuleMember -Function Repair-RemoteSystem, Repair-LocalSystem
+Export-ModuleMember -Function Repair-RemoteSystem
