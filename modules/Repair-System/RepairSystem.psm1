@@ -485,6 +485,7 @@ function Repair-System {
 
     .PARAMETER init
     When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
+    When specified, no other Parameter will be executed (other provided Parameters will be ignored). This will retun 0 if the Config-File was created successfully, or already exists.
 
     Configuration-File Template:
     ```
