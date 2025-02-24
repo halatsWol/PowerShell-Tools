@@ -342,7 +342,7 @@ function Invoke-WindowsUpdateCleanup {
 function Create-ZipFile {
     param (
         [Parameter(Mandatory=$true)]
-        [string]$localremoteTempPath,
+        [string]$localTempPath,
 
         [Parameter(Mandatory=$true)]
         [string]$zipFile,
@@ -360,7 +360,6 @@ function Create-ZipFile {
     try {
         $cbsLog = "$env:windir\Logs\CBS\CBS.log"
         $dismLog = "$env:windir\Logs\dism\dism.log"
-        $localtempPath = "$localremoteTempPath"
         $filesToZip = @()
 
         # Copy CBS.log to the temporary directory if it exists
@@ -596,17 +595,21 @@ function Repair-System {
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
     $tempFolder="_IT-temp"
     $remoteTempPath = "$shareDrivePath\$tempFolder"
-    $localremoteTempPath="C:\$tempFolder"
-    $localTempPath = "C:\remote-Files\$ComputerName"
-    $sfcLog = "$localremoteTempPath\sfc-scannow_$currentDateTime.log"
-    $dismScanLog = "$localremoteTempPath\dism-scan_$currentDateTime.log"
-    $dismRestoreLog = "$localremoteTempPath\dism-restore_$currentDateTime.log"
-    $analyzeComponentLog = "$localremoteTempPath\analyze-component_$currentDateTime.log"
-    $componentCleanupLog = "$localremoteTempPath\component-cleanup_$currentDateTime.log"
-    $zipFile = "$localremoteTempPath\cbsDism-logs_$currentDateTime.zip"
-    $zipErrorLog = "$localremoteTempPath\zip-errors_$currentDateTime.log"
-    $updateCleanupLog = "$localremoteTempPath\update-cleanup_$currentDateTime.log"
-    $sccmCleanupLog = "$localremoteTempPath\sccm-cleanup_$currentDateTime.log"
+    $localTempPath="C:\$tempFolder"
+    $finalDestinationPath = "C:\remote-Files\$ComputerName"
+    $sfcLog = "$localTempPath\sfc-scannow_$currentDateTime.log"
+    $dismScanLog = "$localTempPath\dism-scan_$currentDateTime.log"
+    $dismRestoreLog = "$localTempPath\dism-restore_$currentDateTime.log"
+    $analyzeComponentLog = "$localTempPath\analyze-component_$currentDateTime.log"
+    $componentCleanupLog = "$localTempPath\component-cleanup_$currentDateTime.log"
+    $zipFile = "$localTempPath\cbsDism-logs_$currentDateTime.zip"
+    $zipErrorLog = "$localTempPath\zip-errors_$currentDateTime.log"
+    $updateCleanupLog = "$localTempPath\update-cleanup_$currentDateTime.log"
+    $sccmCleanupLog = "$localTempPath\sccm-cleanup_$currentDateTime.log"
+
+    if (-not (Test-Path -Path $finalDestinationPath)) {
+        New-Item -Path $finalDestinationPath -ItemType Directory -Force
+    }
 
     if($remote){
         # Check if the remote computer is reachable via WinRM
@@ -618,10 +621,7 @@ function Repair-System {
         } catch {
             $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration.`r`n `r`n `r`nError: $_"
             Write-Error $winRMexit
-            if (-not (Test-Path -Path $localTempPath)) {
-                New-Item -Path $localTempPath -ItemType Directory -Force
-            }
-            Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
+            Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
             $ExitCode[0]=3
             $exitCode=$exitCode | Sort-Object {$_} -Descending
             $exitCode = $exitCode -join ""
@@ -631,13 +631,10 @@ function Repair-System {
         try{
             Test-Path "$shareDrivePath\Windows"
         } catch {
-            $errmsg="[$using:currentDateTime] - ERROR:`tNo Windows Directory found on Remote Device`r`nTested:`t'$shareDrivePath\Windows'"
+            $errmsg="[$currentDateTime] - ERROR:`tNo Windows Directory found on Remote Device`r`nTested:`t'$shareDrivePath\Windows'"
             $errmsg+="`r`nPlease check if The ShareDrive '$shareDrivePath' exists and is accessible!"
             Write-Error $errmsg
-            if (-not (Test-Path -Path $localTempPath)) {
-                New-Item -Path $localTempPath -ItemType Directory -Force
-            }
-            Add-Content -Path "$localTempPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$errmsg"
+            Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$errmsg"
             $ExitCode[0]=4
             $exitCode=$exitCode | Sort-Object {$_} -Descending
             $exitCode = $exitCode -join ""
@@ -649,9 +646,9 @@ function Repair-System {
 
 
     if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-TempFolder} -ArgumentList $localremoteTempPath -Verbose:$VerboseOption
+        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-TempFolder} -ArgumentList $localTempPath -Verbose:$VerboseOption
     } else {
-        create-TempFolder -tempFolder $localremoteTempPath
+        create-TempFolder -tempFolder $localTempPath
     }
 
     if(-not $noSfc){
@@ -767,9 +764,9 @@ function Repair-System {
     if (-not $noSfc -or -not $noDism) {
         $zipErrorCode=0
         if ($remote) {
-            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-ZipFile} -ArgumentList $localremoteTempPath, $zipFile, $zipErrorLog, $noDism, $VerboseOption
+            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-ZipFile} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism, $VerboseOption
         } else {
-            $zipErrorCode=Create-ZipFile -localremoteTempPath $localremoteTempPath -zipFile $zipFile -zipErrorLog $zipErrorLog -noDism $noDism -Verbose $VerboseOption
+            $zipErrorCode=Create-ZipFile -localTempPath $localTempPath -zipFile $zipFile -zipErrorLog $zipErrorLog -noDism $noDism -Verbose $VerboseOption
         }
 
         $ExitCode[8]=$zipErrorCode
@@ -777,32 +774,33 @@ function Repair-System {
         $ExitCode[8]=0
     }
 
-
+    if($remote) {$path=$localTempPath} else {$path=$remoteTempPath}
     $extmsg= "`r`nSystem-Repair on $ComputerName performed."
-    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$localTempPath'"
+    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'"
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     if (-not $noCopy){
-        if (-not (Test-Path -Path $localTempPath)) {
-            New-Item -Path $localTempPath -ItemType Directory -Force
-        }
-        try{
-            Copy-Item -Path "$remoteTempPath\*" -Destination $localTempPath -Recurse -Force
-
-            # Clear remote _temp folder if copy was successful
-
-
-            if(-not $KeepLogs){
-                Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                    Remove-Item -Path "C:\_temp\*" -Recurse -Force
-                } -Verbose:$VerboseOption
-                $extmsg+= $extmsglLogP
-            } else {
-                $extmsg+= $extmsgrLogP
+        if ($remote){
+            if (-not (Test-Path -Path $finalDestinationPath)) {
+                New-Item -Path $finalDestinationPath -ItemType Directory -Force
             }
-        } catch {
-            $message = "An error occurred while copying the log files from $ComputerName."
-            Write-Error $message
-            $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
+            try{
+                Copy-Item -Path "$remoteTempPath\*" -Destination $finalDestinationPath -Recurse -Force
+
+                # Clear remote _temp folder if copy was successful
+
+                if(-not $KeepLogs){
+                    Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                        Remove-Item -Path "C:\_temp\*" -Recurse -Force
+                    } -Verbose:$VerboseOption
+                    $extmsg+= $extmsglLogP
+                } else {
+                    $extmsg+= $extmsgrLogP
+                }
+            } catch {
+                $message = "An error occurred while copying the log files from $ComputerName."
+                Write-Error $message
+                $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
+            }
         }
     } else {
         $extmsg+= $extmsgrLogP
@@ -819,4 +817,4 @@ function Repair-System {
 
 
 
-Export-ModuleMember -Function Repair-RemoteSystem
+Export-ModuleMember -Function Repair-System
