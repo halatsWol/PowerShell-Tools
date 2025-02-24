@@ -68,8 +68,8 @@ Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 ## Author
 
 - **Author**: Wolfram Halatschek
-- **Contact**: halatschek.wolfram@gmail.com
-- **Date**: October 01, 2024
+- **Contact**: wolfram@kMarflow.com
+- **Date**: 2025-02-24
 
 ## Warnings
 

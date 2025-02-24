@@ -79,7 +79,7 @@ KEYWORDS
 
 AUTHOR
     Wolfram Halatschek
-    E-Mail: halatschek.wolfram@gmail.com
+    E-Mail: wolfram@kMarflow.com
 
 COPYRIGHT
     © 2025 Wolfram Halatschek. All rights reserved.
