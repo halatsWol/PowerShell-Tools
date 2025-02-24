@@ -1,9 +1,9 @@
-function Create-TempFolder {
+function New-Folder {
     param (
         [Parameter(Mandatory=$true)]
-        [string]$tempFolder
+        [string]$FolderPath
     )
-    if (-not (Test-Path -Path $tempFolder)) {New-Item -Path $tempFolder -ItemType Directory -Force}
+    if (-not (Test-Path -Path $FolderPath)) {New-Item -Path $FolderPath -ItemType Directory -Force > $null}
 }
 
 function Invoke-SFC {
@@ -76,7 +76,7 @@ function Get-DISMScanResult {
         [String]$dismScanLog
     )
     $ScanResult = 1
-    $lines=Get-Content -Path $using:dismScanLog
+    $lines=Get-Content -Path $dismScanLog
     $ScanResultData=$lines[-1..-($lines.Count)]
     foreach ($line in $ScanResultData) {
         if ($line -match 'The component store is repairable.') {
@@ -156,7 +156,7 @@ function Get-DISMAnalyzeComponentStoreResult {
         [String]$analyzeComponentLog
     )
 
-    $lines = Get-Content -Path $using:analyzeComponentLog
+    $lines = Get-Content -Path $analyzeComponentLog
     $analyzeComponentLogData = $lines[-1..-($lines.Count)]
     foreach ($line in $analyzeComponentLogData) {
         if ($line -match 'Component Store Cleanup Recommended : Yes') {
@@ -248,7 +248,7 @@ function Invoke-SCCMCleanup {
     } else {
         $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
         Write-Verbose $msg
-        Add-Content -Path $using:sccmCleanupLog -Value $msg
+        Add-Content -Path $sccmCleanupLog -Value $msg
         $returnVal = 0
     }
     return $returnVal
@@ -271,7 +271,7 @@ function Invoke-WindowsUpdateCleanup {
 
     Write-Host "Starting Windows Update Cleanup..."
     $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
-    $sercicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
+    $servicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
     $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
     $catroot2Path = "$Env:systemroot\system32\catroot2"
     $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
@@ -280,7 +280,7 @@ function Invoke-WindowsUpdateCleanup {
     $softDistErr=""
     $cat2= $false
     $cat2Err=""
-    stop-service $sercicesStop
+    Get-Service -ErrorAction SilentlyContinue $servicesStop | Stop-Service
     if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
     if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
     if (Test-Path -Path $softwareDistributionBackupPath) {
@@ -291,13 +291,13 @@ function Invoke-WindowsUpdateCleanup {
             $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
             Write-Error $softDistErr
-            start-service $servicesStart
+            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
             return 2
         }
     } else {
         Write-Verbose "Backup directory does not exist. No need to delete."
     }
-    stop-service -force $sercicesStop
+    Get-Service -ErrorAction SilentlyContinue $servicesStop | Stop-Service -force
     if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
     if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
     if (Test-Path -Path $softwareDistributionPath) {
@@ -308,7 +308,7 @@ function Invoke-WindowsUpdateCleanup {
             $softDistErr= "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
             Write-Error $softDistErr
-            start-service $servicesStart
+            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
             return 1
         }
     }
@@ -320,13 +320,13 @@ function Invoke-WindowsUpdateCleanup {
             $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
             Write-Error $cat2Err
-            start-service $servicesStart
+            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
             return 2
         }
     } else {
         Write-Verbose "Backup directory does not exist. No need to delete."
     }
-    stop-service -force $sercicesStop
+    Get-Service -ErrorAction SilentlyContinue $servicesStop | Stop-Service -force
     if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
     if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
     if (Test-Path -Path $catroot2Path) {
@@ -337,13 +337,13 @@ function Invoke-WindowsUpdateCleanup {
             $cat2Err= "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
             Write-Error $cat2Err
-            start-service $servicesStart
+            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
             return 1
         }
     } else {
         Write-Verbose "catroot2 folder does not exist. No need to rename."
     }
-    start-service $servicesStart
+    Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
     $successMessage = "Windows Update Cleanup successful."
     if($softDist){
         $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
@@ -421,6 +421,26 @@ function Create-ZipFile {
     return 0
 }
 
+function Repair-RemoteSystem {
+    [CmdletBinding()]
+    param (
+        # Define parameters if needed
+    )
+
+    # Throw a specific error indicating that the cmdlet is deprecated
+    throw "> This CmdLet is deprecated. Please use 'Repair-System' instead.`r`n "
+}
+
+function Repair-LocalSystem {
+    [CmdletBinding()]
+    param (
+        # Define parameters if needed
+    )
+
+    # Throw a specific error indicating that the cmdlet is deprecated
+    throw "> This CmdLet is deprecated. Please use 'Repair-System' instead.`r`n "
+}
+
 function Repair-System {
     <#
     .SYNOPSIS
@@ -462,6 +482,16 @@ function Repair-System {
 
     .PARAMETER noCopy
     When specified, log files will not be copied to the Client. this will automatically use '-KeepLogs'
+
+    .PARAMETER init
+    When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
+
+    Configuration-File Template:
+    ```
+    ShareDrive=C$                                       # ShareDrive-Letter of the Remote-Device on which Windows is installed
+    TempDirName=_IT-temp                                # Name of the temporary Directory on the Remote-Device
+    FinalDestinationPath=C:\remote-Files\$ComputerName  # Path where the Logs and Files will be copied to on the executing Client
+    ```
 
     .EXAMPLE
     Repair-System -ComputerName <remote-device>
@@ -571,9 +601,38 @@ function Repair-System {
         [switch]$KeepLogs,
 
         [Parameter(Mandatory=$false)]
-        [switch]$noCopy
+        [switch]$noCopy,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$init
 
     )
+
+    $confFile="$PSScriptRoot\RepairSystem.conf"
+    if($init){
+        $ShareDrive="C$"
+        $TempDirName="_IT-temp"
+        $FinalDestinationPath="C:\remote-Files\$ComputerName"
+
+        # create in Module-Path a ReparSystem.conf file
+        if(-not (Test-Path $confFile)){
+            try {
+                New-Item -Path $confFile -ItemType File -Force
+                Add-Content -Path $confFile -Value "ShareDrive=$ShareDrive"
+                Add-Content -Path $confFile -Value "TempDirName=$TempDirName"
+                Add-Content -Path $confFile -Value "FinalDestinationPath=$FinalDestinationPath"
+            } catch {
+                Write-Error "Error creating Config-File. Please check if the Module-Path is writable`r`n `r`n$_"
+                $global:LASTEXITCODE = 1
+                return
+            }
+        } else {
+            Write-Warning "Config-File already exists. If you want to reset the Config-File, please delete it manually"
+        }
+        $global:LASTEXITCODE = 0
+        return
+    }
+
     $ExitCode=0,0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
     $shareDrive="C$"
     $remote=$false
@@ -596,6 +655,28 @@ function Repair-System {
         break
     }
 
+    # Set up paths and file names for logging
+    $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
+    $tempFolder="_IT-temp"
+    $finalDestinationPath = "C:\remote-Files\$ComputerName"
+
+    if (Test-Path $confFile) {
+        $confData = Get-Content -Path $confFile
+        foreach ($line in $confData) {
+            if ($line -match 'ShareDrive=(.*)') {
+                $shareDrive = $Matches[1]
+            } elseif ($line -match 'TempDirName=(.*)') {
+                $tempFolder = $Matches[1]
+            } elseif ($line -match 'FinalDestinationPath=(.*)') {
+                $finalDestinationPath = $Matches[1]
+            } else {
+                Write-Warning "Invalid line in config file $confFile : `t$line`r`n`tAllowed Variables: ShareDrive, TempDirName, FinalDestinationPath"
+                $global:LASTEXITCODE = 1
+                return
+            }
+        }
+    }
+
     if($remote){
         # Ping the remote computer to check availability
         $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
@@ -615,27 +696,17 @@ function Repair-System {
         $shareDrivePath="\\$ComputerName\$shareDrive"
     }
 
-
-
-    # Set up paths and file names for logging
-    $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-    $tempFolder="_IT-temp"
     $remoteTempPath = "$shareDrivePath\$tempFolder"
     $localTempPath="C:\$tempFolder"
-    $finalDestinationPath = "C:\remote-Files\$ComputerName"
-    $sfcLog = "$localTempPath\sfc-scannow_$currentDateTime.log"
-    $dismScanLog = "$localTempPath\dism-scan_$currentDateTime.log"
-    $dismRestoreLog = "$localTempPath\dism-restore_$currentDateTime.log"
-    $analyzeComponentLog = "$localTempPath\analyze-component_$currentDateTime.log"
-    $componentCleanupLog = "$localTempPath\component-cleanup_$currentDateTime.log"
-    $zipFile = "$localTempPath\cbsDism-logs_$currentDateTime.zip"
-    $zipErrorLog = "$localTempPath\zip-errors_$currentDateTime.log"
-    $updateCleanupLog = "$localTempPath\update-cleanup_$currentDateTime.log"
-    $sccmCleanupLog = "$localTempPath\sccm-cleanup_$currentDateTime.log"
 
-    if (-not (Test-Path -Path $finalDestinationPath)) {
-        New-Item -Path $finalDestinationPath -ItemType Directory -Force
-    }
+    $dismScanLog = ""
+    $dismRestoreLog = ""
+    $analyzeComponentLog = ""
+    $componentCleanupLog = ""
+
+
+    New-Folder -FolderPath $finalDestinationPath
+
 
     if($remote){
         # Check if the remote computer is reachable via WinRM
@@ -672,12 +743,13 @@ function Repair-System {
 
 
     if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-TempFolder} -ArgumentList $localTempPath
+        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:New-Folder} -ArgumentList $localTempPath
     } else {
-        create-TempFolder -tempFolder $localTempPath
+        New-Folder -FolderPath $localTempPath
     }
 
     if(-not $noSfc){
+        $sfcLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_sfc-scannow.log"
         $sfcExitCode=0
         if($remote){
             $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
@@ -686,6 +758,7 @@ function Repair-System {
     }
 
     if (-not $noDism) {
+        $dismScanLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_scanHealth.log"
         $dismScanResult=0
         if($remote){
             $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $Quiet, $VerboseOption
@@ -694,15 +767,15 @@ function Repair-System {
         $ExitCode[2]=$dismScanResult
         $dismScanResultString = $dismScanResult.ToString()
 
-
+        $dismRestoreLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_restoreHealth.log"
         if ($dismScanResultString -eq 0) {
-            # Component store is repairable, proceed with RestoreHealth
             $dismScanExit=1
             $dismRestoreExit=0
             if($remote){
                 $dismScanExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Get-DISMScanResult} -ArgumentList $dismScanLog
             } else { $dismScanExit=Get-DISMScanResult -dismScanLog $dismScanLog}
             if ($dismScanExit -eq 1) {
+
                 if ($remote) {
                     $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $Quiet, $VerboseOption
                 } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $Quiet $VerboseOption }
@@ -723,7 +796,7 @@ function Repair-System {
         }
 
         if ($IncludeComponentCleanup) {
-            # Perform DISM /Online /Cleanup-Image /AnalyzeComponentStore
+            $analyzeComponentLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_analyze-component.log"
             $analyzeExit=0
             if ($remote) {
                 $analyzeExit = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $Quiet, $VerboseOption
@@ -732,6 +805,7 @@ function Repair-System {
 
             # Check the output and perform cleanup if recommended
             $message = ""
+            $componentCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_componentStore-cleanup.log"
             if ($analyzeExit -eq 0 -or $analyzeExit -eq "") {
                 $analyzeResult=$true
                 if ($remote) {
@@ -739,6 +813,7 @@ function Repair-System {
                 } else { $analyzeResult=Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeComponentLog }
                 $componentCleanupExit=0
                 if ($analyzeResult) {
+
                     if ($remote) {
                         $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $Quiet, $VerboseOption
                     } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $Quiet $VerboseOption }
@@ -765,6 +840,7 @@ function Repair-System {
     }
 
     if ($sccmCleanup) {
+        $sccmCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_SCCM_cleanup.log"
         $sccmCleanupResult=0
         if ($remote) {
             $sccmCleanupResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList $sccmCleanupLog, $Quiet, $VerboseOption
@@ -773,7 +849,8 @@ function Repair-System {
         $ExitCode[6]=$sccmCleanupResult
     }
 
-    if ($WindowsUpdateCleanup) {
+    if ($WindowsUpdateCleanup) {,
+        $updateCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_WinUpdt-BITS_reset-cleanup.log"
         $updateCleanupExit=0
         if ($remote) {
             $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $Quiet, $VerboseOption
@@ -788,6 +865,8 @@ function Repair-System {
 
     # Zip CBS.log and DISM.log
     if (-not $noSfc -or -not $noDism) {
+        $zipFile = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_sys-logs.zip"
+        $zipErrorLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_zip-errors.log"
         $zipErrorCode=0
         if ($remote) {
             $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-ZipFile} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism
@@ -800,7 +879,7 @@ function Repair-System {
         $ExitCode[8]=0
     }
 
-    if($remote) {$path=$localTempPath} else {$path=$remoteTempPath}
+    if($remote) {$path=$localTempPath} else {$path=$finalDestinationPath}
     $extmsg= "`r`nSystem-Repair performed."
     $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'"
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
@@ -834,7 +913,7 @@ function Repair-System {
 
 
     # Copy log files to local machine
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
     Write-Host $extmsg
     $exitCode=$exitCode | Sort-Object {$_} -Descending
     $exitCode = $exitCode -join ""
@@ -843,4 +922,4 @@ function Repair-System {
 
 
 
-Export-ModuleMember -Function Repair-System
+Export-ModuleMember -Function Repair-System, Repair-LocalSystem, Repair-RemoteSystem

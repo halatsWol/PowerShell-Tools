@@ -30,6 +30,8 @@ This function performs the following tasks on a specified computer (either local
 - **`-sccmCleanup`** (Optional): deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder
 - **`-KeepLogs`** (Optional): log files will be kept on the remote Device, but still be copied to the Client
 - **`-noCopy`** (Optional): log files will not be copied to the Client. this will automatically use '-KeepLogs'
+- **`-init`** (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
+
 
 #### Examples
 
