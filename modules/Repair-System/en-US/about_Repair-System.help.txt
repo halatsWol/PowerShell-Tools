@@ -1,8 +1,8 @@
 TOPIC
-    about_Repair-System
+    about_RepairSystem
 
 SHORT DESCRIPTION
-    The `Repair-System` module provides a set of functions to diagnose and repair common issues on Windows systems.
+    The `RepairSystem` module provides a set of functions to diagnose and repair common issues on Windows systems.
 
 LONG DESCRIPTION
     The `Repair-System` module is designed to help system administrators and advanced users diagnose
@@ -30,7 +30,7 @@ EXAMPLES
 
     Example 1: Repair corrupted system files remotely
     -----------------------------------------------
-    PS C:\> Repair-RemoteSystem -ComputerName <remote-device>
+    PS C:\> Repair-System -ComputerName <remote-device>
 
     This example repairs corrupted system files using the System File Checker (SFC) tool and runs
     DISM Scan and if required DISM Restore on a Remote Machine.
@@ -38,7 +38,7 @@ EXAMPLES
 
     Example 2: Repair corrupted system files locally
     -----------------------------------------------
-    PS C:\> Repair-LocalSystem
+    PS C:\> Repair-System
 
     This example repairs corrupted system files using the System File Checker (SFC) tool and runs
     DISM Scan and if required DISM Restore on the Local Macine.
@@ -46,29 +46,28 @@ EXAMPLES
 
     Example 3: Repair corrupted system files remotely with Component Cleanup
     -----------------------------------------------
-    PS C:\> Repair-RemoteSystem -ComputerName <remote-device> -IncludeComponentCleanup
+    PS C:\> Repair-System -ComputerName <remote-device> -IncludeComponentCleanup
 
     This example performs the same Tasks as Example 1 but additionally checks the ComponentStore for issues
 
 
     Example 4: Repair corrupted system files locally with Component Cleanup
     -----------------------------------------------
-    PS C:\> Repair-LocalSystem -IncludeComponentCleanup
+    PS C:\> Repair-System -IncludeComponentCleanup
 
     This example performs the same Tasks as Example 2 but additionally checks the ComponentStore for issues
 
 
     Example 5: Cleanup Windows Update Cache
     -----------------------------------------------
-    PS C:\> Repair-LocalSystem -WindowsUpdateCleanup
+    PS C:\> Repair-System -WindowsUpdateCleanup
 
     This example performs the same Tasks as Example 2 but additionally cleans up the Windows Update Cache to fix
     issues regarding Windows Udates.
 
 
 FUNCTIONS
-    Repair-RemoteSystem
-    Repair-LocalSystem
+    Repair-System
 
 SEE ALSO
     Get-Help
@@ -83,4 +82,4 @@ AUTHOR
     E-Mail: halatschek.wolfram@gmail.com
 
 COPYRIGHT
-    © 2024 Wolfram Halatschek. All rights reserved.
+    © 2025 Wolfram Halatschek. All rights reserved.

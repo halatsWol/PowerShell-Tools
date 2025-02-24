@@ -404,10 +404,10 @@ function Create-ZipFile {
 function Repair-System {
     <#
     .SYNOPSIS
-    Repairs the system by running SFC and DISM commands on a remote computer.
+    Repairs the system by running SFC and DISM commands locally or on a remote computer.
 
     .DESCRIPTION
-    This function performs a series of system repair commands on a remote computer. It first checks the availability of the remote machine by pinging it.
+    This function performs a series of system repair commands locally or on a remote computer. It first checks the availability of the remote machine by pinging it.
     Then, depending on the options specified, it executes `sfc /scannow` and  `DISM` commands to scan and repair the Windows image.
 
     The results are logged both on the remote machine and optionally shown on the local console. Logs and relevant system files are then transferred to the local machine.
@@ -444,33 +444,39 @@ function Repair-System {
     When specified, log files will not be copied to the Client. this will automatically use '-KeepLogs'
 
     .EXAMPLE
-    Repair-RemoteSystem -ComputerName <remote-device>
+    Repair-System -ComputerName <remote-device>
 
     Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
     .EXAMPLE
-    Repair-RemoteSystem -ComputerName SomeDevice -remoteShareDrive D$
+    Repair-System
+
+    Runs the `sfc /scannow` and `DISM` commands on the local computer. Minimal Outputs are shown on the console and logged to files.
+
+    .EXAMPLE
+    Repair-System -ComputerName SomeDevice -remoteShareDrive D$
 
     Will connect to `\\SomeDevice\D$\`. This can be used if the SystemRoot (installation of Windows) is either not on Drive C:,
     or if the Share-Drive has a different Name (eg access via `\\SomeDevice\C\` instead of C$)
 
     .EXAMPLE
-    Repair-RemoteSystem <remote-device> -noDism
+    Repair-System <remote-device> -noDism
 
     Runs only the `sfc /scannow` command on the remote computer `<remote-device>`. Outputs are shown on the console and logged to files.
 
     .EXAMPLE
-    Repair-RemoteSystem <remote-device> -Quiet
+    Repair-System -ComputerName <remote-device> -Quiet
 
     Runs the `sfc /scannow` and `DISM` commands on the remote computer `<remote-device>`. Outputs are logged to files but not shown on the console.
 
     .EXAMPLE
-    Repair-RemoteSystem <remote-device> -IncludeComponentCleanup
+    Repair-System <remote-device> -IncludeComponentCleanup
 
     Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-noDism'
 
     .EXAMPLE
     Repair-RemoteSystem <remote-device> -WindowsUpdateCleanup
+
     stops the Windows Update and related Services, renames the SoftwareDistribution and catroot2 folders, and restarts the services.
 
     .NOTES
@@ -511,7 +517,7 @@ function Repair-System {
 
     Author: Wolfram Halatschek
     E-Mail: halatschek.wolfram@gmail.com
-    Date: 2024-10-04
+    Date: 2025-02-24
     #>
 
     [CmdletBinding()]
