@@ -7,19 +7,20 @@ function Create-TempFolder {
 }
 
 function Invoke-SFC {
+    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$sfcLog,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$Verbose
-
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
 
     )
-    Write-Verbose "executing SFC"
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+    Write-Host "executing SFC"
         try{
             if ($Quiet) {
                 sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
@@ -41,16 +42,19 @@ function Invoke-SFC {
 
 function Invoke-DISMScan {
     param (
-        [Parameter(Mandatory=$true)]
+        [CmdletBinding()]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$dismScanLog,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$Verbose
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
+
     )
-    Write-Verbose "executing DISM/ScanHealth"
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+    Write-Host "executing DISM/ScanHealth"
     try{
         if ($Quiet) {
             dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
@@ -67,8 +71,10 @@ function Invoke-DISMScan {
 }
 
 function Get-DISMScanResult {
-    [Parameter(Mandatory=$true)]
-    [String]$dismScanLog
+    param(
+        [Parameter(Mandatory=$true)]
+        [String]$dismScanLog
+    )
     $ScanResult = 1
     $lines=Get-Content -Path $using:dismScanLog
     $ScanResultData=$lines[-1..-($lines.Count)]
@@ -84,18 +90,21 @@ function Get-DISMScanResult {
 }
 
 function Invoke-DISMRestore {
+    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$dismRestoreLog,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$Verbose
-    )
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
 
-    Write-Verbose "executing DISM/RestoreHealth"
+    )
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+
+    Write-Host "executing DISM/RestoreHealth"
     try{
         if ($Quiet) {
             dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
@@ -112,17 +121,20 @@ function Invoke-DISMRestore {
 }
 
 function Invoke-DISMAnalyzeComponentStore {
+    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$analyzeComponentLog,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$Verbose
-    )
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
 
+    )
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+    Write-Host "executing DISM Analyze Component Store"
     try{
         if ($Quiet) {
             dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
@@ -139,8 +151,10 @@ function Invoke-DISMAnalyzeComponentStore {
 }
 
 function Get-DISMAnalyzeComponentStoreResult {
-    [Parameter(Mandatory=$true)]
-    [String]$analyzeComponentLog
+    param (
+        [Parameter(Mandatory=$true)]
+        [String]$analyzeComponentLog
+    )
 
     $lines = Get-Content -Path $using:analyzeComponentLog
     $analyzeComponentLogData = $lines[-1..-($lines.Count)]
@@ -155,17 +169,20 @@ function Get-DISMAnalyzeComponentStoreResult {
 }
 
 function Invoke-DISMComponentStoreCleanup {
+    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$componentCleanupLog,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$Verbose
-    )
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
 
+    )
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+    Write-Host "executing DISM Component Store Cleanup"
     try{
         if ($Quiet) {
             dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
@@ -183,18 +200,21 @@ function Invoke-DISMComponentStoreCleanup {
 }
 
 function Invoke-SCCMCleanup {
+    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$sccmCleanupLog,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$Verbose
-    )
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
 
-    Write-Verbose "executing SCCM Cleanup"
+    )
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+
+    Write-Host "executing SCCM Cleanup"
     $returnVal=0
     if (Test-Path -Path "$env:windir\ccmcache") {
         try{
@@ -235,16 +255,19 @@ function Invoke-SCCMCleanup {
 }
 
 function Invoke-WindowsUpdateCleanup {
+    [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$updateCleanupLog,
 
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
 
-        [Parameter(Mandatory=$true)]
-        [switch]$Verbose
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
+
     )
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
 
     Write-Host "Starting Windows Update Cleanup..."
     $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
@@ -341,20 +364,17 @@ function Invoke-WindowsUpdateCleanup {
 
 function Create-ZipFile {
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$localTempPath,
 
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=1)]
         [string]$zipFile,
 
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=2)]
         [string]$zipErrorLog,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$noDism,
-
-        [Parameter(Mandatory=$false)]
-        [switch]$Verbose
+        [Parameter(Mandatory=$true, Position=3)]
+        [switch]$noDism
     )
 
     try {
@@ -652,7 +672,7 @@ function Repair-System {
 
 
     if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-TempFolder} -ArgumentList $localTempPath -Verbose:$VerboseOption
+        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-TempFolder} -ArgumentList $localTempPath
     } else {
         create-TempFolder -tempFolder $localTempPath
     }
@@ -661,7 +681,7 @@ function Repair-System {
         $sfcExitCode=0
         if($remote){
             $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
-        } else {$sfcExitCode=Invoke-SFC -sfcLog $sfcLog -Quiet $Quiet -Verbose $VerboseOption}
+        } else {$sfcExitCode=Invoke-SFC $sfcLog $Quiet $VerboseOption}
         $ExitCode[1]=$sfcExitCode
     }
 
@@ -669,7 +689,7 @@ function Repair-System {
         $dismScanResult=0
         if($remote){
             $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $Quiet, $VerboseOption
-        } else { $dismScanResult=Invoke-DISMScan -dismScanLog $dismScanLog -Quiet $Quiet -Verbose $VerboseOption}
+        } else { $dismScanResult=Invoke-DISMScan $dismScanLog $Quiet $VerboseOption}
         $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
         $ExitCode[2]=$dismScanResult
         $dismScanResultString = $dismScanResult.ToString()
@@ -685,7 +705,7 @@ function Repair-System {
             if ($dismScanExit -eq 1) {
                 if ($remote) {
                     $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $Quiet, $VerboseOption
-                } else { $dismRestoreExit=Invoke-DISMRestore -dismRestoreLog $dismRestoreLog -Quiet $Quiet -Verbose $VerboseOption }
+                } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $Quiet $VerboseOption }
                 $ExitCode[3]=$dismRestoreExit
             }
         } else {
@@ -707,7 +727,7 @@ function Repair-System {
             $analyzeExit=0
             if ($remote) {
                 $analyzeExit = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $Quiet, $VerboseOption
-            } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore -analyzeComponentLog $analyzeComponentLog -Quiet $Quiet -Verbose $VerboseOption }
+            } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $Quiet $VerboseOption }
             $ExitCode[4]=$analyzeExit
 
             # Check the output and perform cleanup if recommended
@@ -721,7 +741,7 @@ function Repair-System {
                 if ($analyzeResult) {
                     if ($remote) {
                         $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $Quiet, $VerboseOption
-                    } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup -componentCleanupLog $componentCleanupLog -Quiet $Quiet -Verbose $VerboseOption }
+                    } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $Quiet $VerboseOption }
                 } else {
                     $message = "No component store cleanup was needed on $ComputerName."
                     if($remote) {
@@ -748,7 +768,7 @@ function Repair-System {
         $sccmCleanupResult=0
         if ($remote) {
             $sccmCleanupResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList $sccmCleanupLog, $Quiet, $VerboseOption
-        } else { $sccmCleanupResult=Invoke-SCCMCleanup -sccmCleanupLog $sccmCleanupLog -Quiet $Quiet -Verbose $VerboseOption }
+        } else { $sccmCleanupResult=Invoke-SCCMCleanup $sccmCleanupLog $Quiet $VerboseOption }
 
         $ExitCode[6]=$sccmCleanupResult
     }
@@ -757,7 +777,7 @@ function Repair-System {
         $updateCleanupExit=0
         if ($remote) {
             $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $Quiet, $VerboseOption
-        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup -ComputerName $ComputerName -updateCleanupLog $updateCleanupLog -Quiet $Quiet -Verbose $VerboseOption }
+        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup  $updateCleanupLog $Quiet $VerboseOption }
 
         if($updateCleanupExit -ne 0){
             Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
@@ -770,9 +790,9 @@ function Repair-System {
     if (-not $noSfc -or -not $noDism) {
         $zipErrorCode=0
         if ($remote) {
-            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-ZipFile} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism, $VerboseOption
+            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-ZipFile} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism
         } else {
-            $zipErrorCode=Create-ZipFile -localTempPath $localTempPath -zipFile $zipFile -zipErrorLog $zipErrorLog -noDism $noDism -Verbose $VerboseOption
+            $zipErrorCode=Create-ZipFile $localTempPath $zipFile $zipErrorLog $noDism
         }
 
         $ExitCode[8]=$zipErrorCode
@@ -781,7 +801,7 @@ function Repair-System {
     }
 
     if($remote) {$path=$localTempPath} else {$path=$remoteTempPath}
-    $extmsg= "`r`nSystem-Repair on $ComputerName performed."
+    $extmsg= "`r`nSystem-Repair performed."
     $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'"
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     if (-not $noCopy){
