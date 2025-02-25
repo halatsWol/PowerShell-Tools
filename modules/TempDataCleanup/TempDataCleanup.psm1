@@ -164,7 +164,7 @@ function Start-SystemCleanup {
 
     if($IncludeCCMCache) {
         if (Test-Path $ccmCachePath) {
-            Remove-Item -Path "$using:ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
             Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
         }
         Start-Sleep -Milliseconds 200
