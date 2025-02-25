@@ -31,13 +31,13 @@ function Start-UserCleanup {
         [string]$teamsClassicPath,
 
         [Parameter(Mandatory=$true,Position=7)]
-        [bool]$IncludeSystemLogs,
+        [switch]$IncludeSystemLogs,
 
         [Parameter(Mandatory=$true,Position=8)]
-        [bool]$IncludeIconCache,
+        [switch]$IncludeIconCache,
 
         [Parameter(Mandatory=$true,Position=9)]
-        [bool]$IncludeMSTeamsCache
+        [switch]$IncludeMSTeamsCache
     )
 
     $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
@@ -129,13 +129,13 @@ function Start-SystemCleanup {
         [string]$ccmCachePath,
 
         [Parameter(Mandatory=$true,Position=4)]
-        [bool]$IncludeSystemData,
+        [switch]$IncludeSystemData,
 
         [Parameter(Mandatory=$true,Position=5)]
-        [bool]$IncludeSystemLogs,
+        [switch]$IncludeSystemLogs,
 
         [Parameter(Mandatory=$true,Position=6)]
-        [bool]$IncludeCCMCache
+        [switch]$IncludeCCMCache
     )
 
     Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
@@ -495,7 +495,7 @@ function Invoke-TempDataCleanup {
     if ($remote) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache
     } else {
-        Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs $IncludeSystemLogs -IncludeIconCache $IncludeIconCache -IncludeMSTeamsCache $IncludeMSTeamsCache
+        Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache
     }
 
 
@@ -504,7 +504,7 @@ function Invoke-TempDataCleanup {
         if ($remote) {
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache
         } else {
-            Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData $IncludeSystemData -IncludeSystemLogs $IncludeSystemLogs -IncludeCCMCache $IncludeCCMCache
+            Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache
         }
     }
 
