@@ -215,9 +215,9 @@ function Invoke-TempDataCleanup {
 
     Configuration-File Template:
     ```
-    ShareDrive=C$                                       # ShareDrive-Letter of the Remote-Device on which Windows is installed
-    TempFolder=_IT-temp                                 # Name of the temporary Directory on the Remote-Device
-    LocalTargetPath=C:\remote-Files\$ComputerName       # Path where the Logs and Files will be copied to on the executing Client
+    ShareDrive=C$                               # ShareDrive-Letter of the Remote-Device on which Windows is installed
+    TempFolder=_IT-temp                         # Name of the temporary Directory on the Remote-Device
+    LocalTargetPath=C:\remote-Files             # Path where the Logs and Files will be copied to on the executing Client
     ```
 
 
@@ -303,7 +303,7 @@ function Invoke-TempDataCleanup {
     if($init){
         $ShareDrive="C$"
         $TempFolder="_IT-temp"
-        $LocalTargetPath="$env:SystemDrive\remote-Files\"
+        $LocalTargetPath="$env:SystemDrive\remote-Files"
 
         if(-not (Test-Path $confFile)){
             try {
@@ -430,7 +430,7 @@ function Invoke-TempDataCleanup {
         "$env:ProgramData\Microsoft\Windows\WER\ReportArchive"
     )
 
-    $LocalTargetPath = "$env:SystemDrive\remote-Files\"
+    $LocalTargetPath = "$env:SystemDrive\remote-Files"
     $TempFolder="_IT-temp"
     $ShareDrive="C$"
 
@@ -451,12 +451,14 @@ function Invoke-TempDataCleanup {
     }
 
 
+
     $remote=$false
     $LocalTargetPath = "$LocalTargetPath\$ComputerName"
 
     $logdir="$env:SystemDrive\$TempFolder"
     $RemoteLogDir="\\$ComputerName\$ShareDrive\$TempFolder"
     $logfile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup.log"
+
 
     if($IncludeAllPackages){
         $confirmation=Read-Host "Are you sure you want to include ALL Packages in the cleanup?`r`nThis will render IncludeMSTeamsCache irrelevant. Do you want to continue?`r`n(enter [yes] to continue with this option)"

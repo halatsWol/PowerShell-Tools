@@ -491,7 +491,7 @@ function Repair-System {
     ```
     ShareDrive=C$                                       # ShareDrive-Letter of the Remote-Device on which Windows is installed
     TempDirName=_IT-temp                                # Name of the temporary Directory on the Remote-Device
-    FinalDestinationPath=C:\remote-Files\$ComputerName  # Path where the Logs and Files will be copied to on the executing Client
+    FinalDestinationPath=C:\remote-Files                # Path where the Logs and Files will be copied to on the executing Client
     ```
 
     .EXAMPLE
@@ -610,11 +610,10 @@ function Repair-System {
     )
 
     $confFile="$PSScriptRoot\RepairSystem.conf"
+    $tempFolder="_IT-temp"
+    $FinalDestinationPath = "$env:SystemDrive\remote-Files"
+    $ShareDrive="C$"
     if($init){
-        $ShareDrive="C$"
-        $TempDirName="_IT-temp"
-        $FinalDestinationPath="C:\remote-Files\$ComputerName"
-
         # create in Module-Path a ReparSystem.conf file
         if(-not (Test-Path $confFile)){
             try {
@@ -635,9 +634,9 @@ function Repair-System {
     }
 
     $ExitCode=0,0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
-    $shareDrive="C$"
     $remote=$false
     $shareDrivePath=""
+    $remoteTempPath=""
     # check if verbose param is set in command execution
     $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
 
@@ -658,8 +657,7 @@ function Repair-System {
 
     # Set up paths and file names for logging
     $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-    $tempFolder="_IT-temp"
-    $finalDestinationPath = "C:\remote-Files\$ComputerName"
+
 
     if (Test-Path $confFile) {
         $confData = Get-Content -Path $confFile
@@ -695,11 +693,12 @@ function Repair-System {
             $shareDrive=$remoteShareDrive
         }
         $shareDrivePath="\\$ComputerName\$shareDrive"
+        $remoteTempPath = "$shareDrivePath\$tempFolder"
     }
 
-    $remoteTempPath = "$shareDrivePath\$tempFolder"
-    $localTempPath="C:\$tempFolder"
 
+    $localTempPath="C:\$tempFolder"
+    $FinalDestinationPath="$FinalDestinationPath\$ComputerName"
     $dismScanLog = ""
     $dismRestoreLog = ""
     $analyzeComponentLog = ""
