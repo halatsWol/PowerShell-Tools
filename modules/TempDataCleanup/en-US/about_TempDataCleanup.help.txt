@@ -56,8 +56,8 @@ Notes:
 Author:
 -------
 - Author: Wolfram Halatschek
-- Contact: halatschek.wolfram@gmail.com
-- Date: 2024-11-08
+- Contact: wolfram@kMarflow.com
+- Date: 2025-02-25
 
 
 Warnings:
