@@ -9,34 +9,34 @@ function New-Folder {
 function Start-UserCleanup {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true,Position=0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$logfile,
 
-        [Parameter(Mandatory=$true,Position=1)]
+        [Parameter(Mandatory=$true, Position=1)]
         [string[]]$userTempFolders,
 
-        [Parameter(Mandatory=$true,Position=2)]
+        [Parameter(Mandatory=$true, Position=2)]
         [string[]]$userReportingDirs,
 
-        [Parameter(Mandatory=$true,Position=3)]
+        [Parameter(Mandatory=$true, Position=3)]
         [string]$explorerCacheDir,
 
-        [Parameter(Mandatory=$true,Position=4)]
+        [Parameter(Mandatory=$true, Position=4)]
         [string]$localIconCacheDB,
 
-        [Parameter(Mandatory=$true,Position=5)]
+        [Parameter(Mandatory=$true, Position=5)]
         [string]$msTeamsCacheFolder,
 
-        [Parameter(Mandatory=$true,Position=6)]
+        [Parameter(Mandatory=$true, Position=6)]
         [string]$teamsClassicPath,
 
-        [Parameter(Mandatory=$true,Position=7)]
+        [Parameter(Mandatory=$true, Position=7)]
         [switch]$IncludeSystemLogs,
 
-        [Parameter(Mandatory=$true,Position=8)]
+        [Parameter(Mandatory=$true, Position=8)]
         [switch]$IncludeIconCache,
 
-        [Parameter(Mandatory=$true,Position=9)]
+        [Parameter(Mandatory=$true, Position=9)]
         [switch]$IncludeMSTeamsCache
     )
 
@@ -269,7 +269,7 @@ function Invoke-TempDataCleanup {
 
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory=$false,ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
         [string]$ComputerName,
 
         [Parameter(Mandatory=$false)]
