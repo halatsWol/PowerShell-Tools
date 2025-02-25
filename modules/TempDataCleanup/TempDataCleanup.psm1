@@ -13,10 +13,10 @@ function Start-UserCleanup {
         [string]$logfile,
 
         [Parameter(Mandatory=$true,Position=1)]
-        [List]$userTempFolders,
+        [string[]]$userTempFolders,
 
         [Parameter(Mandatory=$true,Position=2)]
-        [List]$userReportingDirs,
+        [string[]]$userReportingDirs,
 
         [Parameter(Mandatory=$true,Position=3)]
         [string]$explorerCacheDir,
@@ -120,10 +120,10 @@ function Start-SystemCleanup {
         [string]$logfile,
 
         [Parameter(Mandatory=$true,Position=1)]
-        [List]$systemTempFolders,
+        [string[]]$systemTempFolders,
 
         [Parameter(Mandatory=$true,Position=2)]
-        [List]$sysReportingDirs,
+        [string[]]$sysReportingDirs,
 
         [Parameter(Mandatory=$true,Position=3)]
         [string]$ccmCachePath,
