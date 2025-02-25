@@ -499,7 +499,7 @@ function Invoke-TempDataCleanup {
     }
 
 
-    if( $using:IncludeSystemData -or $using:IncludeSystemLogs -or $using:IncludeCCMCache) {
+    if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
 
         if ($remote) {
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache
@@ -514,7 +514,7 @@ function Invoke-TempDataCleanup {
         if ($?) {
 
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                Remove-Item -Path "$using:logdir\*" -Recurse -Force
+                Remove-Item -Path "$logdir\*" -Recurse -Force
             } -Verbose:$VerboseOption
 
         } else {
