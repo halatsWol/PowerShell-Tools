@@ -31,13 +31,13 @@ function Start-UserCleanup {
         [string]$teamsClassicPath,
 
         [Parameter(Mandatory=$true,Position=7)]
-        [switch]$IncludeSystemLogs,
+        [bool]$IncludeSystemLogs,
 
         [Parameter(Mandatory=$true,Position=8)]
-        [switch]$IncludeIconCache,
+        [bool]$IncludeIconCache,
 
         [Parameter(Mandatory=$true,Position=9)]
-        [switch]$IncludeMSTeamsCache
+        [bool]$IncludeMSTeamsCache
     )
 
     $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
@@ -129,13 +129,13 @@ function Start-SystemCleanup {
         [string]$ccmCachePath,
 
         [Parameter(Mandatory=$true,Position=4)]
-        [switch]$IncludeSystemData,
+        [bool]$IncludeSystemData,
 
         [Parameter(Mandatory=$true,Position=5)]
-        [switch]$IncludeSystemLogs,
+        [bool]$IncludeSystemLogs,
 
         [Parameter(Mandatory=$true,Position=6)]
-        [switch]$IncludeCCMCache
+        [bool]$IncludeCCMCache
     )
 
     Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
