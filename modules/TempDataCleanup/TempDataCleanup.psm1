@@ -48,8 +48,8 @@ function Start-UserCleanup {
             foreach ($folder in $userTempFolders) {
                 $path = "$env:SystemDrive\Users\$userProfile$folder"
                 if (Test-Path $path) {
-                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t> $path"
+                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                 }
 
             }
@@ -57,8 +57,8 @@ function Start-UserCleanup {
                 foreach ($folder in $userReportingDirs) {
                     $path = "$env:SystemDrive\Users\$userProfile$folder"
                     if (Test-Path $path) {
-                        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                         Add-Content -Path $logfile -Value "`t`t> $path"
+                        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                     }
                 }
             }
@@ -69,12 +69,12 @@ function Start-UserCleanup {
                 $pathT = "$path\thumbcache*.db"
                 $pathLI = "$env:SystemDrive\Users\$userProfile$localIconCacheDB"
                 if (Test-Path $path) {
-                    Remove-Item -Path "$pathI" -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathI"
-                    Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathI" -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathT"
-                    Remove-Item -Path "$pathLI" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathLI"
+                    Remove-Item -Path "$pathLI" -Force -ErrorAction SilentlyContinue
                 }
             }
         }catch{
@@ -92,8 +92,8 @@ function Start-UserCleanup {
             #cleanup $msTeamsCacheFolder
             $cpath = "$path"
             if (Test-Path $cpath) {
-                Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Add-Content -Path $logfile -Value "`t`t> $cpath"
+                Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
             }
             #create bgPath
             if (-not (Test-Path $bgPath)) {
@@ -105,8 +105,8 @@ function Start-UserCleanup {
             #cleanup $teamsClassicPath
             $path = "$env:SystemDrive\Users\$userProfile$teamsClassicPath"
             if (Test-Path $path) {
-                Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Add-Content -Path $logfile -Value "`t`t> $path"
+                Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
 
@@ -143,8 +143,8 @@ function Start-SystemCleanup {
     if($IncludeSystemData) {
         foreach ($folder in $systemTempFolders) {
             if (Test-Path $folder) {
-                Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Add-Content -Path $logfile -Value "`t`t> $folder"
+                Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
         Start-Sleep -Milliseconds 200
@@ -153,8 +153,8 @@ function Start-SystemCleanup {
     if($IncludeSystemLogs) {
         foreach ($folder in $sysReportingDirs) {
             if (Test-Path $folder) {
-                Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Add-Content -Path $logfile -Value "`t`t> $folder"
+                Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
         Start-Sleep -Milliseconds 200
@@ -164,8 +164,8 @@ function Start-SystemCleanup {
 
     if($IncludeCCMCache) {
         if (Test-Path $ccmCachePath) {
-            Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
             Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
+            Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
         }
         Start-Sleep -Milliseconds 200
     }
