@@ -75,7 +75,6 @@ function Get-DISMScanResult {
         [Parameter(Mandatory=$true)]
         [String]$dismScanLog
     )
-    $ScanResult = 1
     $lines=Get-Content -Path $dismScanLog
     $ScanResultData=$lines[-1..-($lines.Count)]
     foreach ($line in $ScanResultData) {
@@ -362,7 +361,7 @@ function Invoke-WindowsUpdateCleanup {
     return 0
 }
 
-function Create-ZipFile {
+function Start-ZipFileCreation {
     param (
         [Parameter(Mandatory=$true, Position=0)]
         [string]$localTempPath,
@@ -865,9 +864,9 @@ function Repair-System {
         $zipErrorLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_zip-errors.log"
         $zipErrorCode=0
         if ($remote) {
-            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Create-ZipFile} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism
+            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism
         } else {
-            $zipErrorCode=Create-ZipFile $localTempPath $zipFile $zipErrorLog $noDism
+            $zipErrorCode=Start-ZipFileCreation $localTempPath $zipFile $zipErrorLog $noDism
         }
 
         $ExitCode[8]=$zipErrorCode
