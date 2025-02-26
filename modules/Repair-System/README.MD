@@ -19,9 +19,9 @@ This function performs the following tasks on a specified computer (either local
 
 #### Parameters
 
-- **`-ComputerName`** (Mandatory): The hostname or IP address of the remote computer.
+- **`-ComputerName`** (optional): The hostname or IP address of the remote computer, If not provided, the command will be run locally, if provided, it will run on the specified remote-device.
 - **`-remoteShareDrive`** (Optional):The ShareDrive of the Remote-Device on which Windows is installed. If non is provided, Default-Value 'C$' will be used
-    The Command `Repair-RemoteSystem -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path *\\\\SomeDevice\\D$\\*
+    The Command `Repair-System -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path *\\\\SomeDevice\\D$\\*
 - **`-noSfc`** (Optional): When specified, `sfc /scannow` command will be skipped.
 - **`-noDism`** (Optional): When specified, all DISM commands will be skipped. This cannot be used in combination with `-IncludeComponentCleanup`.
 - **`-Quiet`** (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
@@ -56,8 +56,8 @@ Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 #### Requirements
 
 - **WinRM**: Must be enabled and configured on the remote computer, to be able to work with `-ComputerName`.
-- **Administrative Privileges**: Running this script requires administrative privileges on the remote computer.
-    For this, Powershell must be started as the user, which has administrative privileges on the remote computer.
+- **Administrative Privileges**: Running this script requires administrative privileges on the intended computer.
+    For running this for a remote device, Powershell must be started as the user, which has administrative privileges on the remote computer.
 
 
 

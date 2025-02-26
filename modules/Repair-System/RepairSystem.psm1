@@ -704,9 +704,7 @@ function Repair-System {
     $analyzeComponentLog = ""
     $componentCleanupLog = ""
 
-
     New-Folder -FolderPath $finalDestinationPath
-
 
     if($remote){
         # Check if the remote computer is reachable via WinRM
@@ -739,8 +737,6 @@ function Repair-System {
             break
         }
     }
-
-
 
     if ($remote) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:New-Folder} -ArgumentList $localTempPath
@@ -879,7 +875,7 @@ function Repair-System {
         $ExitCode[8]=0
     }
 
-    if($remote) {$path=$localTempPath} else {$path=$finalDestinationPath}
+    if($remote) {$path=$finalDestinationPath} else {$path=$localTempPath}
     $extmsg= "`r`nSystem-Repair performed."
     $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'"
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
@@ -911,15 +907,10 @@ function Repair-System {
         $extmsg+= $extmsgrLogP
     }
 
-
-    # Copy log files to local machine
     Start-Sleep -Seconds 1
     Write-Host $extmsg
     $exitCode=$exitCode | Sort-Object {$_} -Descending
     $exitCode = $exitCode -join ""
     $global:LASTEXITCODE = $ExitCode
 }
-
-
-
 Export-ModuleMember -Function Repair-System, Repair-LocalSystem, Repair-RemoteSystem

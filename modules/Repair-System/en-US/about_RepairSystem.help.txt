@@ -5,12 +5,12 @@ SHORT DESCRIPTION
     The `RepairSystem` module provides a set of functions to diagnose and repair common issues on Windows systems.
 
 LONG DESCRIPTION
-    The `Repair-System` module is designed to help system administrators and advanced users diagnose
+    The `RepairSystem` module is designed to help system administrators and advanced users diagnose
     and repair common issues on Windows systems. This module includes a variety of functions that
     can be used to check system health, repair corrupted system files, manage system services,
     and perform other maintenance tasks.
 
-    Key features of the `Repair-System` module include:
+    Key features of the `RepairSystem` module include:
 
     - **System Health Checks**: Functions to check the overall health of the system,
         including disk integrity, system file integrity, and more.
