@@ -403,7 +403,7 @@ function Invoke-TempDataCleanup {
         "$env:Windir\Temp",
         "$env:Windir\Prefetch",
         "$env:Windir\WinSxS\Temp",
-        "$env:Windir\SofwareDistribution\Download"
+        "$env:Windir\SoftwareDistribution\Download"
     )
     $msTeamsCacheFolder="\AppData\local\Packages\MSTeams_8wekyb3d8bbwe\LocalCache"
     $teamsClassicPath="\AppData\Roaming\Microsoft\Teams"
