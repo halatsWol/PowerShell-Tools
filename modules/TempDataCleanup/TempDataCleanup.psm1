@@ -41,7 +41,7 @@ function Start-UserCleanup {
     )
 
     $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
-    Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName:"
+    Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName`:"
     foreach ($userProfile in $userProfiles) {
         Add-Content -Path $logfile -Value "`tUser Profile: $userProfile"
         try{
@@ -138,7 +138,7 @@ function Start-SystemCleanup {
         [switch]$IncludeCCMCache
     )
 
-    Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName:"
+    Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName`:"
 
     if($IncludeSystemData) {
         foreach ($folder in $systemTempFolders) {
