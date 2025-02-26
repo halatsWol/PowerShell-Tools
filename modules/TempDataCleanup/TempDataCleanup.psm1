@@ -94,6 +94,8 @@ function Start-UserCleanup {
             if (Test-Path $cpath) {
                 Add-Content -Path $logfile -Value "`t`t> $cpath"
                 Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Add-Content -Path $logfile -Value "`t`t> $cpath (not found)"
             }
             #create bgPath
             if (-not (Test-Path $bgPath)) {
@@ -107,6 +109,8 @@ function Start-UserCleanup {
             if (Test-Path $path) {
                 Add-Content -Path $logfile -Value "`t`t> $path"
                 Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
         }
 
@@ -145,9 +149,11 @@ function Start-SystemCleanup {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
                 Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
         }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 100
     }
 
     if($IncludeSystemLogs) {
@@ -155,9 +161,11 @@ function Start-SystemCleanup {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
                 Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
         }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 100
     }
 
 
@@ -166,8 +174,10 @@ function Start-SystemCleanup {
         if (Test-Path $ccmCachePath) {
             Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
             Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Add-Content -Path $logfile -Value "`t`t> $path (not found)"
         }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 100
     }
 
     Add-Content -Path $logfile -Value "`r`n"
