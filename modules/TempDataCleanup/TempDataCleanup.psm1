@@ -40,41 +40,41 @@ function Start-UserCleanup {
         [switch]$IncludeMSTeamsCache
     )
 
-    $userProfiles = Get-ChildItem -Path "$env:SystemDrive\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
+    $userProfiles = Get-ChildItem -Path "C:\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
     Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName`:"
     foreach ($userProfile in $userProfiles) {
         Add-Content -Path $logfile -Value "`tUser Profile: $userProfile"
         try{
             foreach ($folder in $userTempFolders) {
-                $path = "$env:SystemDrive\Users\$userProfile$folder"
+                $path = "C:\Users\$userProfile$folder"
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t> $path"
-                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$path\*" -Recurse -Force -ea SilentlyContinue
                 }
 
             }
             if ($IncludeSystemLogs) {
                 foreach ($folder in $userReportingDirs) {
-                    $path = "$env:SystemDrive\Users\$userProfile$folder"
+                    $path = "C:\Users\$userProfile$folder"
                     if (Test-Path $path) {
                         Add-Content -Path $logfile -Value "`t`t> $path"
-                        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                        Remove-Item -Path "$path\*" -Recurse -Force -ea SilentlyContinue
                     }
                 }
             }
             if ($IncludeIconCache) {
-                $path = "$env:SystemDrive\Users\$userProfile$explorerCacheDir"
+                $path = "C:\Users\$userProfile$explorerCacheDir"
                 Add-Content -Path $logfile -Value "`t`tcleaning Icon & ThumbCache:"
                 $pathI = "$path\iconcache*.db"
                 $pathT = "$path\thumbcache*.db"
-                $pathLI = "$env:SystemDrive\Users\$userProfile$localIconCacheDB"
+                $pathLI = "C:\Users\$userProfile$localIconCacheDB"
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t`t> $pathI"
-                    Remove-Item -Path "$pathI" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathI" -Force -ea SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathT"
-                    Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathT" -Force -ea SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathLI"
-                    Remove-Item -Path "$pathLI" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathLI" -Force -ea SilentlyContinue
                 }
             }
         }catch{
@@ -82,33 +82,33 @@ function Start-UserCleanup {
         }
 
         if($IncludeMSTeamsCache) {
-            $path = "$env:SystemDrive\Users\$userProfile$msTeamsCacheFolder"
+            $path = "C:\Users\$userProfile$msTeamsCacheFolder"
             $bgPath="$path\Microsoft\MSTeams"
             $bgBackupPath="$path\.."
             #move $msTeamsCacheFolder\Microsoft\MSTeams\Backgrounds to $msTeamsCacheFolder
             if (Test-Path "$bgPath\Backgrounds") {
-                Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ErrorAction SilentlyContinue
+                Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ea SilentlyContinue
             }
             #cleanup $msTeamsCacheFolder
             $cpath = "$path"
             if (Test-Path $cpath) {
                 Add-Content -Path $logfile -Value "`t`t> $cpath"
-                Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "$cpath\*" -Recurse -Force -ea SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $cpath (not found)"
             }
             #create bgPath
             if (-not (Test-Path $bgPath)) {
-                New-Item -Path $bgPath -ItemType Directory -Force -ErrorAction SilentlyContinue
+                New-Item -Path $bgPath -ItemType Directory -Force -ea SilentlyContinue
             }
             if(Test-Path "$bgBackupPath\Backgrounds") {
-                Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
+                Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ea SilentlyContinue
             }
             #cleanup $teamsClassicPath
-            $path = "$env:SystemDrive\Users\$userProfile$teamsClassicPath"
+            $path = "C:\Users\$userProfile$teamsClassicPath"
             if (Test-Path $path) {
                 Add-Content -Path $logfile -Value "`t`t> $path"
-                Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "$path\*" -Recurse -Force -ea SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -139,7 +139,10 @@ function Start-SystemCleanup {
         [switch]$IncludeSystemLogs,
 
         [Parameter(Mandatory=$true,Position=6)]
-        [switch]$IncludeCCMCache
+        [switch]$IncludeCCMCache,
+
+        [Parameter(Mandatory=$true,Position=7)]
+        [switch]$VerboseOption
     )
 
     Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName`:"
@@ -148,7 +151,7 @@ function Start-SystemCleanup {
         foreach ($folder in $systemTempFolders) {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ea SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -160,7 +163,7 @@ function Start-SystemCleanup {
         foreach ($folder in $sysReportingDirs) {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "$folder\*" -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ea SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -173,7 +176,7 @@ function Start-SystemCleanup {
     if($IncludeCCMCache) {
         if (Test-Path $ccmCachePath) {
             Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
-            Remove-Item -Path "$ccmCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$ccmCachePath\*" -Verbose:$VerboseOption -Recurse -Force -ea SilentlyContinue
         } else {
             Add-Content -Path $logfile -Value "`t`t> $path (not found)"
         }
@@ -199,7 +202,7 @@ function Invoke-TempDataCleanup {
     If this switch is present, the cleanup will also include system folders.
 
     .PARAMETER IncludeSystemLogs
-    If this switch is present, the cleanup will also include system log files like $env:WinDir\Logs\,  $env:WinDir\Minidmp\.
+    If this switch is present, the cleanup will also include system log files like C:\Windows\Logs\,  C:\Windows\Minidmp\.
 
     .PARAMETER IncludeCCMCache
     If this switch is present, the cleanup will also include the Configuration Manager cache folder, if it exists.
@@ -308,12 +311,15 @@ function Invoke-TempDataCleanup {
 
     )
 
+    # check if verbose is enabled
+    $VerboseOption = $PSCmdlet.MyInvocation.BoundParameters.Verbose
+
 
     $confFile="$PSScriptRoot\TempDataCleanup.conf"
     if($init){
         $ShareDrive="C$"
         $TempFolder="_IT-temp"
-        $LocalTargetPath="$env:SystemDrive\remote-Files"
+        $LocalTargetPath="C:\remote-Files"
 
         if(-not (Test-Path $confFile)){
             try {
@@ -410,14 +416,13 @@ function Invoke-TempDataCleanup {
 
 
     $systemTempFolders=@(
-        "$env:Windir\Temp",
-        "$env:Windir\Prefetch",
-        "$env:Windir\WinSxS\Temp",
-        "$env:Windir\SoftwareDistribution\Download"
+        "C:\Windows\Temp",
+        "C:\Windows\Prefetch",
+        "C:\Windows\SoftwareDistribution\Download"
     )
     $msTeamsCacheFolder="\AppData\local\Packages\MSTeams_8wekyb3d8bbwe\LocalCache"
     $teamsClassicPath="\AppData\Roaming\Microsoft\Teams"
-    $ccmCachePath="$env:Windir\ccmcache"
+    $ccmCachePath="C:\Windows\ccmcache"
 
     $userReportingDirs=@(
         "\AppData\Local\CrashDumps",
@@ -427,20 +432,20 @@ function Invoke-TempDataCleanup {
     )
 
     $sysReportingDirs=@(
-        "$env:Windir\Logs",
-        "$env:Windir\Minidump",
-        "$env:Windir\LiveKernelReports",
-        "$env:Windir\System32\LogFiles\WMI",
-        "$env:Windir\System32\LogFiles\setupcln",
-        "$env:Windir\ServiceProfiles\LocalService\AppData\Local\CrashDumps",
-        "$env:Windir\sysWOW64\config\systemprofile\AppData\Local\CrashDumps",
-        "$env:Windir\system32\config\systemprofile\AppData\Local\CrashDumps",
-        "$env:Windir\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache",
+        "C:\Windows\Logs",
+        "C:\Windows\Minidump",
+        "C:\Windows\LiveKernelReports",
+        "C:\Windows\System32\LogFiles\WMI",
+        "C:\Windows\System32\LogFiles\setupcln",
+        "C:\Windows\ServiceProfiles\LocalService\AppData\Local\CrashDumps",
+        "C:\Windows\sysWOW64\config\systemprofile\AppData\Local\CrashDumps",
+        "C:\Windows\system32\config\systemprofile\AppData\Local\CrashDumps",
+        "C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache",
         "$env:ProgramData\Microsoft\Windows\WER\ReportQueue",
         "$env:ProgramData\Microsoft\Windows\WER\ReportArchive"
     )
 
-    $LocalTargetPath = "$env:SystemDrive\remote-Files"
+    $LocalTargetPath = "C:\remote-Files"
     $TempFolder="_IT-temp"
     $ShareDrive="C$"
 
@@ -465,7 +470,7 @@ function Invoke-TempDataCleanup {
     $remote=$false
     $LocalTargetPath = "$LocalTargetPath\$ComputerName"
 
-    $logdir="$env:SystemDrive\$TempFolder"
+    $logdir="C:\$TempFolder"
     $RemoteLogDir="\\$ComputerName\$ShareDrive\$TempFolder"
     $logfile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup.log"
 
@@ -505,18 +510,18 @@ function Invoke-TempDataCleanup {
     }
 
     if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache
+        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption
     } else {
-        Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache
+        Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache -VerboseOption:$VerboseOption
     }
 
 
     if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
 
         if ($remote) {
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache
+            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption
         } else {
-            Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache
+            Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache -Verbose:$VerboseOption
         }
     }
 
@@ -526,7 +531,7 @@ function Invoke-TempDataCleanup {
         if ($?) {
 
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                Remove-Item -Path "$logdir\*" -Recurse -Force
+                Remove-Item -Path "$logdir" -Recurse -Force -ea SilentlyContinue
             } -Verbose:$VerboseOption
 
         } else {
