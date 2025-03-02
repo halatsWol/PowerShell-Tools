@@ -49,7 +49,7 @@ function Start-UserCleanup {
                 $path = "C:\Users\$userProfile$folder"
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t> $path"
-                    Remove-Item -Path "$path\*" -Recurse -Force -ea SilentlyContinue
+                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                 }
 
             }
@@ -58,7 +58,7 @@ function Start-UserCleanup {
                     $path = "C:\Users\$userProfile$folder"
                     if (Test-Path $path) {
                         Add-Content -Path $logfile -Value "`t`t> $path"
-                        Remove-Item -Path "$path\*" -Recurse -Force -ea SilentlyContinue
+                        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
                     }
                 }
             }
@@ -70,11 +70,11 @@ function Start-UserCleanup {
                 $pathLI = "C:\Users\$userProfile$localIconCacheDB"
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t`t> $pathI"
-                    Remove-Item -Path "$pathI" -Force -ea SilentlyContinue
+                    Remove-Item -Path "$pathI" -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathT"
-                    Remove-Item -Path "$pathT" -Force -ea SilentlyContinue
+                    Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathLI"
-                    Remove-Item -Path "$pathLI" -Force -ea SilentlyContinue
+                    Remove-Item -Path "$pathLI" -Force -ErrorAction SilentlyContinue
                 }
             }
         }catch{
@@ -87,28 +87,28 @@ function Start-UserCleanup {
             $bgBackupPath="$path\.."
             #move $msTeamsCacheFolder\Microsoft\MSTeams\Backgrounds to $msTeamsCacheFolder
             if (Test-Path "$bgPath\Backgrounds") {
-                Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ea SilentlyContinue
+                Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ErrorAction SilentlyContinue
             }
             #cleanup $msTeamsCacheFolder
             $cpath = "$path"
             if (Test-Path $cpath) {
                 Add-Content -Path $logfile -Value "`t`t> $cpath"
-                Remove-Item -Path "$cpath\*" -Recurse -Force -ea SilentlyContinue
+                Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $cpath (not found)"
             }
             #create bgPath
             if (-not (Test-Path $bgPath)) {
-                New-Item -Path $bgPath -ItemType Directory -Force -ea SilentlyContinue
+                New-Item -Path $bgPath -ItemType Directory -Force -ErrorAction SilentlyContinue
             }
             if(Test-Path "$bgBackupPath\Backgrounds") {
-                Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ea SilentlyContinue
+                Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
             }
             #cleanup $teamsClassicPath
             $path = "C:\Users\$userProfile$teamsClassicPath"
             if (Test-Path $path) {
                 Add-Content -Path $logfile -Value "`t`t> $path"
-                Remove-Item -Path "$path\*" -Recurse -Force -ea SilentlyContinue
+                Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -151,7 +151,7 @@ function Start-SystemCleanup {
         foreach ($folder in $systemTempFolders) {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ea SilentlyContinue
+                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -163,7 +163,7 @@ function Start-SystemCleanup {
         foreach ($folder in $sysReportingDirs) {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ea SilentlyContinue
+                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -176,7 +176,7 @@ function Start-SystemCleanup {
     if($IncludeCCMCache) {
         if (Test-Path $ccmCachePath) {
             Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
-            Remove-Item -Path "$ccmCachePath\*" -Verbose:$VerboseOption -Recurse -Force -ea SilentlyContinue
+            Remove-Item -Path "$ccmCachePath\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
         } else {
             Add-Content -Path $logfile -Value "`t`t> $path (not found)"
         }
@@ -531,7 +531,7 @@ function Invoke-TempDataCleanup {
         if ($?) {
 
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                Remove-Item -Path "$logdir" -Recurse -Force -ea SilentlyContinue
+                Remove-Item -Path "$logdir" -Recurse -Force -ErrorAction SilentlyContinue
             } -Verbose:$VerboseOption
 
         } else {
