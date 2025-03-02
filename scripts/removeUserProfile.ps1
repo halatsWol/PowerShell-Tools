@@ -15,7 +15,7 @@ $netDrivesCMDfile="$TempPath\NetDrives_$UserName.cmd"
 $printerListFile="$TempPath\PrinterList_$UserName.txt"
 
 # Function to log messages
-function Log-Message {
+function Write-LogMessage {
     param(
         [string]$message
     )
@@ -54,83 +54,83 @@ else{
 
     if( $null -ne $profileListId){
         try{
-            Log-Message "Profile with Username $UserName found in registry"
-            Log-Message "Backing up Registry Profile List to $profilePathOld"
+            Write-LogMessage "Profile with Username $UserName found in registry"
+            Write-LogMessage "Backing up Registry Profile List to $profilePathOld"
             $profileListKey = Get-Item -Path $regProfileListPath\$profileListId
             $outputFilePath = "$TempPath\ProfileListBackup_$UserName"+"_$currentDateTime.reg"
             $regUserPathKey2 = Get-Item -Path $regUserPath\$profileListId
             $regUserPathKey3=Get-Item -Path ("$regUserPath\$profileListId" +"_Classes")
-            Log-Message "Backing up Registry Profile List of $UserName to $outputFilePath"
+            Write-LogMessage "Backing up Registry Profile List of $UserName to $outputFilePath"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileListKey`" `"$outputFilePath`" /y" -NoNewWindow -Wait
 
             # get network drives
             $drives = Get-ChildItem -Path "$regUserPath\$profileListId\Network"
-            Log-Message "Exporting Network Drives to $netDrivesCMDfile"
+            Write-LogMessage "Exporting Network Drives to $netDrivesCMDfile"
             foreach($drive in $drives ){
                 $letter=$drive.PSChildName
                 $remotePath=$drive.GetValue("RemotePath")
                 $netuselet="net use $($letter): '$remotePath' /persistent:yes"
                 Add-Content -Path $netDrivesCMDfile -Value $netuselet
-                Log-Message "`t> $letter`t'$remotePath'"
+                Write-LogMessage "`t> $letter`t'$remotePath'"
             }
 
             $printers = Get-Item -Path "$regUserPath\$profileListId\Printers\ConvertUserDevModesCount\" | Select-Object Property
             #get items of ConvertUserDevModesCount
             $defaultPrinters=@("OneNote (Desktop)","Microsoft XPS Document Writer","Microsoft Print to PDF","Fax","Adobe PDF","WinDisc","TIFF Printer","ImagePrinter Pro")
-            Log-Message "Exporting Printers to $printerListFile"
+            Write-LogMessage "Exporting Printers to $printerListFile"
             foreach ($printer in $printers.Property) {
                 # Check if the printer is not in the default list and does not contain the computer name
                 if (-not ($defaultPrinters -contains $printer) -and ($printer -notlike "*$env:ComputerName*")) {
-                    Log-Message "`t> $printer"
+                    Write-LogMessage "`t> $printer"
                     Add-Content -Path $printerListFile -Value $printer
                 }
             }
 
 
             if(Test-Path $regUserPath\$profileListId){
-                Log-Message "Deleting $regProfileListPath\$profileListId"
+                Write-LogMessage "Deleting $regProfileListPath\$profileListId"
                 Remove-Item -Path $regProfileListPath\$profileListId -Force -Recurse
             } else {
-                Log-Message "Item $regProfileListPath\$profileListId does not exist"
+                Write-LogMessage "Item $regProfileListPath\$profileListId does not exist"
             }
             $outputFilePath2 = "$TempPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
             $outputFilePath3 = "$TempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
-            Log-Message "Backing up User Profile Registry to $outputFilePath2"
+            Write-LogMessage "Backing up User Profile Registry to $outputFilePath2"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
 
             if(Test-Path $regUserPath\$profileListId){
-                Log-Message "Deleting $regUserPath\$profileListId"
+                Write-LogMessage "Deleting $regUserPath\$profileListId"
                 Remove-Item -Path $regUserPath\$profileListId -Force -Recurse
             } else {
-                Log-Message "Item $regUserPath\$profileListId does not exist"
+                Write-LogMessage "Item $regUserPath\$profileListId does not exist"
             }
-            Log-Message "Backing up User Profile Registry Classes to $outputFilePath3"
+            Write-LogMessage "Backing up User Profile Registry Classes to $outputFilePath3"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey3`" `"$outputFilePath3`" /y" -NoNewWindow -Wait
             $classesPath = "$regUserPath\$profileListId" +"_Classes"
             if(Test-Path $classesPath){
-                Log-Message "Deleting $classesPath"
+                Write-LogMessage "Deleting $classesPath"
                 Remove-Item -Path $classesPath -Force -Recurse
             } else {
-                Log-Message "Item $classesPath does not exist"
+                Write-LogMessage "Item $classesPath does not exist"
             }
-            Log-Message "Registry Profile List and User Profile Backup completed"
-            Log-Message "Renaming Profile Folder $profilePath"
+            Write-LogMessage "Registry Profile List and User Profile Backup completed"
+            Write-LogMessage "Renaming Profile Folder $profilePath"
             try{
                 Rename-Item -Force -Path $profilePath -NewName $profilePathOld
-                Log-Message "Profile Folder renamed to $profilePathOld"
+                Write-LogMessage "Profile Folder renamed to $profilePathOld"
             } catch {
                 $errormsg = "Error occurred while deleting profile`r`n$_.Exception.Message"
-                Log-Message $errormsg
+                Write-LogMessage $errormsg
             }
 
         } catch {
-            Log-Message "Error occurred during profile cleanup"
-            Log-Message $_.Exception.Message
+            Write-LogMessage "Error occurred during profile cleanup"
+            Write-LogMessage $_.Exception.Message
             return
         }
     } else {
-        Log-Message "Profile with Username $UserName not found in registry"
+        Write-LogMessage "Profile with Username $UserName not found in registry"
     }
 
-    Log-Message "Profile cleanup completed"
+    Write-LogMessage "Profile cleanup completed"
 }
