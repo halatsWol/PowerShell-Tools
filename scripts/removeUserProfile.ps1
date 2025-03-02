@@ -26,21 +26,14 @@ function Log-Message {
 
 function Get-TSSessions {
     query user|
-    #Parse output
     ForEach-Object {
-        # trim spaces at beginning and end
         $_ = $_.trim()
         # insert , at specific places for ConvertFrom-CSV command
         $_ = $_.insert(22,",").insert(42,",").insert(47,",").insert(56,",").insert(68,",")
-        # Remove every space two or more spaces
-        $_ = $_ -replace "\s\s+",""
+        $_ = $_ -replace "\s+",""
         $_ = $_ -replace ">" , ""
-
-        # output to pipe
         $_
-
     } |
-    #Convert to objects
     ConvertFrom-Csv
 }
 
@@ -92,8 +85,8 @@ else{
                     Add-Content -Path $printerListFile -Value $printer
                 }
             }
-            
-            
+
+
             if(Test-Path $regUserPath\$profileListId){
                 Log-Message "Deleting $regProfileListPath\$profileListId"
                 Remove-Item -Path $regProfileListPath\$profileListId -Force -Recurse
@@ -104,7 +97,7 @@ else{
             $outputFilePath3 = "$TempPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
             Log-Message "Backing up User Profile Registry to $outputFilePath2"
             Start-Process -FilePath "reg.exe" -ArgumentList "export `"$regUserPathKey2`" `"$outputFilePath2`" /y" -NoNewWindow -Wait
-            
+
             if(Test-Path $regUserPath\$profileListId){
                 Log-Message "Deleting $regUserPath\$profileListId"
                 Remove-Item -Path $regUserPath\$profileListId -Force -Recurse
@@ -119,7 +112,7 @@ else{
                 Remove-Item -Path $classesPath -Force -Recurse
             } else {
                 Log-Message "Item $classesPath does not exist"
-            }  
+            }
             Log-Message "Registry Profile List and User Profile Backup completed"
             Log-Message "Renaming Profile Folder $profilePath"
             try{
