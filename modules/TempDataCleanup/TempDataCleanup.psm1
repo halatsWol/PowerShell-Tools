@@ -568,7 +568,7 @@ function Invoke-TempDataCleanup {
         if ($?) {
 
             Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                Remove-Item -Path "$logdir" -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "$using:logdir" -Recurse -Force -ErrorAction SilentlyContinue
             } -Verbose:$VerboseOption
 
         } else {
