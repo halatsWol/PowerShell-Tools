@@ -37,9 +37,25 @@ function Start-UserCleanup {
         [switch]$IncludeIconCache,
 
         [Parameter(Mandatory=$true, Position=9)]
-        [switch]$IncludeMSTeamsCache
+        [switch]$IncludeMSTeamsCache,
+
+        [Parameter(Mandatory=$true,Position=10)]
+        [switch]$VerboseOption,
+
+        [Parameter(Mandatory=$true,Position=11)]
+        [string]$VerboseLogFile
+
     )
 
+    $V = $PSCmdlet.MyInvocation.BoundParameters.Verbose
+    if ($V -or $VerboseOption) {
+        $VerboseOption = $true
+    } else {
+        $VerboseOption = $false
+    }
+    if($VerboseOption) {
+        Start-Transcript -Path $VerboseLogFile -Append
+    }
     $userProfiles = Get-ChildItem -Path "C:\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
     Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] User Profile cleanup on $env:ComputerName`:"
     foreach ($userProfile in $userProfiles) {
@@ -49,7 +65,7 @@ function Start-UserCleanup {
                 $path = "C:\Users\$userProfile$folder"
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t> $path"
-                    Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
                 }
 
             }
@@ -58,7 +74,7 @@ function Start-UserCleanup {
                     $path = "C:\Users\$userProfile$folder"
                     if (Test-Path $path) {
                         Add-Content -Path $logfile -Value "`t`t> $path"
-                        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                        Remove-Item -Path "$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
                     }
                 }
             }
@@ -70,11 +86,11 @@ function Start-UserCleanup {
                 $pathLI = "C:\Users\$userProfile$localIconCacheDB"
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t`t> $pathI"
-                    Remove-Item -Path "$pathI" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathI" -Verbose:$VerboseOption -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathT"
-                    Remove-Item -Path "$pathT" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathT" -Verbose:$VerboseOption -Force -ErrorAction SilentlyContinue
                     Add-Content -Path $logfile -Value "`t`t`t> $pathLI"
-                    Remove-Item -Path "$pathLI" -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "$pathLI" -Verbose:$VerboseOption -Force -ErrorAction SilentlyContinue
                 }
             }
         }catch{
@@ -87,13 +103,14 @@ function Start-UserCleanup {
             $bgBackupPath="$path\.."
             #move $msTeamsCacheFolder\Microsoft\MSTeams\Backgrounds to $msTeamsCacheFolder
             if (Test-Path "$bgPath\Backgrounds") {
+                Add-Content -Path $logfile -Value "`t`t> Backing Up MS-Teams Background-Images"
                 Move-Item -Path "$bgPath\Backgrounds" -Destination "$bgBackupPath" -Force -ErrorAction SilentlyContinue
             }
             #cleanup $msTeamsCacheFolder
             $cpath = "$path"
             if (Test-Path $cpath) {
                 Add-Content -Path $logfile -Value "`t`t> $cpath"
-                Remove-Item -Path "$cpath\*" -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "$cpath\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $cpath (not found)"
             }
@@ -102,18 +119,22 @@ function Start-UserCleanup {
                 New-Item -Path $bgPath -ItemType Directory -Force -ErrorAction SilentlyContinue
             }
             if(Test-Path "$bgBackupPath\Backgrounds") {
+                Add-Content -Path $logfile -Value "`t`t> Recovering MS-Teams Background-Images"
                 Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
             }
             #cleanup $teamsClassicPath
             $path = "C:\Users\$userProfile$teamsClassicPath"
             if (Test-Path $path) {
                 Add-Content -Path $logfile -Value "`t`t> $path"
-                Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
         }
 
+    }
+    if($VerboseOption) {
+        Stop-Transcript
     }
 }
 
@@ -142,9 +163,22 @@ function Start-SystemCleanup {
         [switch]$IncludeCCMCache,
 
         [Parameter(Mandatory=$true,Position=7)]
-        [switch]$VerboseOption
+        [switch]$VerboseOption,
+
+        [Parameter(Mandatory=$true,Position=8)]
+        [string]$VerboseLogFile
+
     )
 
+    $V = $PSCmdlet.MyInvocation.BoundParameters.Verbose
+    if ($V -or $VerboseOption) {
+        $VerboseOption = $true
+    } else {
+        $VerboseOption = $false
+    }
+    if($VerboseOption) {
+        Start-Transcript -Path $VerboseLogFile -Append
+    }
     Add-Content -Path $logfile -Value "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss"))] System cleanup on $env:ComputerName`:"
 
     if($IncludeSystemData) {
@@ -183,7 +217,9 @@ function Start-SystemCleanup {
         Start-Sleep -Milliseconds 100
     }
 
-    Add-Content -Path $logfile -Value "`r`n"
+    if($VerboseOption) {
+        Stop-Transcript
+    }
 }
 
 
@@ -473,6 +509,7 @@ function Invoke-TempDataCleanup {
     $logdir="C:\$TempFolder"
     $RemoteLogDir="\\$ComputerName\$ShareDrive\$TempFolder"
     $logfile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup.log"
+    $VerboseLogFile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup_Verbose.log"
 
 
     if($IncludeAllPackages){
@@ -510,18 +547,18 @@ function Invoke-TempDataCleanup {
     }
 
     if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption
+        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
     } else {
-        Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache -VerboseOption:$VerboseOption
+        Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache -VerboseOption:$VerboseOption -VerboseLogFile $VerboseLogFile
     }
 
 
     if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
 
         if ($remote) {
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption
+            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
         } else {
-            Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache -Verbose:$VerboseOption
+            Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache -VerboseOption:$VerboseOption -VerboseLogFile:$VerboseLogFile
         }
     }
 
