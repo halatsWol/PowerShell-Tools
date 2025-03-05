@@ -27,12 +27,12 @@ function Write-LogMessage {
 function Get-TSSessions {
     query user|
     ForEach-Object {
-        $_ = $_.trim()
+        $UserSessions = $_.trim()
         # insert , at specific places for ConvertFrom-CSV command
-        $_ = $_.insert(22,",").insert(42,",").insert(47,",").insert(56,",").insert(68,",")
-        $_ = $_ -replace "\s+",""
-        $_ = $_ -replace ">" , ""
-        $_
+        $UserSessions = $UserSessions.insert(22,",").insert(42,",").insert(47,",").insert(56,",").insert(68,",")
+        $UserSessions = $UserSessions -replace "\s+",""
+        $UserSessions = $UserSessions -replace ">" , ""
+        $UserSessions
     } |
     ConvertFrom-Csv
 }
