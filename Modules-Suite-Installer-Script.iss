@@ -14,7 +14,7 @@
 AppId={{2C740815-92FE-4573-9D18-35E1C903F7F2}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-;AppVerName={#MyAppName} {#MyAppVersion}
+AppVerName={#MyAppName}, {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppCopyright=Copyright (C) 2025 {#MyAppPublisher}, Inc.                   
 AppPublisherURL={#MyAppURL}
@@ -23,6 +23,7 @@ AppUpdatesURL={#MyAppURL}
 CreateAppDir=no
 LicenseFile={#SourcePath}\LICENSE
 InfoBeforeFile={#SourcePath}\Pre-Install.nfo
+InfoAfterFile={#SourcePath}\Post-Install.nfo
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
 OutputDir={#SourcePath}\installer
@@ -41,9 +42,9 @@ Name: "{#BaseDir}\RepairSystem"
 [Files]
 Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psm1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psd1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
-Source: "{#SourcePath}\modules\TempDataCleanup\en-US\*"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#SourcePath}\modules\Repair-System\en-US\*"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}\modules\TempDataCleanup\en-US\*"; DestDir: "{#BaseDir}\TempDataCleanup\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psd1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
-Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion                                 
+Source: "{#SourcePath}\modules\Repair-System\en-US\*"; DestDir: "{#BaseDir}\RepairSystem\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
