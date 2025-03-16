@@ -890,7 +890,7 @@ function Repair-System {
 
                 if(-not $KeepLogs){
                     Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                        Remove-Item -Path "C:\_temp\*" -Recurse -Force
+                        Remove-Item -Path "$using:localTempPath" -Recurse -Force
                     } -Verbose:$VerboseOption
                     $extmsg+= $extmsglLogP
                 } else {
