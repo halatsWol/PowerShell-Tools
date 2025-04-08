@@ -1,3 +1,7 @@
+###############################################################
+#    DO NOT USE YET! CODE IS NOT COMPLETE AND TESTED!!!!!!    #
+###############################################################
+
 $UserName = Read-Host "Enter the username of the profile to be removed"
 if($UserName -eq "") {
     Write-Error "Username cannot be empty"
