@@ -29,7 +29,7 @@
 #               The logs and backups will be stored in
 #               C:\_IT-Temp\<Username>_ProfileCleanup_<Current-Date>\.
 #
-#               The User-Profile will be renamed to at its original location to
+#               The User-Profile will be renamed at its original location to
 #               <Username>-<Current-Date>.old ()
 #
 # Warning:      This script deletes user profiles and registry keys. Use with caution.
@@ -39,7 +39,7 @@
 #               system damage caused by the use of this script. Use at your own risk.
 #
 #               If any Errors occur you wish to report to the Author, please open an
-#               incident on https://github.com/halatsWol/PowerShell-Tools
+#               issue on https://github.com/halatsWol/PowerShell-Tools
 #####################################################################################
 
 
