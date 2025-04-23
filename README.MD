@@ -4,17 +4,21 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 
 ## Table of Contents
 
-- [Introduction](#introduction)
-- [Features](#features)
-- [Modules and Scripts](#modules-and-scripts)
-  - [Repair-System](#repair-system)
-  - [Shortcuts](#Shortcuts)
-  - [TempDataCleanup](#TempDataCleanup)
-  - [Cleanup-Profile](#Cleanup-Profile)
-  - [Upcoming Tools](#upcoming-tools)
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Running a Script](#running-a-script)
+- [PowerShell-Tools](#powershell-tools)
+	- [Table of Contents](#table-of-contents)
+	- [Introduction](#introduction)
+	- [Features](#features)
+	- [Modules and Scripts](#modules-and-scripts)
+		- [`Repair-System`](#repair-system)
+		- [`Shortcuts`](#shortcuts)
+		- [`TempDataCleanup`](#tempdatacleanup)
+		- [`removeUserProfile.ps1`](#removeuserprofileps1)
+		- [Upcoming Tools](#upcoming-tools)
+	- [Installation](#installation)
+		- [Installation of Modules](#installation-of-modules)
+		- [Temporary Import of Modules](#temporary-import-of-modules)
+	- [Usage](#usage)
+		- [Running a Script](#running-a-script)
 
 
 ## Introduction
@@ -51,11 +55,11 @@ The [Shortcuts](./modules/Shortcuts) module is a tool to print Shortcut-Properti
 The [TempDataCleanup](./modules/TempDataCleanup) module is a tool to clean up Temporary Data from a System.
 
 
-### [`Cleanup-Profile`](./modules/Cleanup-Profile)
+### [`removeUserProfile.ps1`](./scripts/removeUserProfile.ps1)
 
-The [Cleanup-Profile](./modules/Cleanup-Profile) module is a tool to remove a Windows User Profile.
+The [removeUserProfile.ps1](./scripts/removeUserProfile.ps1) Script is a tool to remove a Windows User Profile.
 
- :bangbang: ``Module not working yet! Do not execute since it will cause damages``
+ :bangbang: ``Module not fully tested yet! Do only use on your own risk!``
 
 
 ### Upcoming Tools
@@ -69,13 +73,15 @@ More scripts and modules will be added to this repository over time. Stay tuned 
 ## Installation
 ### Installation of Modules
 
-To install and use modules from this repository:
+To install and use modules from this repository by simply using the [installer](https://github.com/halatsWol/PowerShell-Tools/releases) or via following steps:
 
 1. Download the repository to your local machine:
 
 2. unzip the directory and open the modules folder:
 
 3. run as Administrator the ```install.cmd```-file within the Modules-Folder
+
+
 
 
 4. Restart any PowerShell session to use the functions of the module. For further information and help please visit the readme of the module
