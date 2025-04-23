@@ -9,11 +9,13 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 	- [Introduction](#introduction)
 	- [Features](#features)
 	- [Modules and Scripts](#modules-and-scripts)
-		- [`Repair-System`](#repair-system)
-		- [`Shortcuts`](#shortcuts)
-		- [`TempDataCleanup`](#tempdatacleanup)
-		- [`bulkUninstall.ps1`](#bulkuninstallps1)
-		- [`removeUserProfile.ps1`](#removeuserprofileps1)
+		- [Modules](#modules)
+			- [`Repair-System`](#repair-system)
+			- [`Shortcuts`](#shortcuts)
+			- [`TempDataCleanup`](#tempdatacleanup)
+		- [Scripts](#scripts)
+			- [`bulkUninstall.ps1`](#bulkuninstallps1)
+			- [`removeUserProfile.ps1`](#removeuserprofileps1)
 		- [Upcoming Tools](#upcoming-tools)
 	- [Installation](#installation)
 		- [Installation of Modules](#installation-of-modules)
@@ -41,27 +43,30 @@ In-Depth documentation and usage help can be retrieved from the README file in e
 
 ## Modules and Scripts
 
-### [`Repair-System`](./modules/Repair-System)
+### Modules
+#### [`Repair-System`](./modules/Repair-System)
 
 The [Repair-System](./modules/Repair-System) module is a tool that allows you to perform system repair operations on remote computers.
 
 
-### [`Shortcuts`](./modules/Shortcuts)
+#### [`Shortcuts`](./modules/Shortcuts)
 
 The [Shortcuts](./modules/Shortcuts) module is a tool to print Shortcut-Properties and Create Shortcuts.
 
 
-### [`TempDataCleanup`](./modules/TempDataCleanup)
+#### [`TempDataCleanup`](./modules/TempDataCleanup)
 
 The [TempDataCleanup](./modules/TempDataCleanup) module is a tool to clean up Temporary Data from a System.
 
+### Scripts
+#### [`bulkUninstall.ps1`](./scripts/bulkUninstall.ps1)
 
-### [`bulkUninstall.ps1`](./scripts/bulkUninstall.ps1)
+The [bulkUninstall.ps1](./scripts/bulkUninstall.ps1) Script can be used to uninstall multiple programs of a vendor.
 
-The [bulkUninstall.ps1](./scripts/bulkUninstall.ps1) Script can be used to uninstall multiple programs of a vendor (Use at own risk... uninstalling Software in the wrong order might damage other Software Components)
+ :bangbang: ``Use at own risk... uninstalling Software in the wrong order might damage other Software Components``
 
 
-### [`removeUserProfile.ps1`](./scripts/removeUserProfile.ps1)
+#### [`removeUserProfile.ps1`](./scripts/removeUserProfile.ps1)
 
 The [removeUserProfile.ps1](./scripts/removeUserProfile.ps1) Script is a tool to remove a Windows User Profile.
 
