@@ -30,7 +30,7 @@
 #               C:\_IT-Temp\<Username>_ProfileCleanup_<Current-Date>\.
 #
 #               The User-Profile will be renamed at its original location to
-#               <Username>-<Current-Date>.old ()
+#               <Username>-<Current-Date>.old
 #
 # Warning:      This script deletes user profiles and registry keys. Use with caution.
 #               Always test in a safe environment before running in production.
