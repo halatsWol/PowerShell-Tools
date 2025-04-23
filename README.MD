@@ -73,7 +73,7 @@ More scripts and modules will be added to this repository over time. Stay tuned 
 ## Installation
 ### Installation of Modules
 
-To install and use modules from this repository by simply using the [installer](https://github.com/halatsWol/PowerShell-Tools/releases) or via following steps:
+To install and use modules from this repository simply run the [installer](https://github.com/halatsWol/PowerShell-Tools/releases) or via following steps:
 
 1. Download the repository to your local machine:
 
