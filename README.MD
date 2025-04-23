@@ -12,6 +12,7 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 		- [`Repair-System`](#repair-system)
 		- [`Shortcuts`](#shortcuts)
 		- [`TempDataCleanup`](#tempdatacleanup)
+		- [`bulkUninstall.ps1`](#bulkuninstallps1)
 		- [`removeUserProfile.ps1`](#removeuserprofileps1)
 		- [Upcoming Tools](#upcoming-tools)
 	- [Installation](#installation)
@@ -53,6 +54,11 @@ The [Shortcuts](./modules/Shortcuts) module is a tool to print Shortcut-Properti
 ### [`TempDataCleanup`](./modules/TempDataCleanup)
 
 The [TempDataCleanup](./modules/TempDataCleanup) module is a tool to clean up Temporary Data from a System.
+
+
+### [`bulkUninstall.ps1`](./scripts/bulkUninstall.ps1)
+
+The [bulkUninstall.ps1](./scripts/bulkUninstall.ps1) Script can be used to uninstall multiple programs of a vendor (Use at own risk... uninstalling Software in the wrong order might damage other Software Components)
 
 
 ### [`removeUserProfile.ps1`](./scripts/removeUserProfile.ps1)
