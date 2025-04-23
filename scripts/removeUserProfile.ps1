@@ -1,6 +1,6 @@
 #####################################################################################
-# WARNING:      THIS SCRIPT IS NOT FULLY TESTED AND MAY CONTAIN ERRORS OR INCOMPLETE FUNCTIONALITY.
-#               USE AT YOUR OWN RISK.
+# WARNING:      THIS SCRIPT IS NOT FULLY TESTED AND MAY CONTAIN ERRORS
+#               OR INCOMPLETE FUNCTIONALITY. USE AT YOUR OWN RISK.
 #
 #
 # Script Name:  removeUserProfile.ps1
@@ -15,6 +15,22 @@
 # Notes:        This script requires administrative privileges to run.
 #               The affected User must be logged out before running this script.
 #               Please restart the Machine first before use.
+#
+# Usage:        Run this script in an elevated PowerShell session.
+#               PS> <path to script>\removeUserProfile.ps1
+#
+#               The script will prompt for the username of the profile to be removed.
+#               It will then back up the registry keys, export network drives and printers,
+#               and rename the user profile folder.
+#
+# Logs
+# & Backup:     The script will log all actions taken and any errors encountered as well as
+#               Backing up all deleted registry keys.
+#               The logs and backups will be stored in
+#               C:\_IT-Temp\<Username>_ProfileCleanup_<Current-Date>\.
+#
+#               The User-Profile will be renamed to at its original location to
+#               <Username>-<Current-Date>.old ()
 #
 # Warning:      This script deletes user profiles and registry keys. Use with caution.
 #               Always test in a safe environment before running in production.
