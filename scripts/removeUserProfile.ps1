@@ -89,7 +89,7 @@ if ( -not $isElevated ) {
             if( $null -ne $profileListId){
                 try{
                     Write-LogMessage "Profile with Username $UserName found in registry"
-                    Write-LogMessage "[INFO]`r`n`t`tBacking up Registry - Profile List to $profilePathOld"
+                    Write-LogMessage "[INFO]`r`n`t`tBacking up Registry - Profile List to $TempPath\Registry"
                     $profileList_SID_PATH = "$regProfileListPath\$profileListId"
                     $profileList_WOW6432Node_SID_PATH = "$regProfileListPathWOW6432Node\$profileListId"
                     $profileList_SID_ITEM = Get-Item -ea SilentlyContinue -Path $profileList_SID_PATH
@@ -102,7 +102,7 @@ if ( -not $isElevated ) {
                     ## EXPORT & DELETE Profile List Registry Keys
                     if ($profileList_SID_ITEM_EXISTS) {
                         Write-LogMessage "[INFO]`r`n`t`tBacking up Registry - Profile List of $UserName to:`r`n`t`t$outputFilePathProfileList"
-                        Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileList_SID_ITEM`" `"$outputFilePathProfileList`" /y" -NoNewWindow -Wait -RedirectStandardOutput "\NUL" -RedirectStandardOutput "\NUL"
+                        Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileList_SID_ITEM`" `"$outputFilePathProfileList`" /y" -NoNewWindow -Wait -RedirectStandardOutput "\NUL"
                         # Check if the export was successful
                         if (Test-Path $outputFilePathProfileList) {
                             Write-LogMessage "Export successful.`r`n`t`tDeleting $profileList_SID_PATH"
@@ -131,10 +131,24 @@ if ( -not $isElevated ) {
                     }
 
                     $HKU_userSID_Path = "HKU:\$profileListId"
+                    $UserHiveFile = "$env:HomeDrive\Users\$UserName\NTUSER.DAT"
+
+                    # load user hive
+                    if (-not $(Test-Path $HKU_userSID_Path)) {
+                        if (Test-Path $UserHiveFile) {
+                            Write-LogMessage "[INFO]`r`n`t`tLoading User Hive $HKU_userSID_Path from $UserHiveFile"
+                            Start-Process -FilePath "reg.exe" -ArgumentList "load `"HKU\$profileListId`" `"$UserHiveFile`"" -NoNewWindow -Wait -RedirectStandardOutput "\NUL"
+                        } else {
+                            Write-LogMessage "[ERROR]`r`n`t`tUser Hive File $UserHiveFile does not exist!"
+                        }
+                    } else {
+                        Write-LogMessage "[INFO]`r`n`t`tUser Hive File $UserHiveFile already loaded!"
+                    }
                     $HKU_userSID_ITEM = Get-Item -ea SilentlyContinue -Path $HKU_userSID_Path
                     $HKU_userSID_ITEM_EXISTS= -not [string]::IsNullOrEmpty($HKU_userSID_ITEM)
+
                     # Continue only if HKU_SID Exists
-                    if ($HKU_userSID_ITEM_EXISTS) {
+                    if (Test-Path $HKU_userSID_Path) {
                         # get network drives
                         if (Test-Path "$HKU_userSID_Path\Network") {
                             $drives = Get-ChildItem -Path "$HKU_userSID_Path\Network"
@@ -167,45 +181,19 @@ if ( -not $isElevated ) {
                             Write-LogMessage "[INFO]`r`n`t`tNo Printers Setup for $UserName"
                         }
 
-                        # Delete Registry: HKU
-                        $outputFileHKU_userSID = "$RegPath\HKey_UsersBackup_$UserName"+"_$currentDateTime.reg"
-                        Write-LogMessage "[INFO]`r`n`t`tBacking up Registry User Profile Registry to`r`n`t`t$outputFileHKU_userSID"
-                        Start-Process -FilePath "reg.exe" -ArgumentList "export `"$HKU_userSID_ITEM`" `"$outputFileHKU_userSID`" /y" -NoNewWindow -Wait -RedirectStandardOutput "\NUL"
-                        if (Test-Path $outputFileHKU_userSID){
-                            Write-LogMessage "[INFO]`r`n`t`tDeleting $HKU_userSID_Path"
-                            Remove-Item -Path $HKU_userSID_Path -Force -Recurse
-                        } else {
-                            Write-LogMessage "[ERROR]`r`n`t`tError occurred while exporting User Profile Registry`r`n`t`t'$HKU_userSID_Path'. Deletion skipped."
-                            $FailedEXPORTS.Add($HKU_userSID_Path)
-                        }
+                        # Unload user hive
+                        Write-LogMessage "[INFO]`r`n`t`tUnloading User Hive $HKU_userSID_Path"
+                        Start-Process -FilePath "reg.exe" -ArgumentList "unload `"HKU\$profileListId`"" -NoNewWindow -Wait -RedirectStandardOutput "\NUL"
+                        Write-LogMessage "[SUCCESS]`r`n`t`tRegistry Key of ProfileList and HKey_Users - Backup completed"
                     } else {
                         Write-LogMessage "[WARNING]`r`n`t`tRegistry path $HKU_userSID_Path does not exist!`r`n`t`tNo NetworkDrives & Printers exported.`r`n`t`tNo Registry-Key to delete!"
                         Write-LogMessage "[INFO]`r`n`t`tThe abscense of the Registry-Key may be due to the profile being already deleted or not being loaded.`r`n`t`tDepending to System-Configuration, the System may be set up to only load active profiles into HKEY_USERS.`r`n`t`tBy Microsoft Default Configuration, the System only loads active profiles into HKEY_USERS.`r`n`t`tIf the profile is not loaded, the HKU user SID will not be present in the registry.`r`n`r`n`t`tThis data is loaded from the profile folder > NTUSER.DAT.`r`n`t`tIf the ProfileList Key does not exist and/or the User-Folder is deleted/renamed,`r`n`t`tthe Keys will therefore not be present/loaded into the Registry.`r`n"
                         $FailedEXPORTS.Add($HKU_userSID_Path)
                     }
 
-                    # Delete Registry: HKU Classes
-                    $outputFilePathHKU_userSID_Classes = "$RegPath\HKey_Users_Classes_Backup_$UserName"+"_$currentDateTime.reg"
-                    $HKU_userSID_Classes_Path = "$HKU_userSID_Path" +"_Classes"
-                    $HKU_userSID_Classes_ITEM=Get-Item -ea SilentlyContinue -Path ("$HKU_userSID_Path" +"_Classes")
-                    $HKU_userSID_Classes_ITEM_EXISTS = -not [string]::IsNullOrEmpty($HKU_userSID_Classes_ITEM)
-                    if ($HKU_userSID_Classes_ITEM_EXISTS) {
-                        Write-LogMessage "[INFO]`r`n`t`tBacking up User Profile Registry Classes to $outputFilePathHKU_userSID_Classes"
-                        Start-Process -FilePath "reg.exe" -ArgumentList "export `"$HKU_userSID_Classes_ITEM`" `"$outputFilePathHKU_userSID_Classes`" /y" -NoNewWindow -Wait -RedirectStandardOutput "\NUL"
-                        if (Test-Path $outputFilePathHKU_userSID_Classes){
-                            Write-LogMessage "Deleting $HKU_userSID_Classes_Path"
-                            Remove-Item -Path $HKU_userSID_Classes_Path -Force -Recurse
-                        } else {
-                            Write-LogMessage "[ERROR]`r`n`t`tError occurred while exporting User Profile Classes. Deletion skipped."
-                        }
-                    } else {
-                        Write-LogMessage "[WARNING]`r`n`t`tRegistry path $HKU_userSID_Classes_Path does not exist!`r`n`t`tNo Registry-Key Backed up!`r`n`t`tNo Registry-Key to delete!"
-                        Write-LogMessage "[INFO]`r`n`t`tThe abscense of the Registry-Key may be due to the profile being already deleted or not being loaded.`r`n`t`tDepending to System-Configuration, the System may be set up to only load active profiles into HKEY_USERS.`r`n`t`tBy Microsoft Default Configuration, the System only loads active profiles into HKEY_USERS.`r`n`t`tIf the profile is not loaded, the HKU user SID Classes will not be present in the registry.`r`n`r`n`t`tThis data is loaded from the profile folder > NTUSER.DAT.`r`n`t`tIf the ProfileList Key does not exist and/or the User-Folder is deleted/renamed,`r`n`t`tthe Keys will therefore not be present/loaded into the Registry.`r`n"
-                        $FailedEXPORTS.Add($HKU_userSID_Classes_Path)
-                    }
+
 
                     # Rename Profile Folder
-                    Write-LogMessage "[SUCCESS]`r`n`t`tRegistry Key of ProfileList and HKey_Users - Backup completed"
                     Write-LogMessage "[INFO]`r`n`t`tRenaming Profile Folder $profilePath"
                     try{
                         Rename-Item -Force -Path $profilePath -NewName $profilePathOld
