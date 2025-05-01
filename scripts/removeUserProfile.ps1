@@ -1,15 +1,12 @@
 #####################################################################################
-# WARNING:      THIS SCRIPT IS NOT FULLY TESTED AND MAY CONTAIN ERRORS
-#               OR INCOMPLETE FUNCTIONALITY. USE AT YOUR OWN RISK.
-#
 # Script Name:  removeUserProfile.ps1
 # Description:  This script removes a user profile from the system and backs up
 #               the registry keys associated with the profile. It also exports
 #               network drives and printers associated with the user profile.
 #
 # Author:       Halatschek Wolfram
-# Date:         2025-04-17
-# Version:      0.9
+# Date:         2025-05-01
+# Version:      1.0
 # Notes:        This script requires administrative privileges to run.
 #               The affected User must be logged out before running this script.
 #               Please restart the Machine first before use.
@@ -42,8 +39,8 @@
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $isElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ( -not $isElevated ) {
-    Write-Warning "This script must be run with administrative privileges. Please restart the script in an elevated PowerShell session."
-    Read-Host "Press [Enter] to exit Script"
+    $("") ; Write-Warning "`r`nThis script must be run with administrative privileges. Please restart the script in an elevated PowerShell session.`r`n"
+    Pause ; $("")
 } else {
     $UserName = Read-Host "Enter the username of the profile to be removed"
     if($UserName -ne "") {
@@ -62,27 +59,21 @@ if ( -not $isElevated ) {
         $FailedEXPORTS = New-Object System.Collections.Generic.List[System.Object]
 
         function Write-LogMessage {
-            param(
-                [string]$message
-            )
+            param([string]$message)
             $message = "[$((Get-Date).ToString("yyyy-MM-dd_HH-mm-ss.fff"))] - $message"
             Write-Host $message
             $message | Out-File -FilePath $cleanupLog -Append
         }
 
-        function Get-TSSessions {
-            query user| ForEach-Object {
-                $_.trim().insert(22,",").insert(42,",").insert(47,",").insert(56,",").insert(68,",") -replace "\s+","" -replace ">" , ""
-            } | ConvertFrom-Csv
-        }
-        $user,$id = Get-TSSessions | Where-Object { $_.USERNAME -eq $USERNAME } | Select-Object USERNAME,ID | ForEach-Object {$_.username,$_.ID}
-        if ($user -eq $UserName) {
+        $user = query user| ForEach-Object {
+            $_.trim().insert(22,",").insert(42,",").insert(47,",").insert(56,",").insert(68,",") -replace "\s+","" -replace ">" , ""
+        } | ConvertFrom-Csv | Where-Object { $_.USERNAME -eq $USERNAME } | Select-Object USERNAME,ID
+
+        if ($user.username -eq $UserName) {
             Write-Error "`r`nUser '$UserName' is still logged in on $env:computername . Please sign out the user before cleaning the profile."
         }
         else{
-            New-Item -Path $TempPath -ItemType Directory -Force >$null
-            New-Item -Path $LogPath -ItemType Directory -Force >$null
-            New-Item -Path $RegPath -ItemType Directory -Force >$null
+            New-Item -Path $TempPath,$LogPath,$RegPath -ItemType Directory -Force >$null
 
             $profileList = Get-ChildItem $regProfileListPath | Get-ItemProperty | Where-Object { $_.ProfileImagePath -eq "C:\Users\$UserName" }
             $profileListId = $profileList.PSChildName
@@ -140,7 +131,7 @@ if ( -not $isElevated ) {
                             Write-LogMessage "[ERROR]`r`n`t`tUser Hive File $UserHiveFile does not exist!"
                         }
                     } else {
-                        Write-LogMessage "[INFO]`r`n`t`tUser Hive File $UserHiveFile already loaded!"
+                        Write-LogMessage "[INFO]`r`n`t`tUser Hive $UserHiveFile already loaded!"
                     }
 
                     # Continue only if HKU_SID Exists
@@ -159,18 +150,19 @@ if ( -not $isElevated ) {
                         } else {
                             Write-LogMessage "[INFO]`r`n`t`tNo Network Drives Setup for $UserName"
                         }
-
                         # get printers
                         if (Test-Path "$HKU_userSID_Path\Printers\ConvertUserDevModesCount\") {
                             $printers = Get-Item -ea SilentlyContinue -Path "$HKU_userSID_Path\Printers\ConvertUserDevModesCount\" | Select-Object Property
-                            #get items of ConvertUserDevModesCount
                             $defaultPrinters=@("OneNote","OneNote (Desktop)","OneNote for Windows 10","SHRFAX:","Microsoft XPS Document Writer","Microsoft Print to PDF","Fax","Adobe PDF","WinDisc","TIFF Printer","ImagePrinter Pro","NULL")
                             Write-LogMessage "[INFO]`r`n`t`tExporting Printers to $printerListFile"
                             foreach ($printer in $printers.Property) {
                                 # Check if the printer is not in the default list and does not contain the computer name
                                 if (-not ($defaultPrinters -contains $printer) -and ($printer -notlike "*$env:ComputerName*")) {
-                                    Write-LogMessage "`t> $printer"
-                                    Add-Content -Path $printerListFile -Value $printer
+                                    # Check if the printer is not redirected
+                                    if (-not $($printer -match "\s*\(redirected\s*\d{1,2}\)$")) {
+                                        Write-LogMessage "`t`t`t> $printer"
+                                        Add-Content -Path $printerListFile -Value $printer
+                                    }
                                 }
                             }
                         } else {
@@ -187,16 +179,13 @@ if ( -not $isElevated ) {
                         $FailedEXPORTS.Add($HKU_userSID_Path)
                     }
 
-
-
                     # Rename Profile Folder
                     Write-LogMessage "[INFO]`r`n`t`tRenaming Profile Folder $profilePath"
                     try{
                         Rename-Item -Force -Path $profilePath -NewName $profilePathOld
                         Write-LogMessage "[SUCCESS]`r`n`t`tProfile Folder renamed to $profilePathOld"
                     } catch {
-                        $errormsg = "[ERROR]`r`n`t`tError occurred while deleting profile`r`n$_.Exception.Message"
-                        Write-LogMessage $errormsg
+                        Write-LogMessage "[ERROR]`r`n`t`tError occurred while deleting profile`r`n$_.Exception.Message"
                     }
 
                 } catch {
@@ -216,7 +205,8 @@ if ( -not $isElevated ) {
                 Write-LogMessage "[SUCCESS]`r`n`t`tAll Registry-Keys deleted successfully. Profile-Folder renamed successfully.$endNote"
             }
             Remove-PSDrive -Name HKU -Force -ErrorAction SilentlyContinue
-            Read-Host "Press [Enter] to exit Script"
+            $("`r`nScript Completed.")
+            Pause ; $("")
         }
     } else {
         Write-Error "[WARNING]`r`n`t`tUsername cannot be empty"
