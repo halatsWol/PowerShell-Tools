@@ -94,13 +94,11 @@ if ( -not $isElevated ) {
                     $profileList_WOW6432Node_SID_PATH = "$regProfileListPathWOW6432Node\$profileListId"
                     $profileList_SID_ITEM = Get-Item -ea SilentlyContinue -Path $profileList_SID_PATH
                     $profileList_WOW6432Node_SID_ITEM = Get-Item -ea SilentlyContinue -Path $profileList_WOW6432Node_SID_PATH
-                    $profileList_SID_ITEM_EXISTS= -not [string]::IsNullOrEmpty($profileList_SID_ITEM)
-                    $profileList_WOW6432Node_SID_ITEM_EXISTS= -not [string]::IsNullOrEmpty($profileList_WOW6432Node_SID_ITEM)
                     $outputFilePathProfileList = "$RegPath\ProfileListBackup_$UserName"+"_$currentDateTime.reg"
                     $outputFilePathProfileListWOW6432Node = "$RegPath\ProfileListBackup-WOW6432Node_$UserName"+"_$currentDateTime.reg"
 
                     ## EXPORT & DELETE Profile List Registry Keys
-                    if ($profileList_SID_ITEM_EXISTS) {
+                    if (Test-Path $profileList_SID_PATH) {
                         Write-LogMessage "[INFO]`r`n`t`tBacking up Registry - Profile List of $UserName to:`r`n`t`t$outputFilePathProfileList"
                         Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileList_SID_ITEM`" `"$outputFilePathProfileList`" /y" -NoNewWindow -Wait -RedirectStandardOutput "\NUL"
                         # Check if the export was successful
@@ -115,7 +113,7 @@ if ( -not $isElevated ) {
                         Write-LogMessage "[WARNING]`r`n`t`tRegistry path $profileList_SID_PATH does not exist"
                     }
                     ## EXPORT & DELETE WOW6432Node Profile List Registry Keys
-                    if ($profileList_WOW6432Node_SID_ITEM_EXISTS) {
+                    if (Test-Path $profileList_WOW6432Node_SID_PATH) {
                         Write-LogMessage "[INFO]`r`n`t`tBacking up Registry - WOW6432Node Profile List of $UserName to`r`n`t`t$outputFilePathProfileListWOW6432Node"
                         Start-Process -FilePath "reg.exe" -ArgumentList "export `"$profileList_WOW6432Node_SID_ITEM`" `"$outputFilePathProfileListWOW6432Node`" /y" -NoNewWindow -Wait -RedirectStandardOutput "\NUL"
                         # Check if the export was successful
@@ -144,8 +142,6 @@ if ( -not $isElevated ) {
                     } else {
                         Write-LogMessage "[INFO]`r`n`t`tUser Hive File $UserHiveFile already loaded!"
                     }
-                    $HKU_userSID_ITEM = Get-Item -ea SilentlyContinue -Path $HKU_userSID_Path
-                    $HKU_userSID_ITEM_EXISTS= -not [string]::IsNullOrEmpty($HKU_userSID_ITEM)
 
                     # Continue only if HKU_SID Exists
                     if (Test-Path $HKU_userSID_Path) {
