@@ -2,10 +2,9 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "PowerShell-Tools - Modules Suite"
-#define MyAppVersion "v1.0"
+#define MyAppVersion "v1.1"
 #define MyAppPublisher "Marflow Software"
 #define MyAppURL "https://www.kMarflow.com/"
-#define MyAppExeName "MyProg.exe"
 #define BaseDir "C:\Program Files\WindowsPowerShell\Modules"
 
 [Setup]
@@ -16,7 +15,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName}, {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppCopyright=Copyright (C) 2025 {#MyAppPublisher}, Inc.                   
+AppCopyright=Copyright (C) 2025 {#MyAppPublisher}, Inc.
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
@@ -44,7 +43,7 @@ Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psm1"; DestDir: "
 Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psd1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\TempDataCleanup\en-US\*"; DestDir: "{#BaseDir}\TempDataCleanup\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psd1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
-Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion                                 
+Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Repair-System\en-US\*"; DestDir: "{#BaseDir}\RepairSystem\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
