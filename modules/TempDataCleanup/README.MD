@@ -18,6 +18,8 @@ The primary function of this module is `Invoke-TempDataCleanup`, which removes t
 - **`-IncludeMSTeamsCache`** (Optional): When this switch is provided, the cleanup will also include the Microsoft Teams cache folders.
 - **`-IncludeIconCache`** (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
 - **`-IncludeAllPackages`** (Optional): When this switch is used, all packages in `$env:localappdata\Packages\` will be cleaned up.
+- **`-VeryLowDisk`** (Optional): Executes CleanMgr with default settings additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+- **`-AutoClean`** (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
 - **`-init`** (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
 
 #### Example
@@ -53,7 +55,7 @@ Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBro
 
 - **Author**: Wolfram Halatschek
 - **Contact**: wolfram@kMarflow.com
-- **Date**: 2025-02-25
+- **Date**: 2025-05-09
 
 ## Warnings
 

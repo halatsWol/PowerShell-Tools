@@ -21,6 +21,9 @@ Parameters:
 - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
 - IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
 - IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
+- VeryLowDisk (Optional): Executes CleanMgr with default settings additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+- AutoClean (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+- init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
 
 
 Examples:
@@ -48,7 +51,7 @@ Requirements:
 
 Notes:
 ------
-- The script is provided "as-is" and is not officially supported by Microsoft.
+- The script is provided "as-is" and is not supported by Microsoft.
 - Always test the script thoroughly in non-production environments to prevent unintended file deletions or other system disruptions.
 - Incorrect use of the script may cause system instability or data loss.
 
@@ -57,7 +60,7 @@ Author:
 -------
 - Author: Wolfram Halatschek
 - Contact: wolfram@kMarflow.com
-- Date: 2025-02-25
+- Date: 2025-05-09
 
 
 Warnings:
