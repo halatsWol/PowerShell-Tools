@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "PowerShell-Tools - Modules Suite"
-#define MyAppVersion "v1.1"
+#define MyAppVersion "v1.2"
 #define MyAppPublisher "Marflow Software"
 #define MyAppURL "https://www.kMarflow.com/"
 #define BaseDir "C:\Program Files\WindowsPowerShell\Modules"
@@ -15,7 +15,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName}, {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppCopyright=Copyright (C) 2025 {#MyAppPublisher}, Inc.
+AppCopyright=Copyright (C) 2025 {#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
