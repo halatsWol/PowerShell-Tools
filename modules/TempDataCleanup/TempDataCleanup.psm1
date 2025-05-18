@@ -57,7 +57,7 @@ function Start-UserCleanup {
         Start-Transcript -Path $VerboseLogFile -Append
     }
     $userProfiles = Get-ChildItem -Path "C:\Users" -Directory -Exclude "Public","Default","Default User","All Users" | Select-Object -ExpandProperty Name
-    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] User Profile cleanup on $env:ComputerName`:"
+    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] User Profile cleanup:"
     foreach ($userProfile in $userProfiles) {
         Add-Content -Path $logfile -Value "`tUser Profile: $userProfile"
         try{
@@ -179,7 +179,7 @@ function Start-SystemCleanup {
     if($VerboseOption) {
         Start-Transcript -Path $VerboseLogFile -Append
     }
-    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] System cleanup on $env:ComputerName`:"
+    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] System cleanup:"
 
     if($IncludeSystemData) {
         foreach ($folder in $systemTempFolders) {
@@ -228,53 +228,105 @@ function Start-CleanMgr{
         [string]$logfile,
 
         [Parameter(Mandatory=$true,Position=1)]
-        [switch]$VeryLowDisk,
+        [switch]$LowDisk,
 
         [Parameter(Mandatory=$true,Position=2)]
+        [switch]$VeryLowDisk,
+
+        [Parameter(Mandatory=$true,Position=3)]
+        [switch]$ConfirmWarning,
+
+        [Parameter(Mandatory=$true,Position=4)]
         [switch]$AutoClean
     )
 
+    if ($VeryLowDisk -and -not $ConfirmWarning) {
+        $confirmation = Read-Host "VeryLowDisk cleanup is selected. This will clean up the system including critical recovery-Files and remove all files in the Recycle Bin. (Selecting N will revert to -LowDisk)`r`nDo you want to continue? ([Y]es/[N]o/exit)"
+        $validVal=$false
+        while(-not $validVal) {
+            $confirmation = $confirmation.ToLower()
+            switch ($confirmation) {
+                "y" {
+                    $VeryLowDisk = $true
+                    $validVal=$true
+                    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] - VeryLowDisk Warning confirmed"
+                }
+                "n" {
+                    $VeryLowDisk = $false
+                    $LowDisk = $true
+                    $validVal=$true
+                    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] - VeryLowDisk Warning declined, reverting to LowDisk"
+                }
+                "exit" {
+                    Write-Host "Exiting script."
+                    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] - VeryLowDisk Warning declined with 'Exit', exiting script"
+                    $global:LASTEXITCODE = 1
+                    return
+                }
+                Default { $confirmation = Read-Host "`r`nInvalid input. Repeat the confirmation.`r`nDo you want to continue? ([Y]es/[N]o/exit)" }
+            }
+        }
+    }
 
-    if($VeryLowDisk){
-        Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Cleanup on $env:ComputerName"
-        Add-Content -Path $logfile -Value "`t`t> Enabling D3D Shader Cache Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\D3D Shader Cache' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Delivery Optimization Files Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Delivery Optimization Files' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Device Driver Packages Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Device Driver Packages' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Downloaded Program Files Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Downloaded Program Files' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Internet Cache Files Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Internet Cache Files' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling System error memory dump files Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\System error memory dump files' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling System error minidump files Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\System error minidump files' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Temporary Files Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Temporary Files' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Temporary Setup Files Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Temporary Setup Files' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Thumbnail Cache Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Thumbnail Cache' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
-        Add-Content -Path $logfile -Value "`t`t> Enabling Update Cleanup."
-        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Update Cleanup' -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
+
+
+    if($LowDisk -or $VeryLowDisk){
+        $options = @(
+            "D3D Shader Cache",
+            "Delivery Optimization Files",
+            "Diagnostic Data Viewer database files",
+            "Downloaded Program Files",
+            "Internet Cache Files",
+            "Temporary Files",
+            "Temporary Setup Files",
+            "Thumbnail Cache",
+            "Feedback Hub Archive log files",
+            "Offline Pages Files",
+            "System error memory dump files",
+            "System error minidump files",
+            "Old ChkDsk Files",
+            "Windows Error Reporting Files"
+        )
+
+        $approxDuration=15
+        if ($VeryLowDisk) {
+            $options += @(
+                "Update Cleanup",
+                "Device Driver Packages",
+                "Windows Defender",
+                "Upgrade Discarded Files",
+                "Windows ESD installation files",
+                "Windows Reset Log Files",
+                "Windows Upgrade Log Files",
+                "Recycle Bin"
+            )
+            $approxDuration=30
+        }
+
+        Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Cleanup"
+        Add-Content -Path $logfile -Value "`t`t> Enabling the following Cleanup options."
+        foreach ($option in $options) {
+            Add-Content -Path $logfile -Value "`t`t> $option"
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\$option" -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
+        }
+
 
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Executing CleanMgr"
-        Write-Host "Starting CleanMgr.exe,`r`nThis may take a while... (up to 15 minutes)"
+        Write-Host "Starting CleanMgr.exe,`r`nThis may take a while... (up to $approxDuration minutes)"
         Start-Process -FilePath CleanMgr.exe -ArgumentList '/sagerun:901'
         Get-Process -Name cleanmgr,dismhost -ErrorAction SilentlyContinue | Wait-Process
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] CleanMgr Complete"
         Add-Content -Path $logfile -Value "`t`t> removing CleanMgr Automation-Settings"
         Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\*' -Name StateFlags0901 -ErrorAction SilentlyContinue | Remove-ItemProperty -Name StateFlags0901 -ErrorAction SilentlyContinue | Out-Null
 
-        Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Cleaning Recycle Bin"
-        Get-ChildItem 'C:\$Recycle.Bin' -Force | Where-Object { $_.PSIsContainer } | ForEach-Object { Remove-Item "$($_.FullName)\*" -Force -Recurse -ErrorAction SilentlyContinue }
-
+        if ($VeryLowDisk) {
+            Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Cleaning Recycle Bin"
+            Get-ChildItem 'C:\$Recycle.Bin' -Force | Where-Object { $_.PSIsContainer } | ForEach-Object { Remove-Item "$($_.FullName)\*" -Force -Recurse -ErrorAction SilentlyContinue }
+        }
     }
 
-    if($AutoClean){
-        Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Upgrade-Cleanup on $env:ComputerName"
+    if($AutoClean -or $VeryLowDisk){
+        Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Upgrade-Cleanup"
         Write-Host "Starting CleanMgr Upgrade-Cleanup"
         Start-Process -FilePath "C:\Windows\System32\cleanmgr.exe" -ArgumentList "/autoclean" -NoNewWindow -Wait -PassThru | Out-Null
     }
@@ -316,7 +368,7 @@ function Invoke-TempDataCleanup {
 
     USE WITH CAUTION! This will Clean Up all LocalCache folders of all packages in $env:localappdata\Packages.
 
-    .PARAMETER VeryLowDisk
+    .PARAMETER LowDisk
     This Switch will Use the CleanMgr to clean up the system. This can be used with all other Switches.
     Please keep in mind that this may take a while to complete.
     Using this Switch will also set the following switches:
@@ -325,20 +377,45 @@ function Invoke-TempDataCleanup {
     Following CleanMgr Settings will be set:
     - D3D Shader Cache
     - Delivery Optimization Files
-    - Device Driver Packages
     - Downloaded Program Files
     - Internet Cache Files
-    - System error memory dump files
-    - System error minidump files
     - Temporary Files
     - Temporary Setup Files
     - Thumbnail Cache
+    - Feedback Hub Archive log files
+    - Offline Pages Files
+    - System error memory dump files
+    - System error minidump files
+    - Old ChkDsk Files
+    - Windows Error Reporting Files
+
+
+    .PARAMETER VeryLowDisk
+    This Switch will Use the CleanMgr to clean up the system . This can be used with all other Switches.
+    Please keep in mind that this may take a while to complete.
+    Confirmation is required before proceeding with the cleanup (can be bypassed using -ConfirmWarning).
+    If the Prompt is denied, the cleanup will fall back to -LowDisk
+    Using this Switch will also set the following switches:
+    -IncludeSystemData, -IncludeCCMCache, -IncludeIconCache
+
+    This will use the same CleanMgr Settings as -LowDisk, but will also set the following settings:
     - Update Cleanup
+    - Device Driver Packages
+    - Windows Defender
+    - Upgrade Discarded Files
+    - Windows ESD installation files
+    - Windows Reset Log Files
+    - Windows Upgrade Log Files
 
     Additionally the Recycle Bin will be cleaned up.
 
+    This will also perform -AutoClean
+
+    .PARAMETER ConfirmWarning
+    Using this switch will bypass the confirmation prompt of -VeryLowDisk and proceed with the cleanup.
+
     .PARAMETER AutoClean
-    This Switch will Use the CleanMgr to clean up the system. This can be used with all other Switches.
+    Automatically deletes the files that are left behind after you upgrade Windows. This can be used with all other Switches.
     Using this Switch will also set the following switches:
     -IncludeSystemData, -IncludeCCMCache, -IncludeIconCache
 
@@ -430,7 +507,13 @@ function Invoke-TempDataCleanup {
         [switch]$init,
 
         [Parameter(Mandatory=$false)]
+        [switch]$LowDisk,
+
+        [Parameter(Mandatory=$false)]
         [switch]$VeryLowDisk,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$ConfirmWarning,
 
         [Parameter(Mandatory=$false)]
         [switch]$AutoClean
@@ -603,7 +686,7 @@ function Invoke-TempDataCleanup {
     $logfile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup.log"
     $VerboseLogFile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup_Verbose.log"
 
-    if($VeryLowDisk){
+    if($LowDisk -or $VeryLowDisk){
         $IncludeSystemData=$true
         $IncludeCCMCache=$true
         $IncludeIconCache=$true
@@ -651,6 +734,7 @@ function Invoke-TempDataCleanup {
         New-Folder -FolderPath $logdir
     }
 
+    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $ComputerName"
     Write-Host "Cleaning up User Data and Cache"
     if ($remote) {
         Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
@@ -668,11 +752,11 @@ function Invoke-TempDataCleanup {
         }
     }
 
-    if($VeryLowDisk -or $AutoClean){
+    if($LowDisk -or $VeryLowDisk -or $AutoClean){
         if ($remote) {
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-CleanMgr} -ArgumentList $logfile, $VeryLowDisk, $AutoClean
+            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-CleanMgr} -ArgumentList $logfile, $LowDisk, $VeryLowDisk, $ConfirmWarning, $AutoClean
         } else {
-            Start-CleanMgr -logfile $logfile -VeryLowDisk:$VeryLowDisk -AutoClean:$AutoClean
+            Start-CleanMgr -logfile $logfile -LowDisk:$LowDisk -VeryLowDisk:$VeryLowDisk -ConfirmWarning:$ConfirmWarning -AutoClean:$AutoClean
         }
     }
 
@@ -700,9 +784,9 @@ function Invoke-TempDataCleanup {
         $exitFree_bytes = (Get-Volume -DriveLetter C).SizeRemaining
     }
 
-    $additionalFree = "{0:N2}" -f  (($exitFree_bytes - $initFree_bytes)/1GB)
-    Write-Host "`r`nCleanUp Complete`r`nAdditional Free Space: $additionalFree GB"
-    Write-Host "`r`nPlease Restart the Computer to apply all changes!"
+    $additionalFree = "{0:N2}" -f (($exitFree_bytes - $initFree_bytes)/1GB)
+    Write-Host "`r`nCleanUp Complete`r`nAdditional Free Space: $additionalFree GB`r`nTotal Free Space: $("{0:N2}" -f ($exitFree_bytes/1GB)) GB`r`n"
+    Write-Host "`r`nPlease Restart the Computer to finalize the Cleanup!"
 
 }
 

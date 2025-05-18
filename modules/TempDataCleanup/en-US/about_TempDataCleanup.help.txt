@@ -14,15 +14,17 @@ This core function handles the cleanup of temporary files in user profiles and, 
 
 Parameters:
 -----------
-- ComputerName (Mandatory): Specifies the computer where the cleanup will be run. Defaults to the local machine (localhost).
+- ComputerName (Optional): Specifies the computer where the cleanup will be run. Defaults to the local machine (localhost).
 - IncludeSystemData (Optional): When this switch is used, system folders (such as Temp, Prefetch, and SoftwareDistribution) will also be cleaned up.
 - IncludeCCMCache (Optional): When this switch is provided, the cleanup will also include the Configuration Management Cache folder, if it exists.
 - IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
 - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
 - IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
 - IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
-- VeryLowDisk (Optional): Executes CleanMgr with default settings additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+- LowDisk (Optional): Performs a System Cleanup using CleanMgr with basic settings. Additionally performs  `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+- VeryLowDisk (Optional): Performs a System Cleanup as with 'LowDisk' with advanced settings. Additionally clears all Recycle-Bins and runs also -AutoClean
 - AutoClean (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+- ConfirmWarning (Optional): Bypass Confirmation when using 'VeryLowDisk'
 - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
 
 
@@ -60,7 +62,7 @@ Author:
 -------
 - Author: Wolfram Halatschek
 - Contact: wolfram@kMarflow.com
-- Date: 2025-05-09
+- Date: 2025-05-18
 
 
 Warnings:
