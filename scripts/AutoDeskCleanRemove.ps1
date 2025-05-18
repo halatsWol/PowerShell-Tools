@@ -111,7 +111,7 @@ if ( -not $isElevated ) {
         if ($package.Name -ne "Autodesk Access") {
             Write-Host "Uninstalling $($package.Name)"
             try {
-                Uninstall-Package -Name $package.Name -Force #-ErrorAction SilentlyContinue
+                Uninstall-Package -Name $package.Name -Force -ErrorAction SilentlyContinue
             } catch {
                 Write-Warning "Failed to uninstall $($package.Name): $($_.Exception.Message)"
             }
