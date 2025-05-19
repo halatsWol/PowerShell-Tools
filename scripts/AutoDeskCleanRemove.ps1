@@ -13,6 +13,13 @@
 # Usage:        Run this script in an elevated PowerShell session.
 #               PS> <path to script>\CleanRemoveADSK.ps1
 #
+#               Please restart your computer after running this Script and run it
+#               again to ensure all Autodesk residuals are removed.
+#
+#               Please Close the 'Autodesk Genuine Service' Window if it appears.
+#               The AdODIS requires to confirm installation. The Window may be hidden
+#               behind other Windows. Please check if you cannot see it.
+#
 # Warning:      This script is provided "as is" without any warranty of any kind.
 #
 #       !!      The Author of this script is not responsible for any data loss or
