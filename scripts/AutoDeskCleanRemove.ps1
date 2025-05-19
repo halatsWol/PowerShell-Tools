@@ -88,6 +88,7 @@ if ( -not $isElevated ) {
     Write-Host "Running Uninstall Helper for Autodesk products..."
     Write-Warning "Multiiple Windows may appear, please do not close them manually."
     Write-Warning "If a Window 'Autodesk Genuine Service' appears, you can simply close it."
+    Start-Sleep -Seconds 5
     Write-Host "The script will close them automatically after the uninstallation process."
     Write-Host "Please wait..."
     foreach ($folder in $productsSorted) {
@@ -123,6 +124,7 @@ if ( -not $isElevated ) {
     Write-Host "Removing Autodesk ODIS..."
     $AdODISPath = "C:\Program Files\Autodesk\AdODIS\V1\RemoveODIS.exe"
     if (Test-Path -Path $AdODISPath) {
+        Write-Warning "User may be prompted to uninstall Autodesk ODIS in a separate Window. If you cannot see it, please check if it is behind a Window."
         Start-Process -FilePath $AdODISPath -Wait
     }
     # Remove Autodesk Licensing
@@ -224,7 +226,6 @@ if ( -not $isElevated ) {
             }
         } else {
             if (Test-Path -Path $key) {
-                Write-Host "Deleting registry key $key"
                 Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
