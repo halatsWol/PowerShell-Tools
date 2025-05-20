@@ -196,9 +196,8 @@ if ( -not $isElevated ) {
         }
     }
 
-    # "Computer\HKEY_CURRENT_USER\SOFTWARE\Autodesk"
+
     New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS > $null
-    #loop through all user profiles
     $userProfiles = Get-ChildItem "HKU:\" | Where-Object { $_.Name -match "S-1-5-21" -and $_.Name -notmatch "_Classes" }
     foreach ($userProfile in $userProfiles) {
         $autodeskKey = "$($userProfile.PSChildName)\SOFTWARE\Autodesk"
@@ -221,7 +220,7 @@ if ( -not $isElevated ) {
     }
 
     # delete Autodesk registry keys
-    Write-Host "Deleting Autodesk registry keys..."
+    Write-Host "Deleting Autodesk Install/Uninstall registry keys..."
     $autodeskRegistryKeys = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
         "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
