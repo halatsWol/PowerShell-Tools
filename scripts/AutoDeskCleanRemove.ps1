@@ -1,5 +1,5 @@
 #####################################################################################
-# Script Name:  CleanRemoveADSK.ps1
+# Script Name:  AutoDeskCleanRemove.ps1
 # Description:  This script is used to cleanly uninstall all Autodesk products
 #               from a system.
 #
@@ -10,7 +10,7 @@
 #
 # Usage:        Run this script in an elevated PowerShell session.
 #               PS> cd <path to script>
-#               PS> .\CleanRemoveADSK.ps1
+#               PS> .\AutoDeskCleanRemove.ps1
 #
 #               Please restart your computer after running this Script and run it
 #               again to ensure all Autodesk residuals are removed.
