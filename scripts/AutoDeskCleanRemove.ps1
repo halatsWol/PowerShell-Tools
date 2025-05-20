@@ -85,7 +85,7 @@ if ( -not $isElevated ) {
     $productsSorted.Add($UninstallersFolders)
 
     Write-Host "Running Uninstall Helper for Autodesk products..."
-    Write-Warning "Multiiple Windows may appear, please do not close them manually.`r`nThe script will close them automatically after the uninstallation process."
+    Write-Warning "Multiple Windows may appear, please do not close them manually.`r`nThe script will close them automatically after the uninstallation process."
     Write-Host "Please wait..."
     Start-Sleep -Seconds 5
     foreach ($folder in $productsSorted) {
@@ -239,11 +239,11 @@ if ( -not $isElevated ) {
                 # For Uninstall keys, check main properties
                 if ($key -like "*Uninstall*") {
                     $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
-                    if ($props.DisplayName -match "Autodesk" -or
+                    if ($null -ne $props -and $($props.DisplayName -match "Autodesk" -or
                         $props.UninstallString -match "Autodesk" -or
                         $props.InstallLocation -match "Autodesk" -or
                         $props.Publisher -match "Autodesk" -or
-                        $props.DisplayIcon -match "Autodesk") {
+                        $props.DisplayIcon -match "Autodesk")) {
                         $shouldRemove = $true
                     }
                 }
@@ -251,18 +251,18 @@ if ( -not $isElevated ) {
                 # For Installer\Products, check InstallProperties subkey
                 if (-not $shouldRemove -and $key -like "*Products*") {
                     $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
-                    if ( $props.ProductName -match "Autodesk" ) {
+                    if ( $null -ne $props -and $($props.ProductName -match "Autodesk") ) {
                         $shouldRemove = $true
                     } else {
                         $installPropsPath = Join-Path -Path $subkeyPath -ChildPath "InstallProperties"
                         if (Test-Path $installPropsPath) {
                             $props = Get-ItemProperty -Path $installPropsPath -ErrorAction SilentlyContinue
-                            if ($props.DisplayName -match "Autodesk" -or
+                            if ( $null -ne $props -and $($props.DisplayName -match "Autodesk" -or
                                 $props.UninstallString -match "Autodesk" -or
                                 $props.InstallLocation -match "Autodesk" -or
                                 $props.Publisher -match "Autodesk" -or
                                 $props.ProductName -match "Autodesk"-or
-                                $props.DisplayIcon -match "Autodesk") {
+                                $props.DisplayIcon -match "Autodesk")) {
                                 $shouldRemove = $true
                             }
                         }
@@ -283,8 +283,8 @@ if ( -not $isElevated ) {
     $notification.BalloonTipTitle = "Autodesk Uninstall Completed..."
     $notification.BalloonTipText = "Please follow the instruction in the PowerShell-Window."
     $notification.Visible = $true
-    $notification.ShowBalloonTip(6000)
-    $notification.Dispose()
+    $notification.ShowBalloonTip(30000)
+
 
     Add-Type -AssemblyName Microsoft.VisualBasic
     [Microsoft.VisualBasic.Interaction]::AppActivate($PID)
@@ -294,7 +294,7 @@ if ( -not $isElevated ) {
     Write-Host " Please restart your computer to complete the uninstallation process." -ForegroundColor Yellow
     Write-Host " It is recommended to run this script a second time after the restart to ensure all Autodesk products are removed." -ForegroundColor Yellow
     Pause
-
+    $notification.Dispose()
     Read-Host -Prompt "`r`n Would you like to restart your computer now? (Y/N)" | ForEach-Object {
         if ($_ -match "y") {
             Restart-Computer -Force
