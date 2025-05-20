@@ -1,6 +1,4 @@
 #####################################################################################
-# SCRIPT NOT YET TESTED!
-#
 # Script Name:  CleanRemoveADSK.ps1
 # Description:  This script is used to cleanly uninstall all Autodesk products
 #               from a system.
