@@ -209,6 +209,7 @@ if ( -not $isElevated ) {
             Remove-Item -Path $autodeskKey -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+    Remove-PSDrive -Name HKU -ErrorAction SilentlyContinue
 
 
     # uninstall Autodesk Genuine Service
