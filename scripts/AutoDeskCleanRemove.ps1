@@ -203,7 +203,7 @@ if ( -not $isElevated ) {
     #loop through all user profiles
     $userProfiles = Get-ChildItem "HKU:\" | Where-Object { $_.Name -match "S-1-5-21" -and $_.Name -notmatch "_Classes" }
     foreach ($userProfile in $userProfiles) {
-        $autodeskKey = "HKU:\$($userProfile.Name)\SOFTWARE\Autodesk"
+        $autodeskKey = "$($userProfile.PSChildName)\SOFTWARE\Autodesk"
         if (Test-Path -Path $autodeskKey) {
             Write-Host "Deleting registry key $autodeskKey"
             Remove-Item -Path $autodeskKey -Recurse -Force -ErrorAction SilentlyContinue
