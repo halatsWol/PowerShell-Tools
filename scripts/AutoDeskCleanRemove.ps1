@@ -6,19 +6,17 @@
 #               from a system.
 #
 # Author:       Halatschek Wolfram
-# Date:         2025-05-18
-# Version:      0.9
+# Date:         2025-05-20
+# Version:      1.0
 # Notes:        This script requires administrative privileges to run.
 #
 # Usage:        Run this script in an elevated PowerShell session.
-#               PS> <path to script>\CleanRemoveADSK.ps1
+#               PS> cd <path to script>
+#               PS> .\CleanRemoveADSK.ps1
 #
 #               Please restart your computer after running this Script and run it
 #               again to ensure all Autodesk residuals are removed.
 #
-#               Please Close the 'Autodesk Genuine Service' Window if it appears.
-#               The AdODIS requires to confirm installation. The Window may be hidden
-#               behind other Windows. Please check if you cannot see it.
 #
 # Warning:      This script is provided "as is" without any warranty of any kind.
 #
@@ -37,31 +35,27 @@ if ( -not $isElevated ) {
 } else {
     Write-Host "`r`nThis script will remove all Autodesk products from your system."
     Write-Host "Please ensure that you have closed all Autodesk applications before proceeding."
+    Write-Host "This script has not been tested with Fusion 360. If you have Fusion 360 installed, please uninstall it manually before running this script."
+    Write-Warning "Please note that this may prompt OneDrive regarding the deletion of files. This is to be expected."
     Pause
-    Write-Host "`r`n"
-    Write-Host "Stopping all Autodesk Services and Processes..."
     # Stop all Autodesk Services
     Get-Process | Where-Object { $_.Description -match "Autodesk" -or $_.Description -match "ADSK" -or $_.Description -match "AutoCAD" -or $_.Description -match "Inventor" } | Stop-Process -Force
     Get-Service | Where-Object { $_.DisplayName -match "Autodesk" -or $_.DisplayName -match "ADSK"  } | Stop-Service -Force -ErrorAction SilentlyContinue
-    Get-Process | Where-Object { $_.Description -match "Autodesk" -or $_.Description -match "ADSK" -or $_.Description -match "AutoCAD" -or $_.Description -match "Inventor" } | Stop-Process -Force
     # Stop all Autodesk Tasks
     $tasks = Get-WmiObject -Query "SELECT * FROM Win32_Process WHERE Name LIKE '%Autodesk%' OR Name LIKE '%ADSK%'"
     foreach ($task in $tasks) {
         try {
             Stop-Process -Id $task.ProcessId -Force -ErrorAction Continue
         } catch {
-        Write-Warning "Failed to terminate process $($task.Name) (PID: $($task.ProcessId)): $($_.Exception.Message)"
+            Write-Warning "Failed to terminate process $($task.Name) (PID: $($task.ProcessId)): $($_.Exception.Message)"
+        }
     }
-    }
-
-    Write-Host "Removing AutoDesk Language Packs..."
-    get-Package | Where-Object { $_.name -match "autodesk" -and $_.name -match "Language Pack" } | Uninstall-Package -Force -ErrorAction SilentlyContinue
 
     $UninstallersPath="C:\ProgramData\Autodesk\Uninstallers"
     $UninstallHelperExeName="AdskUninstallHelper.exe"
 
     # get folders in the Uninstallers path
-    $UninstallersFolders = Get-ChildItem -Path $UninstallersPath -Directory -ea SilentlyContinue | Where-Object { $_.Name -ne "metadata" }
+    $UninstallersFolders = Get-ChildItem -Path $UninstallersPath -Directory -ea SilentlyContinue | Where-Object { $_.Name -ne "metadata" -and $_.Name -ne "Autodesk Access"}
 
     $productsSorted = New-Object System.Collections.Generic.List[System.Object]
     # put folders with Object Enabler in the ProductsSorted array
@@ -93,11 +87,9 @@ if ( -not $isElevated ) {
     $productsSorted.Add($UninstallersFolders)
 
     Write-Host "Running Uninstall Helper for Autodesk products..."
-    Write-Warning "Multiiple Windows may appear, please do not close them manually."
-    Write-Warning "If a Window 'Autodesk Genuine Service' appears, you can simply close it."
-    Start-Sleep -Seconds 5
-    Write-Host "The script will close them automatically after the uninstallation process."
+    Write-Warning "Multiiple Windows may appear, please do not close them manually.`r`nThe script will close them automatically after the uninstallation process."
     Write-Host "Please wait..."
+    Start-Sleep -Seconds 5
     foreach ($folder in $productsSorted) {
         if ($null -ne $folder) {
             $folderName = $folder.Name
@@ -105,40 +97,61 @@ if ( -not $isElevated ) {
             if (Test-Path -Path $UninstallHelperExePath) {
                 Write-Host "Running Uninstall Helper for $folderName"
                 Start-Process -FilePath $UninstallHelperExePath -Wait -NoNewWindow -ea SilentlyContinue
+                # close all message_router.exe if it is running
+                Get-Process -Name "message_router" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             } else {
                 Write-Warning "Uninstall Helper not found for $folderName"
             }
         }
     }
 
-    # Uninstall Autodesk products using PowerShell PackageManagement
-    Write-Host "Uninstalling remaining Autodesk products using PowerShell PackageManagement..."
-    $packages = Get-Package | Where-Object { $_.Name -match "Autodesk" }
-    foreach ($package in $packages) {
-        # ignore Autodesk Access
-        if ($package.Name -ne "Autodesk Access") {
-            Write-Host "Uninstalling $($package.Name)"
-            try {
-                Uninstall-Package -Name $package.Name -Force -ErrorAction SilentlyContinue
-            } catch {
-                Write-Warning "Failed to uninstall $($package.Name): $($_.Exception.Message)"
-            }
-        }
 
-    }
-
-    # Remove AdODIS
-    Write-Host "Removing Autodesk ODIS..."
     $AdODISPath = "C:\Program Files\Autodesk\AdODIS\V1\RemoveODIS.exe"
     if (Test-Path -Path $AdODISPath) {
-        Write-Warning "User may be prompted to uninstall Autodesk ODIS in a separate Window. If you cannot see it, please check if it is behind a Window."
-        Start-Process -FilePath $AdODISPath -Wait
+        Write-Host "Removing Autodesk ODIS..."
+        Start-Process -FilePath $AdODISPath -ArgumentList "--mode unattended" -Wait
     }
+
+    # Remove Autodesk Access
+    $AdskAccessPath = "C:\Program Files\Autodesk\AdODIS\V1\Access\RemoveAccess.exe"
+    if (Test-Path -Path $AdskAccessPath) {
+        Write-Host "Removing Autodesk Access..."
+        Start-Process -FilePath $AdskAccessPath -ArgumentList "--mode unattended" -Wait
+    }
+
+    # run Autodesk Access uninstall helper
+    $AdskAccessUninstHelper = "C:\ProgramData\Autodesk\Uninstallers\Autodesk Access\AdskUninstallHelper.exe"
+    if ( Test-Path -Path $AdskAccessUninstHelper ) {
+        Write-Host "Running Autodesk Access uninstall helper..."
+        Start-Process -FilePath $AdskAccessUninstHelper -Wait
+    }
+
     # Remove Autodesk Licensing
-    Write-Host "Removing Autodesk Licensing..."
     $AdskLicensingPath = "C:\Program Files (x86)\Common Files\Autodesk Shared\AdskLicensing\uninstall.exe"
     if (Test-Path -Path $AdskLicensingPath) {
-        Start-Process -FilePath $AdskLicensingPath -Wait
+        Write-Host "Removing Autodesk Licensing..."
+        Start-Process -FilePath $AdskLicensingPath -ArgumentList "--mode unattended" -Wait
+    }
+
+    # Remove Autodesk Identity Manager
+    $AdskIdentityManagerPath = "C:\Program Files\Autodesk\AdskIdentityManager\uninstall.exe"
+    if (Test-Path -Path $AdskIdentityManagerPath) {
+        Write-Host "Removing Autodesk Identity Manager..."
+        Start-Process -FilePath $AdskIdentityManagerPath -ArgumentList "--mode unattended" -Wait
+    }
+
+    # Remove in C:\ProgramData\FLEXnet the files starting with adsk
+    $flexnetPath = "C:\ProgramData\FLEXnet"
+    if ( Test-Path -Path $flexnetPath) {
+        Write-Host "Removing Autodesk FLEXnet files..."
+        $flexnetFiles = Get-ChildItem -Path $flexnetPath -File -Recurse -ea SilentlyContinue | Where-Object { $_.Name -match "^adsk" }
+        foreach ($file in $flexnetFiles) {
+            try {
+                Remove-Item -Path $file.FullName -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-Warning "Failed to remove $($file.FullName): $($_.Exception.Message)"
+            }
+        }
     }
 
     # delete Autodesk folders
@@ -173,12 +186,44 @@ if ( -not $isElevated ) {
             Remove-Item -Path $folder -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+    # delete reg keys
+    $autodeskRegistryKeys = @(
+        "HKLM:\SOFTWARE\Autodesk",
+        "HKLM:\SOFTWARE\WOW6432Node\Autodesk"
+    )
+    foreach ($key in $autodeskRegistryKeys) {
+        if (Test-Path -Path $key) {
+            Write-Host "Deleting registry key $key"
+            Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # "Computer\HKEY_CURRENT_USER\SOFTWARE\Autodesk"
+    New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS > $null
+    #loop through all user profiles
+    $userProfiles = Get-ChildItem "HKU:\" | Where-Object { $_.Name -match "S-1-5-21" -and $_.Name -notmatch "_Classes" }
+    foreach ($userProfile in $userProfiles) {
+        $autodeskKey = "HKU:\$($userProfile.Name)\SOFTWARE\Autodesk"
+        if (Test-Path -Path $autodeskKey) {
+            Write-Host "Deleting registry key $autodeskKey"
+            Remove-Item -Path $autodeskKey -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+
+    # uninstall Autodesk Genuine Service
+
+    Stop-Service -Name "GenuineService" -Force -ErrorAction SilentlyContinue
+    $adskGenuineSeviceGUID = (Get-WmiObject -Query "SELECT * FROM Win32_Product WHERE Name LIKE 'Autodesk Genuine Service%'").IdentifyingNumber
+    if ($adskGenuineSeviceGUID) {
+        Write-Host "Uninstalling Autodesk Genuine Service..."
+        Write-Host "Uninstalling Autodesk Genuine Service with GUID: $adskGenuineSeviceGUID"
+        Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $adskGenuineSeviceGUID /qn" -Wait
+    }
 
     # delete Autodesk registry keys
     Write-Host "Deleting Autodesk registry keys..."
     $autodeskRegistryKeys = @(
-        "HKLM:\SOFTWARE\Autodesk",
-        "HKLM:\SOFTWARE\WOW6432Node\Autodesk",
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
         "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
         "HKLM:\SOFTWARE\Classes\Installer\Products"
@@ -186,68 +231,72 @@ if ( -not $isElevated ) {
     )
 
     foreach ($key in $autodeskRegistryKeys) {
-        if ($key -like "*Uninstall*" -or $key -like "*Products*") {
-            if (Test-Path -Path $key) {
-                $subkeys = Get-ChildItem -Path $key -ErrorAction SilentlyContinue
-                foreach ($subkey in $subkeys) {
-                    $subkeyPath = Join-Path -Path $key -ChildPath $subkey.PSChildName
-                    $shouldRemove = $false
+        if (Test-Path -Path $key) {
+            $subkeys = Get-ChildItem -Path $key -ErrorAction SilentlyContinue
+            foreach ($subkey in $subkeys) {
+                $subkeyPath = Join-Path -Path $key -ChildPath $subkey.PSChildName
+                $shouldRemove = $false
 
-                    # For Uninstall keys, check main properties
-                    if ($key -like "*Uninstall*") {
-                        $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
-                        if ($props.DisplayName -match "Autodesk" -or
-                            $props.UninstallString -match "Autodesk" -or
-                            $props.InstallLocation -match "Autodesk" -or
-                            $props.Publisher -match "Autodesk" -or
-                            $props.DisplayIcon -match "Autodesk") {
-                            $shouldRemove = $true
-                        }
+                # For Uninstall keys, check main properties
+                if ($key -like "*Uninstall*") {
+                    $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
+                    if ($props.DisplayName -match "Autodesk" -or
+                        $props.UninstallString -match "Autodesk" -or
+                        $props.InstallLocation -match "Autodesk" -or
+                        $props.Publisher -match "Autodesk" -or
+                        $props.DisplayIcon -match "Autodesk") {
+                        $shouldRemove = $true
                     }
+                }
 
-                    # For Installer\Products, check InstallProperties subkey
-                    if (-not $shouldRemove -and $key -like "*Products*") {
-                        $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
-                        if ( $props.ProductName -match "Autodesk" ) {
-                            $shouldRemove = $true
-                        } else {
-                            $installPropsPath = Join-Path -Path $subkeyPath -ChildPath "InstallProperties"
-                            if (Test-Path $installPropsPath) {
-                                $props = Get-ItemProperty -Path $installPropsPath -ErrorAction SilentlyContinue
-                                if ($props.DisplayName -match "Autodesk" -or
-                                    $props.UninstallString -match "Autodesk" -or
-                                    $props.InstallLocation -match "Autodesk" -or
-                                    $props.Publisher -match "Autodesk" -or
-                                    $props.ProductName -match "Autodesk"-or
-                                    $props.DisplayIcon -match "Autodesk") {
-                                    $shouldRemove = $true
-                                }
+                # For Installer\Products, check InstallProperties subkey
+                if (-not $shouldRemove -and $key -like "*Products*") {
+                    $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
+                    if ( $props.ProductName -match "Autodesk" ) {
+                        $shouldRemove = $true
+                    } else {
+                        $installPropsPath = Join-Path -Path $subkeyPath -ChildPath "InstallProperties"
+                        if (Test-Path $installPropsPath) {
+                            $props = Get-ItemProperty -Path $installPropsPath -ErrorAction SilentlyContinue
+                            if ($props.DisplayName -match "Autodesk" -or
+                                $props.UninstallString -match "Autodesk" -or
+                                $props.InstallLocation -match "Autodesk" -or
+                                $props.Publisher -match "Autodesk" -or
+                                $props.ProductName -match "Autodesk"-or
+                                $props.DisplayIcon -match "Autodesk") {
+                                $shouldRemove = $true
                             }
                         }
                     }
-
-                    if ($shouldRemove) {
-                        Remove-Item -Path $subkeyPath -Recurse -Force -ErrorAction SilentlyContinue
-                    }
                 }
-            }
-        } else {
-            if (Test-Path -Path $key) {
-                Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
+
+                if ($shouldRemove) {
+                    Remove-Item -Path $subkeyPath -Recurse -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
 
-    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "Autodesk Access" -Force -ErrorAction SilentlyContinue
-    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "Autodesk Desktop App" -Force -ErrorAction SilentlyContinue
-    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "Autodesk Sync" -Force -ErrorAction SilentlyContinue
+    $notification = New-Object System.Windows.Forms.NotifyIcon
+    $notification.Icon = [System.Drawing.SystemIcons]::Information
+    $notification.BalloonTipTitle = "Autodesk Uninstall Completed..."
+    $notification.BalloonTipText = "Please follow the instruction in the PowerShell-Window."
+    $notification.Visible = $true
+    $notification.ShowBalloonTip(6000)
+    $notification.Dispose()
 
-    Write-Host "`r`nAutodesk products have been uninstalled successfully."
-    Write-Host "Please restart your computer to complete the uninstallation process."
-    Write-Host "It is recommended to run this script again after the restart to ensure all Autodesk products are removed."
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    [Microsoft.VisualBasic.Interaction]::AppActivate($PID)
+
+
+    Write-Host "`r`n Autodesk products have been uninstalled successfully." -ForegroundColor Green
+    Write-Host " Please restart your computer to complete the uninstallation process." -ForegroundColor Yellow
+    Write-Host " It is recommended to run this script a second time after the restart to ensure all Autodesk products are removed." -ForegroundColor Yellow
     Pause
 
-    Read-Host -Prompt "`r`nWould you like to restart your computer now? (Y/N)" | ForEach-Object {
+    Read-Host -Prompt "`r`n Would you like to restart your computer now? (Y/N)" | ForEach-Object {
         if ($_ -match "y") {
             Restart-Computer -Force
         } elseif($_ -match "n") {
