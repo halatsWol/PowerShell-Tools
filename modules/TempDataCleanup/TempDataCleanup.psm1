@@ -307,7 +307,7 @@ function Start-CleanMgr{
         Add-Content -Path $logfile -Value "`t`t> Enabling the following Cleanup options."
         foreach ($option in $options) {
             Add-Content -Path $logfile -Value "`t`t> $option"
-            New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\$option" -Name StateFlags0901 -Value 2 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\$option" -Name StateFlags0901 -Value 2 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
         }
 
 
