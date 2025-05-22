@@ -255,29 +255,39 @@ if ( -not $isElevated ) {
                 # For Uninstall keys, check main properties
                 if ($key -like "*Uninstall*") {
                     $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
-                    if ($null -ne $props -and $($props.DisplayName -match "^Autodesk" -or
-                        $props.UninstallString -match "^Autodesk" -or
-                        $props.InstallLocation -match "^Autodesk" -or
-                        $props.Publisher -match "^Autodesk" -or
-                        $props.DisplayIcon -match "^Autodesk")) {
+                    if (
+                        $null -ne $props -and
+                        (
+                            $props.DisplayName -match "^Autodesk" -or
+                            $props.UninstallString -match "^Autodesk" -or
+                            $props.InstallLocation -match "^Autodesk" -or
+                            $props.Publisher -match "^Autodesk" -or
+                            $props.DisplayIcon -match "^Autodesk"
+                        )
+                    ) {
                         $shouldRemove = $true
                     }
                 }
                 # For Installer/Products, check InstallProperties subkey
                 if (-not $shouldRemove -and $key -like "*Products*") {
                     $props = Get-ItemProperty -Path $subkeyPath -ErrorAction SilentlyContinue
-                    if ( $null -ne $props -and $($props.ProductName -match "^Autodesk") ) {
+                    if ( $null -ne $props -and $props.ProductName -match "^Autodesk" ) {
                         $shouldRemove = $true
                     } else {
                         $installPropsPath = Join-Path -Path $subkeyPath -ChildPath "InstallProperties"
                         if (Test-Path $installPropsPath) {
                             $props = Get-ItemProperty -Path $installPropsPath -ErrorAction SilentlyContinue
-                            if ( $null -ne $props -and $($props.DisplayName -match "^Autodesk" -or
-                                $props.UninstallString -match "^Autodesk" -or
-                                $props.InstallLocation -match "^Autodesk" -or
-                                $props.Publisher -match "^Autodesk" -or
-                                $props.ProductName -match "^Autodesk"-or
-                                $props.DisplayIcon -match "^Autodesk")) {
+                            if (
+                                $null -ne $props -and
+                                (
+                                    $props.DisplayName -match "^Autodesk" -or
+                                    $props.UninstallString -match "^Autodesk" -or
+                                    $props.InstallLocation -match "^Autodesk" -or
+                                    $props.Publisher -match "^Autodesk" -or
+                                    $props.ProductName -match "^Autodesk"-or
+                                    $props.DisplayIcon -match "^Autodesk"
+                                )
+                            ) {
                                 $shouldRemove = $true
                             }
                         }
