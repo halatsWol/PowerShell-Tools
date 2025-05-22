@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "PowerShell-Tools - Modules Suite"
-#define MyAppVersion "v1.2"
+#define MyAppVersion "v1.2.1"
 #define MyAppPublisher "Marflow Software"
 #define MyAppURL "https://www.kMarflow.com/"
 #define BaseDir "C:\Program Files\WindowsPowerShell\Modules"
@@ -37,6 +37,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Dirs]
 Name: "{#BaseDir}\TempDataCleanup"
 Name: "{#BaseDir}\RepairSystem"
+Name: "{#BaseDir}\Shortcuts"
 
 [Files]
 Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psm1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
@@ -45,5 +46,8 @@ Source: "{#SourcePath}\modules\TempDataCleanup\en-US\*"; DestDir: "{#BaseDir}\Te
 Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psd1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Repair-System\en-US\*"; DestDir: "{#BaseDir}\RepairSystem\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psm1"; DestDir: "{#BaseDir}\Shortcuts"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psd1"; DestDir: "{#BaseDir}\Shortcuts"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\Shortcuts\en-US\*"; DestDir: "{#BaseDir}\Shortcuts\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
