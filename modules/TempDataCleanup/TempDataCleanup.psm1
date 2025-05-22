@@ -272,15 +272,16 @@ function Start-CleanMgr{
 
     if($LowDisk -or $VeryLowDisk){
         $options = @(
+            "Active Setup Temp Folders"
             "D3D Shader Cache",
             "Delivery Optimization Files",
             "Diagnostic Data Viewer database files",
             "Downloaded Program Files",
+            "Feedback Hub Archive log files",
             "Internet Cache Files",
             "Temporary Files",
             "Temporary Setup Files",
             "Thumbnail Cache",
-            "Feedback Hub Archive log files",
             "Offline Pages Files",
             "System error memory dump files",
             "System error minidump files",
@@ -288,7 +289,7 @@ function Start-CleanMgr{
             "Windows Error Reporting Files"
         )
 
-        $approxDuration=15
+        $CleanMaxDurationVal=15
         if ($VeryLowDisk) {
             $options += @(
                 "Update Cleanup",
@@ -300,8 +301,9 @@ function Start-CleanMgr{
                 "Windows Upgrade Log Files",
                 "Recycle Bin"
             )
-            $approxDuration=30
+            $CleanMaxDurationVal=30
         }
+
 
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Cleanup"
         Add-Content -Path $logfile -Value "`t`t> Enabling the following Cleanup options."
@@ -310,10 +312,36 @@ function Start-CleanMgr{
             New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\$option" -Name StateFlags0901 -Value 2 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
         }
 
-
+        $CleanMaxDuration = New-TimeSpan -Minutes $CleanMaxDurationVal
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Executing CleanMgr"
-        Write-Host "Starting CleanMgr.exe,`r`nThis may take a while... (up to $approxDuration minutes)"
-        Start-Process -FilePath CleanMgr.exe -ArgumentList '/sagerun:901'
+        Write-Host "Starting CleanMgr.exe,`r`nThis may take a while... (up to $($CleanMaxDuration.TotalMinutes) minutes)"
+        #Start-Process -FilePath CleanMgr.exe -ArgumentList '/sagerun:901'
+        # Start CleanMgr.exe with arguments and get the process object
+        $process = Start-Process -FilePath "CleanMgr.exe" -ArgumentList '/sagerun:901' -PassThru
+        $CleanMgrStartTime = Get-Date
+
+        # Monitor the process
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 10
+
+            $elapsed = (Get-Date) - $CleanMgrStartTime
+            if ($elapsed -gt $CleanMaxDuration) {
+                $cleanMgrStucknotify = "CleanMgr.exe has been running for more than $($CleanMaxDuration.TotalMinutes) minutes. Stopping it..."
+                Add-Content -Path $logfile -Value "!!`t`t> $cleanMgrStucknotify"
+                Write-Warning $cleanMgrStucknotify
+                try {
+                    $process.Kill()
+                    $cleanMgrStuckTerminate = "CleanMgr.exe terminated."
+                    Add-Content -Path $logfile -Value "!!`t`t> $cleanMgrStuckTerminate"
+                    Write-Warning $cleanMgrStuckTerminate
+                } catch {
+                    $cleanMgrStuckTerminateFail = "Failed to terminate CleanMgr.exe: $_"
+                    Add-Content -Path $logfile -Value "!!`t`t> $cleanMgrStuckTerminateFail"
+                    Write-Warning $cleanMgrStuckTerminateFail
+                }
+                break
+            }
+        }
         Get-Process -Name cleanmgr,dismhost -ErrorAction SilentlyContinue | Wait-Process
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] CleanMgr Complete"
         Add-Content -Path $logfile -Value "`t`t> removing CleanMgr Automation-Settings"
@@ -327,8 +355,33 @@ function Start-CleanMgr{
 
     if($AutoClean -or $VeryLowDisk){
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Upgrade-Cleanup"
-        Write-Host "Starting CleanMgr Upgrade-Cleanup"
+        $CleanMaxDurationVal = 10
+        $CleanMaxDuration = New-TimeSpan -Minutes $CleanMaxDurationVal
+        Write-Host "Starting CleanMgr Upgrade-Cleanup,`r`nThis may take a while... (up to $($CleanMaxDuration.TotalMinutes) minutes)"
         Start-Process -FilePath "C:\Windows\System32\cleanmgr.exe" -ArgumentList "/autoclean" -NoNewWindow -Wait -PassThru | Out-Null
+
+        $CleanMgrStartTime = Get-Date
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 10
+
+            $elapsed = (Get-Date) - $CleanMgrStartTime
+            if ($elapsed -gt $CleanMaxDuration) {
+                $cleanMgrStucknotify = "CleanMgr.exe has been running for more than $($CleanMaxDuration.TotalMinutes) minutes. Stopping it..."
+                Add-Content -Path $logfile -Value "!!`t`t> $cleanMgrStucknotify"
+                Write-Warning $cleanMgrStucknotify
+                try {
+                    $process.Kill()
+                    $cleanMgrStuckTerminate = "CleanMgr.exe terminated."
+                    Add-Content -Path $logfile -Value "!!`t`t> $cleanMgrStuckTerminate"
+                    Write-Warning $cleanMgrStuckTerminate
+                } catch {
+                    $cleanMgrStuckTerminateFail = "Failed to terminate CleanMgr.exe: $_"
+                    Add-Content -Path $logfile -Value "!!`t`t> $cleanMgrStuckTerminateFail"
+                    Write-Warning $cleanMgrStuckTerminateFail
+                }
+                break
+            }
+        }
     }
 }
 
