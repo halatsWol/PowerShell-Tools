@@ -298,12 +298,15 @@ function Start-CleanMgr{
                 "Upgrade Discarded Files",
                 "Windows ESD installation files",
                 "Windows Reset Log Files",
-                "Windows Upgrade Log Files",
-                "Recycle Bin"
+                "Windows Upgrade Log Files"
             )
             $CleanMaxDurationVal=30
         }
 
+        if ($VeryLowDisk) {
+            Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Cleaning Recycle Bin"
+            Remove-Item -Path 'C:\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue
+        }
 
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Cleanup"
         Add-Content -Path $logfile -Value "`t`t> Enabling the following Cleanup options."
@@ -347,10 +350,6 @@ function Start-CleanMgr{
         Add-Content -Path $logfile -Value "`t`t> removing CleanMgr Automation-Settings"
         Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\*' -Name StateFlags0901 -ErrorAction SilentlyContinue | Remove-ItemProperty -Name StateFlags0901 -ErrorAction SilentlyContinue | Out-Null
 
-        if ($VeryLowDisk) {
-            Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Cleaning Recycle Bin"
-            Get-ChildItem 'C:\$Recycle.Bin' -Force | Where-Object { $_.PSIsContainer } | ForEach-Object { Remove-Item "$($_.FullName)\*" -Force -Recurse -ErrorAction SilentlyContinue }
-        }
     }
 
     if($AutoClean -or $VeryLowDisk){
