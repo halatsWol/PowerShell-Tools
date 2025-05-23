@@ -215,10 +215,10 @@ function Invoke-SCCMCleanup {
 
     Write-Host "executing SCCM Cleanup"
     $returnVal=0
-    if (Test-Path -Path "$env:windir\ccmcache") {
+    if (Test-Path -Path "C:\Windows\ccmcache") {
         try{
-            Remove-Item -Path "$env:windir\ccmcache\*" -Recurse -Force
-            Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$env:windir\ccmcache\ cleaned`r`n"
+            Remove-Item -Path "\\?\C:\Windows\ccmcache\*" -Recurse -Force
+            Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tC:\Windows\ccmcache\ cleaned`r`n"
             $returnVal = 0
         } catch {
             $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
@@ -233,10 +233,10 @@ function Invoke-SCCMCleanup {
         $returnVal = 0
     }
 
-    if (Test-Path -Path "$env:windir\SoftwareDistribution\Download") {
+    if (Test-Path -Path "C:\Windows\SoftwareDistribution\Download") {
         try{
-            Remove-Item -Path "$env:windir\SoftwareDistribution\Download\*" -Recurse -Force
-            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$env:windir\SoftwareDistribution\Download\ cleaned`r`n"
+            Remove-Item -Path "\\?\C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force
+            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tC:\Windows\SoftwareDistribution\Download\ cleaned`r`n"
             $returnVal = 0
         } catch {
             $errorMessage = "An error occurred while Cleaning SoftwareDistribution\Download: `r`n$_"
@@ -271,8 +271,8 @@ function Invoke-WindowsUpdateCleanup {
     Write-Host "Starting Windows Update Cleanup..."
     $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
     $servicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
-    $softwareDistributionPath = "$Env:systemroot\SoftwareDistribution"
-    $catroot2Path = "$Env:systemroot\system32\catroot2"
+    $softwareDistributionPath = "C:\Windows\SoftwareDistribution"
+    $catroot2Path = "C:\Windows\system32\catroot2"
     $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
     $catroot2BackupPath = "$catroot2Path.bak"
     $softDist = $false
@@ -285,7 +285,7 @@ function Invoke-WindowsUpdateCleanup {
     if (Test-Path -Path $softwareDistributionBackupPath) {
         Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
         try{
-            Remove-Item -Path $softwareDistributionBackupPath -Recurse -Force
+            Remove-Item -Path "\\?\$softwareDistributionBackupPath" -Recurse -Force
         } catch {
             $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
@@ -314,7 +314,7 @@ function Invoke-WindowsUpdateCleanup {
     if (Test-Path -Path $catroot2BackupPath) {
         Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
         try{
-            Remove-Item -Path $catroot2BackupPath -Recurse -Force
+            Remove-Item -Path "\\?\$catroot2BackupPath" -Recurse -Force
         } catch {
             $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
@@ -392,8 +392,8 @@ function Start-ZipFileCreation {
     )
 
     try {
-        $cbsLog = "$env:windir\Logs\CBS\CBS.log"
-        $dismLog = "$env:windir\Logs\dism\dism.log"
+        $cbsLog = "C:\Windows\Logs\CBS\CBS.log"
+        $dismLog = "C:\Windows\Logs\dism\dism.log"
         $filesToZip = @()
 
         # Copy CBS.log to the temporary directory if it exists

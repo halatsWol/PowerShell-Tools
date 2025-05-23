@@ -65,7 +65,7 @@ function Start-UserCleanup {
                 $path = "C:\Users\$userProfile$folder"
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t> $path"
-                    Remove-Item -Path "$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path "\\?\$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
                 }
 
             }
@@ -74,7 +74,7 @@ function Start-UserCleanup {
                     $path = "C:\Users\$userProfile$folder"
                     if (Test-Path $path) {
                         Add-Content -Path $logfile -Value "`t`t> $path"
-                        Remove-Item -Path "$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                        Remove-Item -Path "\\?\$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
                     }
                 }
             }
@@ -185,7 +185,7 @@ function Start-SystemCleanup {
         foreach ($folder in $systemTempFolders) {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "\\?\$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -197,7 +197,7 @@ function Start-SystemCleanup {
         foreach ($folder in $sysReportingDirs) {
             if (Test-Path $folder) {
                 Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "\\?\$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
             } else {
                 Add-Content -Path $logfile -Value "`t`t> $path (not found)"
             }
@@ -210,7 +210,7 @@ function Start-SystemCleanup {
     if($IncludeCCMCache) {
         if (Test-Path $ccmCachePath) {
             Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
-            Remove-Item -Path "$ccmCachePath\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "\\?\$ccmCachePath\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
         } else {
             Add-Content -Path $logfile -Value "`t`t> $path (not found)"
         }
