@@ -334,7 +334,7 @@ function Invoke-WindowsUpdateCleanup {
             $cat2 = $true
         } catch {
             $cat2Err= "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
-            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
+            Add-Content -Path $updateCleanupLog -Value "$cat2Err"
             Write-Error $cat2Err
             Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
             return 1
@@ -343,6 +343,21 @@ function Invoke-WindowsUpdateCleanup {
         Write-Verbose "catroot2 folder does not exist. No need to rename."
     }
     Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
+    Write-Host "Starting Windows Update Troubleshooter..."
+    $updtTrblShootMsg="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tWindows Update Troubleshooting Pack started."
+    Add-Content -Path $updateCleanupLog -Value "$updtTrblShootMsg"
+    Write-Verbose $updtTrblShootMsg
+
+    try {
+        Get-TroubleshootingPack -Path C:\Windows\diagnostics\system\WindowsUpdate | Invoke-TroubleshootingPack -Unattended
+    }
+    catch {
+        $updtTrblShootErr="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`tAn error occurred while running the Windows Update Troubleshooting Pack: `r`n$_"
+        Add-Content -Path $updateCleanupLog -Value "$updtTrblShootErr"
+        Write-Error $updtTrblShootErr
+    }
+
+
     $successMessage = "Windows Update Cleanup successful."
     if($softDist){
         $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
