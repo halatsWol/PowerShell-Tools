@@ -303,9 +303,33 @@ function Start-CleanMgr{
             $CleanMaxDurationVal=30
         }
 
+        $softwareDistributionPath = "C:\Windows\SoftwareDistribution"
+        $catroot2Path = "C:\Windows\system32\catroot2"
+        $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
+        $catroot2BackupPath = "$catroot2Path.bak"
+        $softwareDistributionBackupPath2 = "$softwareDistributionPath.old"
+        $catroot2BackupPath2 = "$catroot2Path.old"
+
         if ($VeryLowDisk) {
             Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Cleaning Recycle Bin"
             Remove-Item -Path 'C:\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue
+            Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Cleaning SoftwareDistribution and Catroot2 Backup folders"
+            if (Test-Path $softwareDistributionBackupPath) {
+                Add-Content -Path $logfile -Value "`t`t> $softwareDistributionBackupPath"
+                Remove-Item -Path "\\?\$softwareDistributionBackupPath" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $catroot2BackupPath) {
+                Add-Content -Path $logfile -Value "`t`t> $catroot2BackupPath"
+                Remove-Item -Path "\\?\$catroot2BackupPath" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $softwareDistributionBackupPath2) {
+                Add-Content -Path $logfile -Value "`t`t> $softwareDistributionBackupPath2"
+                Remove-Item -Path "\\?\$softwareDistributionBackupPath2" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $catroot2BackupPath2) {
+                Add-Content -Path $logfile -Value "`t`t> $catroot2BackupPath2"
+                Remove-Item -Path "\\?\$catroot2BackupPath2" -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
 
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Cleanup"
@@ -318,7 +342,6 @@ function Start-CleanMgr{
         $CleanMaxDuration = New-TimeSpan -Minutes $CleanMaxDurationVal
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Executing CleanMgr"
         Write-Host "Starting CleanMgr.exe,`r`nThis may take a while... (up to $($CleanMaxDuration.TotalMinutes) minutes)"
-        #Start-Process -FilePath CleanMgr.exe -ArgumentList '/sagerun:901'
         # Start CleanMgr.exe with arguments and get the process object
         $process = Start-Process -FilePath "CleanMgr.exe" -ArgumentList '/sagerun:901' -PassThru
         $CleanMgrStartTime = Get-Date
