@@ -289,7 +289,7 @@ function Start-CleanMgr{
             "Windows Error Reporting Files"
         )
 
-        $CleanMaxDurationVal=15
+        $CleanMaxDurationVal=10
         if ($VeryLowDisk) {
             $options += @(
                 "Update Cleanup",
@@ -298,9 +298,10 @@ function Start-CleanMgr{
                 "Upgrade Discarded Files",
                 "Windows ESD installation files",
                 "Windows Reset Log Files",
-                "Windows Upgrade Log Files"
+                "Windows Upgrade Log Files",
+                "Recycle Bin"
             )
-            $CleanMaxDurationVal=30
+            $CleanMaxDurationVal=20
         }
 
         $softwareDistributionPath = "C:\Windows\SoftwareDistribution"
@@ -348,7 +349,7 @@ function Start-CleanMgr{
 
         # Monitor the process
         while (-not $process.HasExited) {
-            Start-Sleep -Seconds 10
+            Start-Sleep -Seconds 5
 
             $elapsed = (Get-Date) - $CleanMgrStartTime
             if ($elapsed -gt $CleanMaxDuration) {
@@ -377,7 +378,7 @@ function Start-CleanMgr{
 
     if($AutoClean -or $VeryLowDisk){
         Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting CleanMgr Upgrade-Cleanup"
-        $CleanMaxDurationVal = 10
+        $CleanMaxDurationVal = 5
         $CleanMaxDuration = New-TimeSpan -Minutes $CleanMaxDurationVal
         Write-Host "Starting CleanMgr Upgrade-Cleanup,`r`nThis may take a while... (up to $($CleanMaxDuration.TotalMinutes) minutes)"
         Start-Process -FilePath "C:\Windows\System32\cleanmgr.exe" -ArgumentList "/autoclean" -NoNewWindow -Wait -PassThru | Out-Null
