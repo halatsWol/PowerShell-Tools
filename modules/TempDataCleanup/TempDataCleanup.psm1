@@ -483,7 +483,7 @@ function Invoke-TempDataCleanup {
     - Windows Reset Log Files
     - Windows Upgrade Log Files
 
-    Additionally the Recycle Bin will be cleaned up.
+    Additionally the Recycle Bin will be cleaned up, as well as the SoftwareDistribution and Catroot2 Backup (*.old / *.bak) folders.
 
     This will also perform -AutoClean
 
@@ -549,7 +549,7 @@ function Invoke-TempDataCleanup {
 
     Author: Wolfram Halatschek
     E-Mail: wolfram@kMarflow.com
-    Date: 2025-05-08
+    Date: 2025-05-25
     #>
 
 
