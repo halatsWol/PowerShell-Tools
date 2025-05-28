@@ -50,4 +50,3 @@ Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psm1"; DestDir: "{#BaseDir}\S
 Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psd1"; DestDir: "{#BaseDir}\Shortcuts"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Shortcuts\en-US\*"; DestDir: "{#BaseDir}\Shortcuts\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
-
