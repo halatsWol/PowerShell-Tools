@@ -9,7 +9,7 @@ project.lock.json
 *.nuget.props
 *.backup
 /installer/
-_Signed.iss
+*_Signed.iss
 
 
 # VSCode directories that are not at the repository root
