@@ -343,18 +343,31 @@ function Invoke-WindowsUpdateCleanup {
         Write-Verbose "catroot2 folder does not exist. No need to rename."
     }
     Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
-    Write-Host "Starting Windows Update Troubleshooter..."
-    $updtTrblShootMsg="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tWindows Update Troubleshooting Pack started."
-    Add-Content -Path $updateCleanupLog -Value "$updtTrblShootMsg"
-    Write-Verbose $updtTrblShootMsg
-
+    Write-Host "Starting Driagnostics..."
+    $winDiagMsg="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tStarting Diagnostics:"
+    Add-Content -Path $updateCleanupLog -Value "$winDiagMsg"
+    Write-Verbose $winDiagMsg
+    $updtDiagMsg="`t`tWindows Update Troubleshooting..."
+    $bitsDiagMsg="`t`tBITS Troubleshooting..."
     try {
+        Add-Content -Path $updateCleanupLog -Value "$updtDiagMsg"
+        Write-Verbose $updtDiagMsg
         Get-TroubleshootingPack -Path C:\Windows\diagnostics\system\WindowsUpdate | Invoke-TroubleshootingPack -Unattended
     }
     catch {
-        $updtTrblShootErr="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`tAn error occurred while running the Windows Update Troubleshooting Pack: `r`n$_"
+        $updtTrblShootErr="ERROR:`r`n$_"
         Add-Content -Path $updateCleanupLog -Value "$updtTrblShootErr"
         Write-Error $updtTrblShootErr
+    }
+    try {
+        Add-Content -Path $updateCleanupLog -Value "$bitsDiagMsg"
+        Write-Verbose $bitsDiagMsg
+        Get-TroubleshootingPack -Path C:\Windows\diagnostics\system\BITS | Invoke-TroubleshootingPack -Unattended
+    }
+    catch {
+        $bitsTrblShootErr="`t`tERROR:`r`n$_"
+        Add-Content -Path $updateCleanupLog -Value "$bitsTrblShootErr"
+        Write-Error $bitsTrblShootErr
     }
 
 
