@@ -503,6 +503,7 @@ function Repair-System {
 
     .PARAMETER WindowsUpdateCleanup
     When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
+    This will also run the Windows Update and BITS Troubleshooting Packs.
 
     .PARAMETER KeepLogs
     When specified, log files will be kept on the remote Device, but still be copied to the Client
@@ -595,7 +596,7 @@ function Repair-System {
 
     Author: Wolfram Halatschek
     E-Mail: wolfram@kMarflow.com
-    Date: 2025-05-25
+    Date: 2025-05-31
     #>
 
     [CmdletBinding()]
