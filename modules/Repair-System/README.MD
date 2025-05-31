@@ -26,7 +26,7 @@ This function performs the following tasks on a specified computer (either local
 - **`-noDism`** (Optional): When specified, all DISM commands will be skipped. This cannot be used in combination with `-IncludeComponentCleanup`.
 - **`-Quiet`** (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
 - **`-IncludeComponentCleanup`** (Optional): Analyzes and if recommended cleans up the Windows Component Store. This cannot be used in combination with `-noDism`.
-- **`-WindowsUpdateCleanup`** (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update Cache cleanup.
+- **`-WindowsUpdateCleanup`** (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update Cache cleanup. Additionally runs Windows Update and BITS Diagnostics.
 - **`-sccmCleanup`** (Optional): deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder
 - **`-KeepLogs`** (Optional): log files will be kept on the remote Device, but still be copied to the Client
 - **`-noCopy`** (Optional): log files will not be copied to the Client. this will automatically use '-KeepLogs'

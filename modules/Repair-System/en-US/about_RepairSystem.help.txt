@@ -18,7 +18,6 @@ LONG DESCRIPTION
         SFC (System File Checker) and DISM (Deployment Imaging Service and Management Tool).
     - **Service Management**: Functions to manage system services, stopping, Cache Cleanup and restarting services.
     - **Event Log Management**: Functions to query and clear event logs to help diagnose issues.
-    - **Network Diagnostics**: Functions to diagnose and repair network-related issues.
     - **Automated Maintenance**: Functions to automate common maintenance tasks, ensuring the
         system remains in optimal condition.
 
