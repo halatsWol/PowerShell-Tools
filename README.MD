@@ -14,6 +14,7 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 			- [`Shortcuts`](#shortcuts)
 			- [`TempDataCleanup`](#tempdatacleanup)
 		- [Scripts](#scripts)
+			- [`AutoDeskCleanRemove.ps1`](#autodeskcleanremoveps1)
 			- [`bulkUninstall.ps1`](#bulkuninstallps1)
 			- [`removeUserProfile.ps1`](#removeuserprofileps1)
 		- [Upcoming Tools](#upcoming-tools)
@@ -59,6 +60,10 @@ The [Shortcuts](./modules/Shortcuts) module is a tool to print Shortcut-Properti
 The [TempDataCleanup](./modules/TempDataCleanup) module is a tool to clean up Temporary Data from a System.
 
 ### Scripts
+#### [`AutoDeskCleanRemove.ps1`](./scripts/AutoDeskCleanRemove.ps1)
+
+Automates a clean unisntallation of all Autodesk Products (not tested with Fusion 360)
+
 #### [`bulkUninstall.ps1`](./scripts/bulkUninstall.ps1)
 
 The [bulkUninstall.ps1](./scripts/bulkUninstall.ps1) Script can be used to uninstall multiple programs of a vendor.
@@ -92,9 +97,6 @@ To install and use modules from this repository simply run the [installer](https
 
 3. run as Administrator the ```install.cmd```-file within the Modules-Folder
 
-
-
-
 4. Restart any PowerShell session to use the functions of the module. For further information and help please visit the readme of the module
 
 ### Temporary Import of Modules
@@ -121,3 +123,11 @@ To run any script from the repository, navigate to the directory containing the 
 ```PowerShell
 .\script-name.ps1
 ```
+
+If Script-execution is blocked (common in Enterprise-Environments) please run first
+
+```PowerShell
+Set-ExecutionPolicy Bypass
+```
+
+and confirm with 'Y'
