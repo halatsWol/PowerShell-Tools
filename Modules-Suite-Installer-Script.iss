@@ -2,14 +2,16 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "PowerShell-Tools - Modules Suite"
-#define MyAppVersion "v1.2.2"
+#define MyAppVersion "v1.3"
 #define MyAppPublisher "Marflow Software"
 #define MyAppURL "https://www.kMarflow.com/"
 #define BaseDir "C:\Program Files\WindowsPowerShell\Modules"
+#define PS7Dir "C:\Program Files\PowerShell\Modules"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
+PrivilegesRequired=admin
 AppId={{2C740815-92FE-4573-9D18-35E1C903F7F2}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -19,6 +21,7 @@ AppCopyright=Copyright (C) 2025 {#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
+DefaultDirName={autopf}\PowerShellToolsSuite
 CreateAppDir=no
 LicenseFile={#SourcePath}\LICENSE
 InfoBeforeFile={#SourcePath}\Pre-Install.nfo
@@ -27,26 +30,105 @@ InfoAfterFile={#SourcePath}\Post-Install.nfo
 ;PrivilegesRequired=lowest
 OutputDir={#SourcePath}\installer
 OutputBaseFilename=Setup_Powershell-ModulesSuite_{#MyAppVersion}
+UninstallFilesDir=C:\ProgramData\{#MyAppPublisher}\{#MyAppName}\{#MyAppVersion}\uninst
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+AllowNetworkDrive=no
+AllowUNCPath=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Dirs]
+; PS 5.1
 Name: "{#BaseDir}\TempDataCleanup"
 Name: "{#BaseDir}\RepairSystem"
 Name: "{#BaseDir}\Shortcuts"
+; PS 7
+Name: "{#PS7Dir}\TempDataCleanup"
+Name: "{#PS7Dir}\RepairSystem"
+Name: "{#PS7Dir}\Shortcuts"
+; uninst
+Name: "C:\ProgramData\{#MyAppPublisher}\{#MyAppName}\{#MyAppVersion}\uninst"
 
 [Files]
+; TempDataCleanup
 Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psm1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psd1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\TempDataCleanup\en-US\*"; DestDir: "{#BaseDir}\TempDataCleanup\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+; PS7Dir
+Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psm1"; DestDir: "{#PS7Dir}\TempDataCleanup"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\TempDataCleanup\TempDataCleanup.psd1"; DestDir: "{#PS7Dir}\TempDataCleanup"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\TempDataCleanup\en-US\*"; DestDir: "{#PS7Dir}\TempDataCleanup\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; RepairSystem
 Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psd1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Repair-System\en-US\*"; DestDir: "{#BaseDir}\RepairSystem\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+; PS7Dir
+Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psd1"; DestDir: "{#PS7Dir}\RepairSystem"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#PS7Dir}\RepairSystem"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\Repair-System\en-US\*"; DestDir: "{#PS7Dir}\RepairSystem\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; Shortcuts
 Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psm1"; DestDir: "{#BaseDir}\Shortcuts"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psd1"; DestDir: "{#BaseDir}\Shortcuts"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Shortcuts\en-US\*"; DestDir: "{#BaseDir}\Shortcuts\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+; PS7Dir
+Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psm1"; DestDir: "{#PS7Dir}\Shortcuts"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psd1"; DestDir: "{#PS7Dir}\Shortcuts"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\Shortcuts\en-US\*"; DestDir: "{#PS7Dir}\Shortcuts\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+
+
+[Code]
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+
+  if WizardSilent then
+  begin
+    case PageID of
+      wpWelcome,
+      wpLicense,
+      wpInfoBefore,
+      wpInfoAfter,
+      wpSelectDir,
+      wpReady,
+      wpFinished:
+        Result := True;
+    end;
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+var
+  Param: string;
+begin
+  Param := GetCmdTail;
+
+  if (Pos('--help', LowerCase(Param)) > 0) then
+  begin
+    MsgBox(
+      'Custom help' + #13#10#13#10#13#10 +
+      '--help' + #9#9 + 'Show this help message' + #13#10 + 
+      '/help, /?' + #9#9 + 'Show full advanced help' + #13#10 +
+      '' + #9#9 + '(most flags will do nothing)' + #13#10 +
+      '/silent' + #9#9 + 'Minimal UI, only shows progress and errors' + #13#10 +
+      '/verysilent' + #9 + 'No UI at all, completely silent install' + #13#10 +
+      '/LOG' + #9#9 + 'Causes Setup to create a' + #13#10 +
+      ''+#9#9+'Log file in the Users %Temp% Directory' + #13#10 +
+      '/LOG=filename' + #9 + 'Same as /LOG but specifies a' + #13#10 +
+      ''+#9#9+'Filename/FullPath' + #13#10 +
+      '/norestart' + #9 + 'Prevents automatic system restart after' + #13#10 +
+      ''+#9#9+'install (currently not needed)',
+      mbInformation, MB_OK
+    );
+    Result := False;
+    Exit;
+  end;
+
+  Result := True;
+end;
