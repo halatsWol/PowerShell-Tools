@@ -419,6 +419,8 @@ function Invoke-TempDataCleanup {
 
     .PARAMETER ComputerName
     The name of the computer to run the cleanup on. Use "localhost" for the local computer.
+    Accepts multiple computer names as an array. Accepts pipeline input.
+    If no computer name is provided, it defaults to "localhost".
 
     .PARAMETER IncludeSystemData
     If this switch is present, the cleanup will also include system folders.
@@ -518,6 +520,17 @@ function Invoke-TempDataCleanup {
     This will clean up temporary files from user profiles and system folders on Computer01.
 
     .EXAMPLE
+    $DeviceList | Invoke-TempDataCleanup -IncludeSystemData
+
+    This will clean up temporary files from user profiles and system folders on all computers in the $DeviceList array.
+    ("" and $Null will not default to "localhost" and are skipped if list is longer than 1).
+
+    .EXAMPLE
+    Invoke-TempDataCleanup -ComputerName dev01,dev02,dev03,""
+
+    This will clean up temporary files from user profiles on dev01, dev02, dev03 and the local computer ("").
+
+    .EXAMPLE
     Invoke-TempDataCleanup -ComputerName "localhost" -IncludeSystemData -IncludeBrowserData
 
     This will clean up temporary files including Browser-Cache Data from user profiles and system folders on the local computer.
@@ -549,14 +562,14 @@ function Invoke-TempDataCleanup {
 
     Author: Wolfram Halatschek
     E-Mail: wolfram@kMarflow.com
-    Date: 2025-05-25
+    Date: 2025-06-03
     #>
 
 
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$false,ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
-        [string]$ComputerName,
+        [string[]]$ComputerName,
 
         [Parameter(Mandatory=$false)]
         [switch]$IncludeSystemData,
@@ -595,275 +608,294 @@ function Invoke-TempDataCleanup {
         [switch]$AutoClean
 
     )
+    begin {
+        $computerList = @()
+    }
+    process {
+        if (-not [string]::IsNullOrWhiteSpace($ComputerName)) {
+            $computerList += $ComputerName
+        }
+    }
+    end {
+        if ($computerList.Count -eq 0) {
+            $computerList = @("localhost")
+        }
 
-    # check if verbose is enabled
-    $VerboseOption = $PSCmdlet.MyInvocation.BoundParameters.Verbose
+        # check if verbose is enabled
+        $VerboseOption = $PSCmdlet.MyInvocation.BoundParameters.Verbose
 
-    $initFree_bytes=""
-    $exitFree_bytes=""
+        $initFree_bytes=""
+        $exitFree_bytes=""
 
-    $confFile="$PSScriptRoot\TempDataCleanup.conf"
-    if($init){
-        $ShareDrive="C$"
-        $TempFolder="_IT-temp"
-        $LocalTargetPath="C:\remote-Files"
+        $confFile="$PSScriptRoot\TempDataCleanup.conf"
+        if($init){
+            $ShareDrive="C$"
+            $TempFolder="_IT-temp"
+            $LocalTargetPath="C:\remote-Files"
 
-        if(-not (Test-Path $confFile)){
-            try {
-                New-Item -Path $confFile -ItemType File -Force
-                Add-Content -Path $confFile -Value "ShareDrive=$ShareDrive"
-                Add-Content -Path $confFile -Value "TempFolder=$TempFolder"
-                Add-Content -Path $confFile -Value "LocalTargetPath=$LocalTargetPath"
-            } catch {
-                Write-Error "Error creating Config-File. Please check if the Module-Path is writable`r`n `r`n$_"
-                $global:LASTEXITCODE = 1
-                return
+            if(-not (Test-Path $confFile)){
+                try {
+                    New-Item -Path $confFile -ItemType File -Force
+                    Add-Content -Path $confFile -Value "ShareDrive=$ShareDrive"
+                    Add-Content -Path $confFile -Value "TempFolder=$TempFolder"
+                    Add-Content -Path $confFile -Value "LocalTargetPath=$LocalTargetPath"
+                } catch {
+                    Write-Error "Error creating Config-File. Please check if the Module-Path is writable`r`n `r`n$_"
+                    $global:LASTEXITCODE = 1
+                    return
+                }
+            } else {
+                Write-Warning "Config-File already exists. If you want to reset the Config-File, please delete it manually"
             }
-        } else {
-            Write-Warning "Config-File already exists. If you want to reset the Config-File, please delete it manually"
-        }
-        $global:LASTEXITCODE = 0
-        return
-    }
-
-    $userTempFolders=@(
-        "\AppData\Local\Temp",
-        "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache",
-        "\AppData\Local\Microsoft\Office\15.0\Lync\Tracing",
-        "\AppData\Local\Microsoft\Office\16.0\Lync\Tracing",
-        "\AppData\Local\Microsoft\EdgeWebView\Cache",
-        "\AppData\LocalLow\Sun\Java\Deployment\cache"
-    )
-    $commonUserPackages=@(
-        "\AppData\Local\Packages\Microsoft.Windows.Photos_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.WindowsCamera_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.DiagnosticDataViewer_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.ScreenSketch_8wekyb3d8bbwe\LocalCache",
-        "\AppData\Local\Packages\Microsoft.WindowsFeedbackHub_8wekyb3d8bbwe\TempState",
-        "\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TempState"
-    )
-    $allPackagesCacheFolder="\AppData\Local\Packages\*\LocalCache"
-    $BrowserData=@(
-        # general
-        "\AppData\LocalLow\Microsoft\CryptnetUrlCache\MetaData",
-        # Microsoft Internet Explorer
-        "\AppData\Local\Microsoft\Windows\INetCache",
-        "\AppData\Local\Microsoft\Windows\INetCookies",
-        # Microsoft Edge (Chromium)
-        "\AppData\Local\Microsoft\Edge\User Data\*\Temp",
-        "\AppData\Local\Microsoft\Edge\User Data\*\Cache",
-        "\AppData\Local\Microsoft\Edge\User Data\*\Media Cache",
-        "\AppData\Local\Microsoft\Edge\User Data\*\Code Cache",
-        "\AppData\Local\Microsoft\Edge\User Data\*\GPUCache",
-        "\AppData\Local\Microsoft\Edge\User Data\*\Service Worker\CacheStorage",
-        "\AppData\Local\Microsoft\Edge\User Data\*\Service Worker\ScriptCache",
-        # Mozilla Firefox
-        "\AppData\Local\Mozilla\Firefox\Profiles\*\cache2",
-        "\AppData\Local\Mozilla\Firefox\Profiles\*\storage\default",
-        # Google Chrome
-        "\AppData\Local\Google\Chrome\User Data\*\Temp",
-        "\AppData\Local\Google\Chrome\User Data\*\Cache",
-        "\AppData\Local\Google\Chrome\User Data\*\Media Cache",
-        "\AppData\Local\Google\Chrome\User Data\*\Code Cache",
-        "\AppData\Local\Google\Chrome\User Data\*\GPUCache",
-        "\AppData\Local\Google\Chrome\User Data\*\Service Worker\CacheStorage",
-        "\AppData\Local\Google\Chrome\User Data\*\Service Worker\ScriptCache"
-        # Opera
-        "\AppData\Local\Opera Software\Opera Stable\Temp",
-        "\AppData\Local\Opera Software\Opera Stable\Cache",
-        "\AppData\Local\Opera Software\Opera Stable\Media Cache",
-        "\AppData\Local\Opera Software\Opera Stable\Code Cache",
-        "\AppData\Local\Opera Software\Opera Stable\GPUCache",
-        "\AppData\Local\Opera Software\Opera Stable\Service Worker\CacheStorage",
-        "\AppData\Local\Opera Software\Opera Stable\Service Worker\ScriptCache",
-        # Vivaldi
-        "\AppData\Local\Vivaldi\User Data\*\Temp",
-        "\AppData\Local\Vivaldi\User Data\*\Cache",
-        "\AppData\Local\Vivaldi\User Data\*\Media Cache",
-        "\AppData\Local\Vivaldi\User Data\*\Code Cache",
-        "\AppData\Local\Vivaldi\User Data\*\GPUCache",
-        "\AppData\Local\Vivaldi\User Data\*\Service Worker\CacheStorage",
-        "\AppData\Local\Vivaldi\User Data\*\Service Worker\ScriptCache"
-        # Brave
-        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Temp",
-        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Cache",
-        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Media Cache",
-        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Code Cache",
-        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\GPUCache",
-        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\CacheStorage",
-        "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\ScriptCache"
-    )
-
-    $explorerCacheDir="\AppData\Local\Microsoft\Windows\Explorer"
-    $localIconCacheDB="\AppData\Local\IconCache.db"
-
-
-    $systemTempFolders=@(
-        "C:\Windows\Temp",
-        "C:\Windows\Prefetch",
-        "C:\Windows\SoftwareDistribution\Download"
-    )
-    $msTeamsCacheFolder="\AppData\local\Packages\MSTeams_8wekyb3d8bbwe\LocalCache"
-    $teamsClassicPath="\AppData\Roaming\Microsoft\Teams"
-    $ccmCachePath="C:\Windows\ccmcache"
-
-    $userReportingDirs=@(
-        "\AppData\Local\CrashDumps",
-        "\Appdata\Local\D3DSCache",
-        "\AppData\Local\Microsoft\Windows\WER\ReportQueue",
-        "\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache"
-    )
-
-    $sysReportingDirs=@(
-        "C:\Windows\Logs",
-        "C:\Windows\Minidump",
-        "C:\Windows\LiveKernelReports",
-        "C:\Windows\System32\LogFiles\WMI",
-        "C:\Windows\System32\LogFiles\setupcln",
-        "C:\Windows\ServiceProfiles\LocalService\AppData\Local\CrashDumps",
-        "C:\Windows\sysWOW64\config\systemprofile\AppData\Local\CrashDumps",
-        "C:\Windows\system32\config\systemprofile\AppData\Local\CrashDumps",
-        "C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache",
-        "$env:ProgramData\Microsoft\Windows\WER\ReportQueue",
-        "$env:ProgramData\Microsoft\Windows\WER\ReportArchive"
-    )
-
-    $LocalTargetPath = "C:\remote-Files"
-    $TempFolder="_IT-temp"
-    $ShareDrive="C$"
-
-    if(Test-Path $confFile){
-        $confData = Get-Content -Path $confFile
-        foreach ($line in $confData) {
-            $key, $value = $line -split '=', 2
-            if ($key -eq "ShareDrive") {$ShareDrive=$value}
-            elseif ($key -eq "TempFolder") {$TempFolder=$value}
-            elseif ($key -eq "LocalTargetPath") {$LocalTargetPath=$value}
-            else {
-                Write-Warning "Unknown Key in Config-File: $key"
-                $global:LASTEXITCODE = 1
-                return
-            }
-        }
-
-    }
-
-
-
-    $remote=$false
-    $LocalTargetPath = "$LocalTargetPath\$ComputerName"
-
-    $logdir="C:\$TempFolder"
-    $RemoteLogDir="\\$ComputerName\$ShareDrive\$TempFolder"
-    $logfile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup.log"
-    $VerboseLogFile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup_Verbose.log"
-
-    if($LowDisk -or $VeryLowDisk){
-        $IncludeSystemData=$true
-        $IncludeCCMCache=$true
-        $IncludeIconCache=$true
-    }
-
-    if($IncludeAllPackages){
-        $confirmation=Read-Host "Are you sure you want to include ALL Packages in the cleanup?`r`nThis will render IncludeMSTeamsCache irrelevant. Do you want to continue?`r`n(enter [yes] to continue with this option)"
-        if($confirmation -ne "yes"){
-            $IncludeAllPackages=$false
-            Write-Host "Cleanup will not use IncludeAllPackages"
-        }
-        else{
-            $IncludeMSTeamsCache=$false
-            Write-Host "Cleanup will use IncludeAllPackages"
-        }
-    }
-
-    if ($ComputerName -ne "" -and $ComputerName -ne $env:COMPUTERNAME -and $ComputerName -ne "localhost"){
-        $remote=$true
-    }
-
-    if ($remote){
-        if (-not (Test-Connection -ComputerName $ComputerName -Count 1 -Quiet)){
-            Write-Warning "Computer $ComputerName is not reachable"
+            $global:LASTEXITCODE = 0
             return
         }
-    }
+
+        $userTempFolders=@(
+            "\AppData\Local\Temp",
+            "\AppData\Local\Microsoft\Office\16.0\OfficeFileCache",
+            "\AppData\Local\Microsoft\Office\15.0\Lync\Tracing",
+            "\AppData\Local\Microsoft\Office\16.0\Lync\Tracing",
+            "\AppData\Local\Microsoft\EdgeWebView\Cache",
+            "\AppData\LocalLow\Sun\Java\Deployment\cache"
+        )
+        $commonUserPackages=@(
+            "\AppData\Local\Packages\Microsoft.Windows.Photos_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.WindowsCamera_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.DiagnosticDataViewer_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.ScreenSketch_8wekyb3d8bbwe\LocalCache",
+            "\AppData\Local\Packages\Microsoft.WindowsFeedbackHub_8wekyb3d8bbwe\TempState",
+            "\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TempState"
+        )
+        $allPackagesCacheFolder="\AppData\Local\Packages\*\LocalCache"
+        $BrowserData=@(
+            # general
+            "\AppData\LocalLow\Microsoft\CryptnetUrlCache\MetaData",
+            # Microsoft Internet Explorer
+            "\AppData\Local\Microsoft\Windows\INetCache",
+            "\AppData\Local\Microsoft\Windows\INetCookies",
+            # Microsoft Edge (Chromium)
+            "\AppData\Local\Microsoft\Edge\User Data\*\Temp",
+            "\AppData\Local\Microsoft\Edge\User Data\*\Cache",
+            "\AppData\Local\Microsoft\Edge\User Data\*\Media Cache",
+            "\AppData\Local\Microsoft\Edge\User Data\*\Code Cache",
+            "\AppData\Local\Microsoft\Edge\User Data\*\GPUCache",
+            "\AppData\Local\Microsoft\Edge\User Data\*\Service Worker\CacheStorage",
+            "\AppData\Local\Microsoft\Edge\User Data\*\Service Worker\ScriptCache",
+            # Mozilla Firefox
+            "\AppData\Local\Mozilla\Firefox\Profiles\*\cache2",
+            "\AppData\Local\Mozilla\Firefox\Profiles\*\storage\default",
+            # Google Chrome
+            "\AppData\Local\Google\Chrome\User Data\*\Temp",
+            "\AppData\Local\Google\Chrome\User Data\*\Cache",
+            "\AppData\Local\Google\Chrome\User Data\*\Media Cache",
+            "\AppData\Local\Google\Chrome\User Data\*\Code Cache",
+            "\AppData\Local\Google\Chrome\User Data\*\GPUCache",
+            "\AppData\Local\Google\Chrome\User Data\*\Service Worker\CacheStorage",
+            "\AppData\Local\Google\Chrome\User Data\*\Service Worker\ScriptCache"
+            # Opera
+            "\AppData\Local\Opera Software\Opera Stable\Temp",
+            "\AppData\Local\Opera Software\Opera Stable\Cache",
+            "\AppData\Local\Opera Software\Opera Stable\Media Cache",
+            "\AppData\Local\Opera Software\Opera Stable\Code Cache",
+            "\AppData\Local\Opera Software\Opera Stable\GPUCache",
+            "\AppData\Local\Opera Software\Opera Stable\Service Worker\CacheStorage",
+            "\AppData\Local\Opera Software\Opera Stable\Service Worker\ScriptCache",
+            # Vivaldi
+            "\AppData\Local\Vivaldi\User Data\*\Temp",
+            "\AppData\Local\Vivaldi\User Data\*\Cache",
+            "\AppData\Local\Vivaldi\User Data\*\Media Cache",
+            "\AppData\Local\Vivaldi\User Data\*\Code Cache",
+            "\AppData\Local\Vivaldi\User Data\*\GPUCache",
+            "\AppData\Local\Vivaldi\User Data\*\Service Worker\CacheStorage",
+            "\AppData\Local\Vivaldi\User Data\*\Service Worker\ScriptCache"
+            # Brave
+            "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Temp",
+            "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Cache",
+            "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Media Cache",
+            "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Code Cache",
+            "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\GPUCache",
+            "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\CacheStorage",
+            "\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Service Worker\ScriptCache"
+        )
+
+        $explorerCacheDir="\AppData\Local\Microsoft\Windows\Explorer"
+        $localIconCacheDB="\AppData\Local\IconCache.db"
 
 
-    if ($IncludeAllPackages){$userTempFolders=$userTempFolders+$allPackagesCacheFolder}else{$userTempFolders=$userTempFolders+$commonUserPackages}
-    if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$BrowserData}
+        $systemTempFolders=@(
+            "C:\Windows\Temp",
+            "C:\Windows\Prefetch",
+            "C:\Windows\SoftwareDistribution\Download"
+        )
+        $msTeamsCacheFolder="\AppData\local\Packages\MSTeams_8wekyb3d8bbwe\LocalCache"
+        $teamsClassicPath="\AppData\Roaming\Microsoft\Teams"
+        $ccmCachePath="C:\Windows\ccmcache"
 
+        $userReportingDirs=@(
+            "\AppData\Local\CrashDumps",
+            "\Appdata\Local\D3DSCache",
+            "\AppData\Local\Microsoft\Windows\WER\ReportQueue",
+            "\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache"
+        )
 
-    if ($remote){
-        $initFree_bytes = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            (Get-Volume -DriveLetter C).SizeRemaining
+        $sysReportingDirs=@(
+            "C:\Windows\Logs",
+            "C:\Windows\Minidump",
+            "C:\Windows\LiveKernelReports",
+            "C:\Windows\System32\LogFiles\WMI",
+            "C:\Windows\System32\LogFiles\setupcln",
+            "C:\Windows\ServiceProfiles\LocalService\AppData\Local\CrashDumps",
+            "C:\Windows\sysWOW64\config\systemprofile\AppData\Local\CrashDumps",
+            "C:\Windows\system32\config\systemprofile\AppData\Local\CrashDumps",
+            "C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache",
+            "$env:ProgramData\Microsoft\Windows\WER\ReportQueue",
+            "$env:ProgramData\Microsoft\Windows\WER\ReportArchive"
+        )
+
+        $LocalTargetPath = "C:\remote-Files"
+        $TempFolder="_IT-temp"
+        $ShareDrive="C$"
+
+        if(Test-Path $confFile){
+            $confData = Get-Content -Path $confFile
+            foreach ($line in $confData) {
+                $key, $value = $line -split '=', 2
+                if ($key -eq "ShareDrive") {$ShareDrive=$value}
+                elseif ($key -eq "TempFolder") {$TempFolder=$value}
+                elseif ($key -eq "LocalTargetPath") {$LocalTargetPath=$value}
+                else {
+                    Write-Warning "Unknown Key in Config-File: $key"
+                    $global:LASTEXITCODE = 1
+                    return
+                }
+            }
+
         }
-    } else {
-        $initFree_bytes = (Get-Volume -DriveLetter C).SizeRemaining
-    }
-
-    if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:New-Folder} -ArgumentList $logdir
-    } else {
-        New-Folder -FolderPath $logdir
-    }
-
-    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $ComputerName"
-    Write-Host "Cleaning up User Data and Cache"
-    if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
-    } else {
-        Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache -VerboseOption:$VerboseOption -VerboseLogFile $VerboseLogFile
-    }
 
 
-    if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
-        Write-Host "Cleaning up System Data and Cache"
-        if ($remote) {
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
-        } else {
-            Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache -VerboseOption:$VerboseOption -VerboseLogFile:$VerboseLogFile
+        if($LowDisk -or $VeryLowDisk){
+            $IncludeSystemData=$true
+            $IncludeCCMCache=$true
+            $IncludeIconCache=$true
         }
-    }
 
-    if($LowDisk -or $VeryLowDisk -or $AutoClean){
-        if ($remote) {
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-CleanMgr} -ArgumentList $logfile, $LowDisk, $VeryLowDisk, $ConfirmWarning, $AutoClean
-        } else {
-            Start-CleanMgr -logfile $logfile -LowDisk:$LowDisk -VeryLowDisk:$VeryLowDisk -ConfirmWarning:$ConfirmWarning -AutoClean:$AutoClean
+        if($IncludeAllPackages){
+            $confirmation=Read-Host "Are you sure you want to include ALL Packages in the cleanup?`r`nThis will render IncludeMSTeamsCache irrelevant. Do you want to continue?`r`n(enter [yes] to continue with this option)"
+            if($confirmation -ne "yes"){
+                $IncludeAllPackages=$false
+                Write-Host "Cleanup will not use IncludeAllPackages"
+            }
+            else{
+                $IncludeMSTeamsCache=$false
+                Write-Host "Cleanup will use IncludeAllPackages"
+            }
         }
-    }
+
+        if ($IncludeAllPackages){$userTempFolders=$userTempFolders+$allPackagesCacheFolder}else{$userTempFolders=$userTempFolders+$commonUserPackages}
+        if ($IncludeBrowserData){$userTempFolders=$userTempFolders+$BrowserData}
+
+
+        foreach ( $comp in $computerList ){
 
 
 
-    if ($remote) {
-        New-Folder -FolderPath $localTargetPath
-        Copy-Item -Path "$RemoteLogDir\*" -Destination $localTargetPath -Recurse -Force
-        if ($?) {
+            $remote=$false
+            $LocalTargetPath = "$LocalTargetPath\$comp"
 
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-                Remove-Item -Path "$using:logdir" -Recurse
-            } -Verbose:$VerboseOption
+            $logdir="C:\$TempFolder"
+            $logfile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup.log"
+            $VerboseLogFile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup_Verbose.log"
 
-        } else {
-            Write-Error "An error occurred while copying the log files from $ComputerName."
+            if (
+                    -not [string]::IsNullOrWhiteSpace($comp) -and
+                    $comp.ToLower() -ne "localhost" -and
+                    $comp.ToUpper() -ne $env:COMPUTERNAME.ToUpper()
+                ) {
+                $remote=$true
+            } else {
+                $comp = "localhost"
+            }
+            if ($remote){
+                if (-not (Test-Connection -ComputerName $comp -Count 1 -Quiet)){
+                    Write-Host ""
+                    Write-Warning "Computer $comp is not reachable`r`n"
+                    Write-Host "`r`n-------------------------------"
+                    continue
+                }
+
+                $initFree_bytes = Invoke-Command -ComputerName $comp -ScriptBlock {
+                    (Get-Volume -DriveLetter C).SizeRemaining
+                }
+                Invoke-Command -ComputerName $comp -ScriptBlock ${function:New-Folder} -ArgumentList $logdir
+            } else {
+                $initFree_bytes = (Get-Volume -DriveLetter C).SizeRemaining
+                New-Folder -FolderPath $logdir
+            }
+
+            Write-Host "`r`nCleaning up Data on $comp`r`n"
+            Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $comp"
+            Write-Host "Cleaning up User Data and Cache"
+            if ($remote) {
+                Invoke-Command -ComputerName $comp -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
+            } else {
+                Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache -VerboseOption:$VerboseOption -VerboseLogFile $VerboseLogFile
+            }
+
+
+            if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
+                Write-Host "Cleaning up System Data and Cache"
+                if ($remote) {
+                    Invoke-Command -ComputerName $comp -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
+                } else {
+                    Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache -VerboseOption:$VerboseOption -VerboseLogFile:$VerboseLogFile
+                }
+            }
+
+            if($LowDisk -or $VeryLowDisk -or $AutoClean){
+                if ($remote) {
+                    Invoke-Command -ComputerName $comp -ScriptBlock ${function:Start-CleanMgr} -ArgumentList $logfile, $LowDisk, $VeryLowDisk, $ConfirmWarning, $AutoClean
+                } else {
+                    Start-CleanMgr -logfile $logfile -LowDisk:$LowDisk -VeryLowDisk:$VeryLowDisk -ConfirmWarning:$ConfirmWarning -AutoClean:$AutoClean
+                }
+            }
+
+
+
+            if ($remote) {
+                $RemoteLogDir="\\$comp\$ShareDrive\$TempFolder"
+                New-Folder -FolderPath $localTargetPath
+                Copy-Item -Path "$RemoteLogDir\*" -Destination $localTargetPath -Recurse -Force
+                if ($?) {
+
+                    Invoke-Command -ComputerName $comp -ScriptBlock {
+                        Remove-Item -Path "$using:logdir" -Recurse
+                    } -Verbose:$VerboseOption
+
+                } else {
+                    Write-Error "An error occurred while copying the log files from $comp."
+                }
+            }
+
+            if ($remote){
+                $exitFree_bytes = Invoke-Command -ComputerName $comp -ScriptBlock {
+                    (Get-Volume -DriveLetter C).SizeRemaining
+                }
+            } else {
+                $exitFree_bytes = (Get-Volume -DriveLetter C).SizeRemaining
+            }
+
+            $additionalFree = "{0:N2}" -f (($exitFree_bytes - $initFree_bytes)/1GB)
+            Write-Host "`r`nAdditional Free Space: $additionalFree GB`r`nTotal Free Space: $("{0:N2}" -f ($exitFree_bytes/1GB)) GB`r`n"
+            Write-Host "-------------------------------"
         }
+        Write-Host "`r`nCleanUp Complete" -ForegroundColor Green
+        Write-Host "Please Restart the Computer to finalize the Cleanup!" -ForegroundColor Yellow
     }
-
-    if ($remote){
-        $exitFree_bytes = Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-            (Get-Volume -DriveLetter C).SizeRemaining
-        }
-    } else {
-        $exitFree_bytes = (Get-Volume -DriveLetter C).SizeRemaining
-    }
-
-    $additionalFree = "{0:N2}" -f (($exitFree_bytes - $initFree_bytes)/1GB)
-    Write-Host "`r`nCleanUp Complete`r`nAdditional Free Space: $additionalFree GB`r`nTotal Free Space: $("{0:N2}" -f ($exitFree_bytes/1GB)) GB`r`n"
-    Write-Host "`r`nPlease Restart the Computer to finalize the Cleanup!"
-
 }
 
 Export-ModuleMember -Function Invoke-TempDataCleanup

@@ -11,7 +11,7 @@ The primary function of this module is `Invoke-TempDataCleanup`, which removes t
 
 #### Parameters
 
-- **`-ComputerName`** (Mandatory): Specifies the name of the computer to run the cleanup on.
+- **`-ComputerName`** (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host.
 - **`-IncludeSystemData`** (Optional): When this switch is provided, the cleanup will also include system folders such as the Windows `Temp`, `Prefetch`, and `SoftwareDistribution` folders.
 - **`-IncludeCCMCache`** (Optional): When this switch is provided, the cleanup will also include the Configuration Management Cache folder, if it exists.
 - **`-IncludeBrowserData`** (Optional): When this switch is provided, the cleanup will also include Browser cache of MS Edge, Mozilla Firefox and Google Chrome
@@ -32,6 +32,12 @@ Invoke-TempDataCleanup -ComputerName "localhost"
 
 # Clean up temporary files from user profiles on a remote computer
 Invoke-TempDataCleanup -ComputerName "Computer01"
+
+# Clean up temporary files from user profiles on a Computer using Pipeline (will not default to localhost if $Null or empty)
+"comp1","comp2","comp3" | Invoke-TempDataCleanup
+
+# Clean up temporary files from user profiles on a Computer using Array (will default to localhost if element is null or empty "")
+Invoke-TempDataCleanup -ComputerName comp1,comp2,"",comp3
 
 # Perform a cleanup (user temp and system temp files) on the local computer
 Invoke-TempDataCleanup -ComputerName "localhost" -IncludeSystemData
@@ -57,7 +63,7 @@ Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBro
 
 - **Author**: Wolfram Halatschek
 - **Contact**: wolfram@kMarflow.com
-- **Date**: 2025-05-25
+- **Date**: 2025-06-03
 
 ## Warnings
 
