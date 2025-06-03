@@ -832,13 +832,18 @@ function Invoke-TempDataCleanup {
                     (Get-Volume -DriveLetter C).SizeRemaining
                 }
                 Invoke-Command -ComputerName $comp -ScriptBlock ${function:New-Folder} -ArgumentList $logdir
+                Invoke-Command -ComputerName $comp -ScriptBlock {
+                    param($logfile, $comp)
+                    Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $comp"
+                } -ArgumentList $logfile, $comp
             } else {
                 $initFree_bytes = (Get-Volume -DriveLetter C).SizeRemaining
                 New-Folder -FolderPath $logdir
+                Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $comp"
             }
 
-            Write-Host "`r`nCleaning up Data on $comp`r`n"
-            Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $comp"
+            Write-Host "`r`nCleaning up  $comp`r`n"
+
             Write-Host "Cleaning up User Data and Cache"
             if ($remote) {
                 Invoke-Command -ComputerName $comp -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
