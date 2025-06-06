@@ -1,0 +1,16 @@
+name: "🚀 Feature request"
+description: Suggest an idea to make this project better
+labels: [enhancement]
+body:
+  - type: textarea
+    id: motivation
+    attributes:
+      label: What problem would this solve?
+      placeholder: "I'm frustrated when…"
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Your proposed solution
+      placeholder: "It would be great if…"
