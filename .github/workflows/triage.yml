@@ -1,0 +1,19 @@
+name: Auto-add Feature Requests to Project
+
+on:
+  issues:
+    types: [opened, labeled, reopened]
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # required by the action
+      issues: read
+
+    steps:
+      - uses: actions/add-to-project@v1
+        with:
+          project-url: https://github.com/users/halatsWol/projects/3
+          labeled: enhancement
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
