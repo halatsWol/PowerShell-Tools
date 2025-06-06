@@ -12,7 +12,7 @@ jobs:
       issues: read
 
     steps:
-      - uses: actions/add-to-project@v1
+      - uses: actions/add-to-project@main
         with:
           project-url: https://github.com/users/halatsWol/projects/3
           labeled: enhancement
