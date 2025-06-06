@@ -21,7 +21,7 @@ jobs:
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
 
   move-to-in-progress:
-    if: github.event.action == 'assigned'
+    if: github.event.action == 'assigned' || github.event.action == 'reopened'
     runs-on: ubuntu-latest
     permissions:
       contents: read
