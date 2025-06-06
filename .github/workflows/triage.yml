@@ -6,12 +6,12 @@ on:
 
 jobs:
   add-to-project:
+    if: github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'reopened'
     runs-on: ubuntu-latest
     permissions:
       contents: read    # required by the action
       issues: read
       id-token: write
-
     steps:
       - uses: actions/add-to-project@main
         with:
@@ -21,12 +21,12 @@ jobs:
 
 
   move-to-in-progress:
+    if: github.event.action == 'assigned'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
       id-token: write
-
     steps:
       - uses: actions/add-to-project@main
         with:
