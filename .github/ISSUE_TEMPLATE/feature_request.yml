@@ -1,6 +1,6 @@
 name: "🚀 Feature request"
 description: Suggest an idea to make this project better
-labels: [enhancement]
+labels: [feature-request]
 body:
   - type: textarea
     id: motivation
