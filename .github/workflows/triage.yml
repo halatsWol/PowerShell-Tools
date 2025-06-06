@@ -1,51 +1,51 @@
-name: Auto-add Feature Requests to Project
+name: Auto-manage Project Items
 
 on:
   issues:
-    types: [opened, labeled, reopened]
+    types: [opened, labeled, reopened, assigned, closed]
 
 jobs:
   add-to-project:
     if: github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'reopened'
     runs-on: ubuntu-latest
     permissions:
-      contents: read    # required by the action
+      contents: read
       issues: read
-      id-token: write
+
     steps:
-      - uses: actions/add-to-project@main
+      - name: Add to Project
+        uses: actions/add-to-project@main
         with:
           project-url: https://github.com/users/halatsWol/projects/3
           labeled: enhancement
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
-
 
   move-to-in-progress:
     if: github.event.action == 'assigned'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
-      id-token: write
+      issues: write
     steps:
-      - uses: actions/add-to-project@main
+      - name: Set Status to In Progress
+        uses: nipe0324/update-project-v2-item-field@v2.0.2
         with:
           project-url: https://github.com/users/halatsWol/projects/3
-          field: Status
-          value: In Progress
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          field-name: Status
+          field-value: In Progress
 
   move-to-shipped:
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
-      id-token: write
+      issues: write
     steps:
-      - uses: actions/add-to-project@main
+      - name: Set Status to Shipped
+        uses: nipe0324/update-project-v2-item-field@v2.0.2
         with:
           project-url: https://github.com/users/halatsWol/projects/3
-          field: Status
-          value: Shipped
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          field-name: Status
+          field-value: Shipped
