@@ -837,6 +837,14 @@ function Invoke-TempDataCleanup {
                     Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $comp"
                 } -ArgumentList $logfile, $comp
             } else {
+                $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+                $isElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+                if ( -not $isElevated ) {
+                    $("") ; Write-Warning "`r`nThis script must be run with administrative privileges. Please restart the script in an elevated PowerShell session.`r`n"
+                    Pause ; $("")
+                    $global:LASTEXITCODE=1
+                    return
+                }
                 $initFree_bytes = (Get-Volume -DriveLetter C).SizeRemaining
                 New-Folder -FolderPath $logdir
                 Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $comp"

@@ -673,6 +673,17 @@ function Repair-System {
         $remote=$true
     }
 
+    if (-not $remote) {
+        $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+        $isElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if ( -not $isElevated ) {
+            $("") ; Write-Warning "`r`nThis script must be run with administrative privileges. Please restart the script in an elevated PowerShell session.`r`n"
+            Pause ; $("")
+            $global:LASTEXITCODE=1
+            return
+        }
+    }
+
     # Validation to ensure -IncludeComponentCleanup is not used with -noDism
     if ($noDism -and $IncludeComponentCleanup) {
         Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
