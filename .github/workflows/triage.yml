@@ -10,6 +10,7 @@ jobs:
     permissions:
       contents: read    # required by the action
       issues: read
+      id-token: write
 
     steps:
       - uses: actions/add-to-project@main
