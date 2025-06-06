@@ -17,7 +17,7 @@ jobs:
         uses: actions/add-to-project@main
         with:
           project-url: https://github.com/users/halatsWol/projects/3
-          labeled: enhancement
+          labeled: feature-request
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
 
   move-to-in-progress:
