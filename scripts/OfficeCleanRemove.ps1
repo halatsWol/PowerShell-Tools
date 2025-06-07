@@ -228,8 +228,6 @@ if ( -not $isElevated ) {
         "$env:ProgramFiles\Microsoft Office*",
         "$env:ProgramFiles(x86)\Microsoft Office*",
         "$env:ProgramData\Microsoft\Office",
-        "$env:LocalAppData\Microsoft\Office",
-        "$env:AppData\Microsoft\Office",
         "$env:ProgramFiles\Common Files\Microsoft Shared\ClickToRun",
         "$env:ProgramFiles(x86)\Common Files\Microsoft Shared\ClickToRun",
         "$env:ProgramData\Microsoft\ClickToRun",
