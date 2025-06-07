@@ -45,7 +45,8 @@ jobs:
   move-to-shipped:
     if: github.event.action == 'closed'  &&
         contains(github.event.issue.labels.*.name, 'feature-request') &&
-        (! github.event.issue.state_reason == 'not-planned')
+        (! github.event.issue.state_reason == 'not-planned') &&
+        (! github.event.issue.state_reason == 'duplicate')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -68,7 +69,8 @@ jobs:
   move-to-resolved-incident:
     if: github.event.action == 'closed' &&
         (! contains(github.event.issue.labels.*.name, 'feature-request')) &&
-        (! github.event.issue.state_reason == 'not-planned')
+        (! github.event.issue.state_reason == 'not-planned') &&
+        (! github.event.issue.state_reason == 'duplicate')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -87,6 +89,30 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           labels: resolved/released
+
+  move-to-duplicate:
+    if: github.event.action == 'closed' &&
+        github.event.issue.state_reason == 'duplicate' &&
+        contains(github.event.issue.labels.*.name, 'feature-request')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Set Status to Rejected
+        uses: nipe0324/update-project-v2-item-field@v2.0.2
+        with:
+          project-url: https://github.com/users/halatsWol/projects/3
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          field-name: Status
+          field-value: Rejected
+
+      - name: Add wontfix Label
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          labels: duplicate
 
   reopened-handling:
     if: github.event.action == 'reopened'
