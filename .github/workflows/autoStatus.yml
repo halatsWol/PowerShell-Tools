@@ -114,7 +114,7 @@ jobs:
           field-value: Backlog
 
       - name: Remove all assignees
-        uses: actions-cool/issues-helper@v3
+        uses: actions-cool/issues-helper@main
         with:
           actions: 'remove-assignees'
           token: ${{ secrets.GITHUB_TOKEN }}
