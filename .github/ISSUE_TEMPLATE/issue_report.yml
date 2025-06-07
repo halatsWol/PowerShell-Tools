@@ -42,7 +42,7 @@ body:
     id: ps-version
     attributes:
       label: PowerShell version
-      description: Run `$PSVersionTable.PSVersion` in PowerShell and paste the result
+      description: Run `$PSVersionTable.PSVersion.ToString()` in PowerShell and paste the result
       placeholder: "e.g., 5.1.22621.2506 or 7.4.1"
     validations:
       required: true
