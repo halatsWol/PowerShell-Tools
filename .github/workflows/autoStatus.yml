@@ -148,7 +148,7 @@ jobs:
           actions: 'remove-assignees'
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
-          assignees: ''
+          assignees: '*'
 
   move-to-rejected:
     if: github.event.action == 'closed' &&
