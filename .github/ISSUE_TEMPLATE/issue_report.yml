@@ -1,6 +1,6 @@
 name: "🚨 Incident report"
 description: Report a bug or unexpected behavior in a PowerShell script/module
-labels: [incident]
+labels: [incident,bug]
 body:
   - type: markdown
     attributes:
