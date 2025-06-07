@@ -17,7 +17,7 @@ jobs:
         uses: actions/add-to-project@main
         with:
           project-url: https://github.com/users/halatsWol/projects/3
-          labeled: feature-request
+          labeled: feature-request,incident
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
 
   move-to-in-progress:
@@ -50,14 +50,14 @@ jobs:
           field-name: Status
           field-value: Shipped
 
-  move-to-shipped:
+  move-to-resolved-incident:
     if: github.event.action == 'closed' && (! contains(github.event.issue.labels.*.name, 'feature-request'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
     steps:
-      - name: Set Status to Shipped
+      - name: Set Status to Resolved (Incident)
         uses: nipe0324/update-project-v2-item-field@v2.0.2
         with:
           project-url: https://github.com/users/halatsWol/projects/3
