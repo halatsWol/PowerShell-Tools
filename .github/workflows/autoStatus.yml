@@ -17,8 +17,9 @@ jobs:
         uses: actions/add-to-project@main
         with:
           project-url: https://github.com/users/halatsWol/projects/3
-          labeled: feature-request,incident,bug
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          field-name: Status
+          field-value: Backlog
 
   move-to-in-progress:
     if: github.event.action == 'assigned'
@@ -78,7 +79,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           labels: resolved/released
 
-  remove-resolved-label:
+  reopened-handling:
     if: github.event.action == 'reopened'
     runs-on: ubuntu-latest
     permissions:
@@ -93,7 +94,15 @@ jobs:
           labels: resolved/released
 
       - name: Add Reopened Label
-        uses: actions-ecosystem/action-remove-labels@v1
+        uses: actions-ecosystem/action-add-labels@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           labels: reopened
+
+      - name: Move to Backlog
+        uses: nipe0324/update-project-v2-item-field@v2.0.2
+        with:
+          project-url: https://github.com/users/halatsWol/projects/3
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          field-name: Status
+          field-value: Backlog
