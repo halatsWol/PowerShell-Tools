@@ -114,6 +114,9 @@ jobs:
           field-value: Backlog
 
       - name: Remove all assignees
-        uses: actions-ecosystem/action-remove-assignees@v1
+        uses: actions-cool/issues-helper@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          actions: 'remove-assignees'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          assignees: ''
