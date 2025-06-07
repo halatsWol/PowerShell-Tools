@@ -51,6 +51,12 @@ jobs:
           field-name: Status
           field-value: Shipped
 
+      - name: Add resolved/released Label
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          labels: resolved/released
+
   move-to-resolved-incident:
     if: github.event.action == 'closed' && (! contains(github.event.issue.labels.*.name, 'feature-request'))
     runs-on: ubuntu-latest
@@ -65,3 +71,29 @@ jobs:
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
           field-name: Status
           field-value: Resolved
+
+      - name: Add resolved/released Label
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          labels: resolved/released
+
+  remove-resolved-label:
+    if: github.event.action == 'reopened'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Remove resolved/released Label
+        uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          labels: resolved/released
+
+      - name: Add Reopened Label
+        uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          labels: reopened
