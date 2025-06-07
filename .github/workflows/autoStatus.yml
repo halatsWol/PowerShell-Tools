@@ -44,7 +44,8 @@ jobs:
 
   move-to-shipped:
     if: github.event.action == 'closed'  &&
-      contains(github.event.issue.labels.*.name, 'feature-request')
+        contains(github.event.issue.labels.*.name, 'feature-request') &&
+        (! github.event.issue.state_reason == 'not-planned')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -65,7 +66,9 @@ jobs:
           labels: resolved/released
 
   move-to-resolved-incident:
-    if: github.event.action == 'closed' && (! contains(github.event.issue.labels.*.name, 'feature-request'))
+    if: github.event.action == 'closed' &&
+        (! contains(github.event.issue.labels.*.name, 'feature-request')) &&
+        (! github.event.issue.state_reason == 'not-planned')
     runs-on: ubuntu-latest
     permissions:
       contents: read
