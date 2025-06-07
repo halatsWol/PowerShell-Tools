@@ -120,3 +120,20 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           assignees: ''
+
+  move-to-rejected:
+    if: github.event.action == 'closed' &&
+        github.event.issue.state_reason == 'not-planned' &&
+        contains(github.event.issue.labels.*.name, 'feature-request')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Set Status to Rejected
+        uses: nipe0324/update-project-v2-item-field@v2.0.2
+        with:
+          project-url: https://github.com/users/halatsWol/projects/3
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          field-name: Status
+          field-value: Rejected
