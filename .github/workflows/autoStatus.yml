@@ -45,8 +45,8 @@ jobs:
   move-to-shipped:
     if: github.event.action == 'closed'  &&
         contains(github.event.issue.labels.*.name, 'feature-request') &&
-        (! github.event.issue.state_reason == 'not-planned') &&
-        (! github.event.issue.state_reason == 'duplicate')
+        github.event.issue.state_reason != 'not-planned' &&
+        github.event.issue.state_reason != 'duplicate'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,8 +69,8 @@ jobs:
   move-to-resolved-incident:
     if: github.event.action == 'closed' &&
         (! contains(github.event.issue.labels.*.name, 'feature-request')) &&
-        (! github.event.issue.state_reason == 'not-planned') &&
-        (! github.event.issue.state_reason == 'duplicate')
+        github.event.issue.state_reason != 'not-planned' &&
+        github.event.issue.state_reason != 'duplicate'
     runs-on: ubuntu-latest
     permissions:
       contents: read
