@@ -21,7 +21,7 @@ jobs:
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
 
   move-to-in-progress:
-    if: github.event.action == 'assigned' || github.event.action == 'reopened'
+    if: github.event.action == 'assigned'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -49,3 +49,18 @@ jobs:
           github-token: ${{ secrets.GH_PROJECT_TOKEN }}
           field-name: Status
           field-value: Shipped
+
+  move-to-shipped:
+    if: github.event.action == 'closed' && (! contains(github.event.issue.labels.*.name, 'feature-request'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Set Status to Shipped
+        uses: nipe0324/update-project-v2-item-field@v2.0.2
+        with:
+          project-url: https://github.com/users/halatsWol/projects/3
+          github-token: ${{ secrets.GH_PROJECT_TOKEN }}
+          field-name: Status
+          field-value: Resolved
