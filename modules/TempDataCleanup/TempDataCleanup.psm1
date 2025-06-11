@@ -124,7 +124,7 @@ function Start-UserCleanup {
                 Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
             }
             #cleanup $teamsClassicPath
-            $path = "C:\Users\$userProfile$teamsClassicPath"
+            $path = Join-Path "C:\Users\$userProfile" $teamsClassicPath
             if (Test-Path $path) {
                 Add-Content -Path $logfile -Value "`t`t> $path"
                 Remove-Item -Path "$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
