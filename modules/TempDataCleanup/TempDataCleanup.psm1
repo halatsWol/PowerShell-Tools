@@ -98,6 +98,7 @@ function Start-UserCleanup {
         }
 
         if($IncludeMSTeamsCache) {
+            Get-Process ms-teams -ErrorAction SilentlyContinue | stop-process -Force 
             $path = "C:\Users\$userProfile$msTeamsCacheFolder"
             $bgPath="$path\Microsoft\MSTeams"
             $bgBackupPath="$path\.."
