@@ -343,7 +343,7 @@ function Invoke-WindowsUpdateCleanup {
         Write-Verbose "catroot2 folder does not exist. No need to rename."
     }
     Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
-    Write-Host "Starting Driagnostics..."
+    Write-Host "Starting Diagnostics..."
     $winDiagMsg="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tStarting Diagnostics:"
     Add-Content -Path $updateCleanupLog -Value "$winDiagMsg"
     Write-Verbose $winDiagMsg
