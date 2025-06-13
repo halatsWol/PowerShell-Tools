@@ -246,20 +246,20 @@ if ( -not $isElevated ) {
     }
 
 
-
-    # Notify the user
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-    $notification = New-Object System.Windows.Forms.NotifyIcon
-    $notification.Icon = [System.Drawing.SystemIcons]::Information
-    $notification.BalloonTipTitle = "Autodesk Uninstall Completed..."
-    $notification.BalloonTipText = "Please follow the instruction in the PowerShell-Window."
-    $notification.Visible = $true
-    $notification.ShowBalloonTip(30000)
-    # Activate the PS Window to notify the user
-    Add-Type -AssemblyName Microsoft.VisualBasic
-    [Microsoft.VisualBasic.Interaction]::AppActivate($PID)
-
+    if (-not $PSSenderInfo) {
+        # Notify the user
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $notification = New-Object System.Windows.Forms.NotifyIcon
+        $notification.Icon = [System.Drawing.SystemIcons]::Information
+        $notification.BalloonTipTitle = "Autodesk Uninstall Completed..."
+        $notification.BalloonTipText = "Please follow the instruction in the PowerShell-Window."
+        $notification.Visible = $true
+        $notification.ShowBalloonTip(30000)
+        # Activate the PS Window to notify the user
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        [Microsoft.VisualBasic.Interaction]::AppActivate($PID)
+    }
 
     Write-Host "`r`n Microsoft Office has been removed successfully." -ForegroundColor Green
     Write-Host " Please restart your computer to complete the uninstallation process." -ForegroundColor Yellow
