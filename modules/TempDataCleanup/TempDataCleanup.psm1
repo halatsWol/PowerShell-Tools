@@ -62,7 +62,7 @@ function Start-UserCleanup {
         Add-Content -Path $logfile -Value "`tUser Profile: $userProfile"
         try{
             foreach ($folder in $userTempFolders) {
-                $path = "C:\Users\$userProfile$folder"
+                $path = Join-Path "C:\Users\$userProfile" $folder
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t> $path"
                     Remove-Item -Path "\\?\$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
@@ -71,7 +71,7 @@ function Start-UserCleanup {
             }
             if ($IncludeSystemLogs) {
                 foreach ($folder in $userReportingDirs) {
-                    $path = "C:\Users\$userProfile$folder"
+                    $path = Join-Path "C:\Users\$userProfile" $folder
                     if (Test-Path $path) {
                         Add-Content -Path $logfile -Value "`t`t> $path"
                         Remove-Item -Path "\\?\$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
@@ -79,11 +79,11 @@ function Start-UserCleanup {
                 }
             }
             if ($IncludeIconCache) {
-                $path = "C:\Users\$userProfile$explorerCacheDir"
+                $path = Join-Path "C:\Users\$userProfile" $explorerCacheDir
                 Add-Content -Path $logfile -Value "`t`tcleaning Icon & ThumbCache:"
                 $pathI = "$path\iconcache*.db"
                 $pathT = "$path\thumbcache*.db"
-                $pathLI = "C:\Users\$userProfile$localIconCacheDB"
+                $pathLI = Join-Path "C:\Users\$userProfile" $localIconCacheDB
                 if (Test-Path $path) {
                     Add-Content -Path $logfile -Value "`t`t`t> $pathI"
                     Remove-Item -Path "$pathI" -Verbose:$VerboseOption -Force -ErrorAction SilentlyContinue
@@ -98,7 +98,8 @@ function Start-UserCleanup {
         }
 
         if($IncludeMSTeamsCache) {
-            $path = "C:\Users\$userProfile$msTeamsCacheFolder"
+            Get-Process ms-teams -ErrorAction SilentlyContinue | stop-process -Force 
+            $path = Join-Path "C:\Users\$userProfile" $msTeamsCacheFolder
             $bgPath="$path\Microsoft\MSTeams"
             $bgBackupPath="$path\.."
             #move $msTeamsCacheFolder\Microsoft\MSTeams\Backgrounds to $msTeamsCacheFolder
@@ -123,7 +124,7 @@ function Start-UserCleanup {
                 Move-Item -Path "$bgBackupPath\Backgrounds" -Destination "$bgPath" -Force -ErrorAction SilentlyContinue
             }
             #cleanup $teamsClassicPath
-            $path = "C:\Users\$userProfile$teamsClassicPath"
+            $path = Join-Path "C:\Users\$userProfile" $teamsClassicPath
             if (Test-Path $path) {
                 Add-Content -Path $logfile -Value "`t`t> $path"
                 Remove-Item -Path "$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue

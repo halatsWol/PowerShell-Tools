@@ -82,8 +82,7 @@ The [removeUserProfile.ps1](./scripts/removeUserProfile.ps1) Script is a tool to
 
 More scripts and modules will be added to this repository over time. Stay tuned for tools that will assist with:
 
-- System monitoring
-- Network diagnostics
+- Microsoft Office Removal
 - And more...
 
 ## Installation
