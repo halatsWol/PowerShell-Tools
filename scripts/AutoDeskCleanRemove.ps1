@@ -49,8 +49,100 @@ if ( -not $isElevated ) {
         }
     }
 
+    function Get-MsiLocalPackagePath {
+        param (
+            [Parameter(Mandatory)]
+            [string]$ProductCode
+        )
+
+        # Transform GUID to Installer format: {GUID} → GUID packed
+        function Convert-GuidToInstallerKey {
+            param (
+                [Parameter(Mandatory)]
+                [string]$guid
+            )
+            $guid = $guid.Trim('{}')
+            $parts = $guid -split '-'
+            function Get-ReverseOrder($hex) {
+                $hex=[string]$hex
+                $charArray = $hex.ToCharArray()
+                [Array]::Reverse($charArray)
+                return -join $charArray
+            }
+            # Rearrange according to MSI installer registry format
+            $ProductCode = ""
+            $ProductCode += [String](Get-ReverseOrder($parts[0])) + [String](Get-ReverseOrder($parts[1])) + [String](Get-ReverseOrder($parts[2]))
+            #split $parts[3] into parts of 2 characters each
+            $ProductCode += [String](($parts[3] -split '(.{2})' | ForEach-Object { [String](Get-ReverseOrder($_)) }) -join '')
+            $ProductCode += [String](($parts[4] -split '(.{2})' | ForEach-Object { [String](Get-ReverseOrder($_)) }) -join '')
+            return $ProductCode.ToUpper()
+        }
+
+        # check if guid is in registry uninstall keys
+        $uninstallRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+        $uninstallRegPathWow6432 = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+        $GuidRegPath = Join-Path -Path $uninstallRegPath -ChildPath $ProductCode
+        if (-not (Test-Path $GuidRegPath)) {
+            $GuidRegPath = Join-Path -Path $uninstallRegPathWow6432 -ChildPath $ProductCode
+            if (-not (Test-Path $GuidRegPath)) {
+                $GuidRegPath = $null
+            }
+        }
+
+        if ($null -ne $GuidRegPath) {
+            $InstallSource = Get-ItemProperty -Path $GuidRegPath -Name InstallSource -ErrorAction SilentlyContinue
+            if ($null -ne $InstallSource) {
+                $InstallSource = Get-Item "$InstallSource.InstallSource\*.msi" -ErrorAction SilentlyContinue
+                $InstallSource = $InstallSource.FullName
+                if ($null -ne $InstallSource) {
+                    return $InstallSource
+                }
+            }
+
+        }
+
+        # If not found in uninstall keys, try to find it in the Installer Products registry
+        $installerKey = Convert-GuidToInstallerKey $ProductCode
+        $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products\$installerKey\InstallProperties"
+        if (-not (Test-Path $regPath)) {
+            $regPath = "HKLM:\SOFTWARE\Classes\Installer\Products\$installerKey"
+            if (-not (Test-Path $regPath)) {
+                $regPath = "HKLM:\SOFTWARE\WOW6432Node\Classes\Installer\Products\$installerKey"
+            }
+
+            if (Test-Path $regPath) {
+                $localPackageSourceList = Get-ItemProperty -Path $regPath -Name SourceList -ErrorAction SilentlyContinue
+                if ($null -ne $localPackageSourceList) {
+                    $localPackageSource = $localPackageSourceList.LastUsedSource
+                    if ($localPackageSource -match "n;\d+;(.+)") {
+                        $localPackagePath = $matches[1]
+                        if (Test-Path $localPackagePath) {
+                            return $localPackagePath
+                        } else {
+                            return $null
+                        }
+                    }
+                } else {
+                    return $null
+                }
+                return $localPackage.LocalPackage
+            } else {
+                return $null
+            }
+        } else {
+            $localPackageSource = Get-ItemProperty -Path $regPath -Name LocalPackage -ErrorAction SilentlyContinue
+            $localPackageSource = $localPackageSource.LocalPackage
+            # check if $localPackagePath not null or empty, or if path exists
+            if ( -not [string]::IsNullOrEmpty($localPackageSource) -and (Test-Path $localPackageSource)  ) {
+                return $localPackageSource
+            } else {
+                return $null
+            }
+        }
+    }
+
     $UninstallersPath="C:\ProgramData\Autodesk\Uninstallers"
-    $UninstallHelperExeName="AdskUninstallHelper.exe"
+    $UninstallHelperBundleData="bundle_data.xml"
 
     # get folders in the Uninstallers path
     $UninstallersFolders = Get-ChildItem -Path $UninstallersPath -Directory -ea SilentlyContinue | Where-Object { $_.Name -ne "metadata" -and $_.Name -ne "Autodesk Access" -and $_.Name -ne "Autodesk Genuine Service" -and $_.Name -ne "Autodesk Installer" -and $_.Name -ne "Autodesk Identity Manager" -and $_.Name -ne "Autodesk Identity Manager Component" }
@@ -90,12 +182,49 @@ if ( -not $isElevated ) {
     foreach ($folder in $productsSorted) {
         if ($null -ne $folder) {
             $folderName = $folder.Name
-            $UninstallHelperExePath = Join-Path -Path $folder.FullName -ChildPath $UninstallHelperExeName
-            if (Test-Path -Path $UninstallHelperExePath) {
-                Write-Host "Running Uninstall Helper for $folderName"
-                Start-Process -FilePath $UninstallHelperExePath -Wait -NoNewWindow -ea SilentlyContinue
-                # close all message_router.exe if it is running
-                Get-Process -Name "message_router" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            $UninstallHelperBundleDataPath = Join-Path -Path $folder.FullName -ChildPath $UninstallHelperBundleData
+            if (Test-Path -Path $UninstallHelperBundleDataPath) {
+
+                $xmlContent = [xml](Get-Content -Path $UninstallHelperBundleDataPath -ErrorAction Stop)
+                $allPackages = @()
+                $bundleNodes = $xmlContent.SelectNodes('//bundleData')
+                foreach ($bundle in $bundleNodes) {
+                    $packageNodes = $bundle.SelectNodes('.//m_packages')
+                    foreach ($packageGroup in $packageNodes) {
+                        foreach ($item in $packageGroup.item) {
+                            $obj = [PSCustomObject]@{
+                                bundleName      = $bundleNodes.m_displayName
+                                bundleUPI2      = $bundleNodes.m_bundleUPI2
+                                packageType     = $item.m_packageType
+                                productCode     = $item.m_productCode
+                            }
+                            $allPackages += $obj
+                        }
+                    }
+                }
+                # Output all parsed items
+                if ($allPackages.Count -gt 0) {
+                    foreach ($package in $allPackages) {
+                        if ([int]$package.packageType -eq 0) {
+                            $productCode = $package.productCode
+                            if ($productCode) {
+                                Write-Host "Processing package with Product Code: $productCode"
+                                $localPackagePath = Get-MsiLocalPackagePath -ProductCode $productCode
+                                if ($null -ne $localPackagePath) {
+                                    if (Test-Path $localPackagePath) {
+                                        Write-Host "msiexec /x $productCode /qn"
+                                        Start-Process -FilePath "msiexec.exe" -ArgumentList "/x `"$productCode`" /qn" -Wait
+                                    } else {
+                                        Write-Warning "Not found $productCode`t> Skipping uninstallation."
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Write-Warning "No packages found in bundle data for $folderName"
+
+                }
             } else {
                 Write-Warning "Uninstall Helper not found for $folderName"
             }
@@ -330,3 +459,4 @@ if ( -not $isElevated ) {
         }
     }
 }
+
