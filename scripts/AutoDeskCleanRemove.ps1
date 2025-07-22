@@ -26,8 +26,12 @@
 #####################################################################################
 
 $MainLogPath = "C:\_ADSK_CleanUninstall\"
+$MsiLogPath = "C:\_ADSK_CleanUninstall\MSILogs\"
 if (-not (Test-Path $MainLogPath)) {
     New-Item -ItemType Directory -Path $MainLogPath -Force | Out-Null
+}
+if (-not (Test-Path $MsiLogPath)) {
+    New-Item -ItemType Directory -Path $MsiLogPath -Force | Out-Null
 }
 $MainLogPathFileName="ADSK_CleanUninstall_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
 $MainLogFile = Join-Path -Path $MainLogPath -ChildPath $MainLogPathFileName
@@ -396,8 +400,21 @@ if ( -not $isElevated ) {
                                 $localPackagePath = Get-MsiLocalPackagePath -ProductCode $productCode
                                 if ($null -ne $localPackagePath) {
                                     if (Test-Path $localPackagePath) {
+                                        $MsiLogFileName = "Uninstall_$($productCode)_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
+                                        $MsiLogFullPath = Join-Path -Path $MsiLogPath -ChildPath $MsiLogFileName
                                         Write-Log -Message "msiexec /x $productCode /qn" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
-                                        Start-Process -FilePath "msiexec.exe" -ArgumentList "/x `"$productCode`" /qn" -Wait
+                                        Start-Process -FilePath "msiexec.exe" -ArgumentList "/x `"$productCode`" /qn /l*x `"$MsiLogFullPath`"" -Wait
+                                        if (Test-Path $MsiLogFullPath) {
+                                            $MsiLogContent = Get-Content -Path $MsiLogFullPath -ErrorAction SilentlyContinue
+                                            if ($null -ne $MsiLogContent) {
+                                                Write-Log -Message "MSI Log for Product Code: $productCode`r`n{`r`n$($MsiLogContent -join "`r`n")`r`n}" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile -AddLogEntryData
+                                            } else {
+                                                Write-Log -Message "MSI Log file is empty for Product Code: $productCode" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
+                                            }
+                                            Remove-Item -Path $MsiLogFullPath -Force -ErrorAction SilentlyContinue
+                                        } else {
+                                            Write-Log -Message "MSI Log file not found for Product Code: $productCode" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
+                                        }
                                     } else {
                                         Write-Log -Message "Local package path not found for Product Code: $productCode" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
                                     }
@@ -590,8 +607,21 @@ if ( -not $isElevated ) {
     Stop-Service -Name "GenuineService" -Force -ErrorAction SilentlyContinue
     $adskGenuineSeviceGUID = (Get-WmiObject -Query "SELECT * FROM Win32_Product WHERE Name LIKE 'Autodesk Genuine Service%'").IdentifyingNumber
     if ($adskGenuineSeviceGUID) {
+        $MsiLogFileName = "MSIUninstall_adskGenuineService_$($adskGenuineSeviceGUID)__$((Get-Date).ToString('yyyyMMdd_HHmmss')).log"
+        $MsiLogFullPath = Join-Path -Path $MsiLogPath -ChildPath $MsiLogFileName
         Write-Log -Message "Uninstalling Autodesk Genuine Service with GUID: $adskGenuineSeviceGUID" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
-        Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $adskGenuineSeviceGUID /qn" -Wait
+        Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $adskGenuineSeviceGUID /qn /l*x `"$MsiLogFullPath`"" -Wait
+        if (Test-Path $MsiLogFullPath) {
+            $MsiLogContent = Get-Content -Path $MsiLogFullPath -ErrorAction SilentlyContinue
+            if ($null -ne $MsiLogContent) {
+                Write-Log -Message "MSI Log for Product Code: $productCode`r`n{`r`n$($MsiLogContent -join "`r`n")`r`n}" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile -AddLogEntryData
+            } else {
+                Write-Log -Message "MSI Log file is empty for Product Code: $productCode" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
+            }
+            Remove-Item -Path $MsiLogFullPath -Force -ErrorAction SilentlyContinue
+        } else {
+            Write-Log -Message "MSI Log file not found for Product Code: $productCode" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
+        }
     } else {
         Write-Log -Message "Autodesk Genuine Service not found." -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
     }
@@ -704,22 +734,22 @@ if ( -not $isElevated ) {
                 }
                 if ($shouldRemove) {
                     Remove-Item -Path $subkeyPath -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Log -Message "Removed registry key $subkeyPath" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
                 }
-                Write-Log -Message "Removed registry key $subkeyPath" -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
                 $RegistryTotalProgressPercentage += $RegistrySubKeyPercentage
                 Write-Progress -Activity "Post Uninstall: Registry Cleanup" -Status "$([math]::Round($RegistryTotalProgressPercentage, 2))% Complete:" -PercentComplete $RegistryTotalProgressPercentage -Id 3
                 $GlobalProgressPercentage = ($TotalUninstallProgressPercentage + $InstallDirTotalProgressPercentage + $RegistryTotalProgressPercentage) / 3
                 Write-Progress -Activity "Global Progress" -Status "$([math]::Round($GlobalProgressPercentage, 2))% Complete:" -PercentComplete $GlobalProgressPercentage -Id 0
             }
         } else {
-            Write-Log -Message "Registry key $key not found." -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
             $RegistryTotalProgressPercentage += $RegistryMainLocationsPercentage
             Write-Progress -Activity "Post Uninstall: Registry Cleanup" -Status "$([math]::Round($RegistryTotalProgressPercentage, 2))% Complete:" -PercentComplete $RegistryTotalProgressPercentage -Id 3
             $GlobalProgressPercentage = ($TotalUninstallProgressPercentage + $InstallDirTotalProgressPercentage + $RegistryTotalProgressPercentage) / 3
             Write-Progress -Activity "Global Progress" -Status "$([math]::Round($GlobalProgressPercentage, 2))% Complete:" -PercentComplete $GlobalProgressPercentage -Id 0
         }
     }
-    Write-Log -Message "Autodesk products uninstallation completed." -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
+    remove-item -Path $MsiLogPath -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Log -Message "Autodesk products uninstallation completed with Exit Code 0." -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
 
     if (-not $PSSenderInfo) {
         # Notify the user
