@@ -783,15 +783,6 @@ function Repair-System {
         New-Folder -FolderPath $localTempPath
     }
 
-    if(-not $noSfc){
-        $sfcLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_sfc-scannow.log"
-        $sfcExitCode=0
-        if($remote){
-            $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
-        } else {$sfcExitCode=Invoke-SFC $sfcLog $Quiet $VerboseOption}
-        $ExitCode[1]=$sfcExitCode
-    }
-
     if (-not $noDism) {
         $dismScanLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_scanHealth.log"
         $dismScanResult=0
@@ -829,6 +820,17 @@ function Repair-System {
                 Write-Output $message
             }
         }
+
+    if(-not $noSfc){
+        $sfcLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_sfc-scannow.log"
+        $sfcExitCode=0
+        if($remote){
+            $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
+        } else {$sfcExitCode=Invoke-SFC $sfcLog $Quiet $VerboseOption}
+        $ExitCode[1]=$sfcExitCode
+    }
+
+
 
         if ($IncludeComponentCleanup) {
             $analyzeComponentLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_analyze-component.log"
