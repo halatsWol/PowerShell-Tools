@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<DOCUMENT Type="Advanced Installer" CreateVersion="22.9.1" version="22.9.1" Modules="simple" RootPath="." Language="en" Id="{037E5747-AE4C-4DD5-9F2D-DDEAEA16A0D3}">
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiPropsComponent">
+    <ROW Property="AI_BITMAP_DISPLAY_MODE" Value="0"/>
+    <ROW Property="AI_PREDEF_LCONDS_PROPS" Value="AI_DETECTED_ADMIN_USER"/>
+    <ROW Property="ALLUSERS" Value="1" MultiBuildValue="DefaultBuild:2"/>
+    <ROW Property="ARPCOMMENTS" Value="This installer database contains the logic and data required to install [|ProductName]." ValueLocId="*"/>
+    <ROW Property="ARPCONTACT" Value="dev@kmarflow.com"/>
+    <ROW Property="ARPNOMODIFY" MultiBuildValue="DefaultBuild:1"/>
+    <ROW Property="ARPURLINFOABOUT" Value="https://www.kMarflow.com/"/>
+    <ROW Property="LIMITUI" MultiBuildValue="DefaultBuild:1"/>
+    <ROW Property="Manufacturer" Value="Marflow Software"/>
+    <ROW Property="ProductCode" Value="1033:{7D18C471-7D9D-4B95-82A1-19521EA9DAF7} " Type="16"/>
+    <ROW Property="ProductLanguage" Value="1033"/>
+    <ROW Property="ProductName" Value="PowerShell-Tools - Modules Suite"/>
+    <ROW Property="ProductVersion" Value="1.4" Options="32"/>
+    <ROW Property="REBOOT" MultiBuildValue="DefaultBuild:ReallySuppress"/>
+    <ROW Property="SecureCustomProperties" Value="OLDPRODUCTS;AI_NEWERPRODUCTFOUND"/>
+    <ROW Property="UpgradeCode" Value="{B648D4D6-1493-4DE5-82C8-8A5B76EDD0FC}"/>
+    <ROW Property="WindowsType9X" MultiBuildValue="DefaultBuild:Windows 9x/ME" ValueLocId="-"/>
+    <ROW Property="WindowsType9XDisplay" MultiBuildValue="DefaultBuild:Windows 9x/ME" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT40" MultiBuildValue="DefaultBuild:Windows NT 4.0" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT40Display" MultiBuildValue="DefaultBuild:Windows NT 4.0" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT50" MultiBuildValue="DefaultBuild:Windows 2000" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT50Display" MultiBuildValue="DefaultBuild:Windows 2000" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT5X" MultiBuildValue="DefaultBuild:Windows XP/2003" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT5XDisplay" MultiBuildValue="DefaultBuild:Windows XP/2003" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT60" MultiBuildValue="DefaultBuild:Windows Vista/Server 2008" ValueLocId="-"/>
+    <ROW Property="WindowsTypeNT60Display" MultiBuildValue="DefaultBuild:Windows Vista/Server 2008" ValueLocId="-"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiDirsComponent">
+    <ROW Directory="APPDIR" Directory_Parent="TARGETDIR" DefaultDir="APPDIR:." IsPseudoRoot="1" DirectoryOptions="3"/>
+    <ROW Directory="CommonFiles64Folder" Directory_Parent="TARGETDIR" DefaultDir="COMMON~1|CommonFiles64Folder" IsPseudoRoot="1"/>
+    <ROW Directory="Modules_Dir" Directory_Parent="PowerShell_Dir" DefaultDir="Modules"/>
+    <ROW Directory="NewFolder_Dir" Directory_Parent="WindowsPowerShell_Dir" DefaultDir="Modules"/>
+    <ROW Directory="PowerShell_Dir" Directory_Parent="CommonFiles64Folder" DefaultDir="POWERS~1|PowerShell"/>
+    <ROW Directory="RepairSystem_1_Dir" Directory_Parent="Modules_Dir" DefaultDir="REPAIR~1|Repair-System"/>
+    <ROW Directory="RepairSystem_Dir" Directory_Parent="NewFolder_Dir" DefaultDir="REPAIR~1|Repair-System"/>
+    <ROW Directory="Shortcuts_1_Dir" Directory_Parent="Modules_Dir" DefaultDir="SHORTC~1|Shortcuts"/>
+    <ROW Directory="Shortcuts_Dir" Directory_Parent="NewFolder_Dir" DefaultDir="SHORTC~1|Shortcuts"/>
+    <ROW Directory="TARGETDIR" DefaultDir="SourceDir"/>
+    <ROW Directory="TempDataCleanup_1_Dir" Directory_Parent="NewFolder_Dir" DefaultDir="TEMPDA~1|TempDataCleanup"/>
+    <ROW Directory="TempDataCleanup_Dir" Directory_Parent="Modules_Dir" DefaultDir="TEMPDA~1|TempDataCleanup"/>
+    <ROW Directory="WindowsPowerShell_Dir" Directory_Parent="CommonFiles64Folder" DefaultDir="WINDOW~1|WindowsPowerShell"/>
+    <ROW Directory="enUS_1_Dir" Directory_Parent="Shortcuts_Dir" DefaultDir="en-US"/>
+    <ROW Directory="enUS_2_Dir" Directory_Parent="RepairSystem_Dir" DefaultDir="en-US"/>
+    <ROW Directory="enUS_3_Dir" Directory_Parent="RepairSystem_1_Dir" DefaultDir="en-US"/>
+    <ROW Directory="enUS_4_Dir" Directory_Parent="Shortcuts_1_Dir" DefaultDir="en-US"/>
+    <ROW Directory="enUS_5_Dir" Directory_Parent="TempDataCleanup_Dir" DefaultDir="en-US"/>
+    <ROW Directory="enUS_Dir" Directory_Parent="TempDataCleanup_1_Dir" DefaultDir="en-US"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.SideBySideGuidComponent">
+    <ROW Component="APPDIR" Value="{582D3C4E-BE7A-470C-81F9-B37F3A672D5F}"/>
+    <ROW Component="ProductInformation" Value="{69027C41-5737-4ABC-B71D-238279267433}"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiCompsComponent">
+    <ROW Component="AI_INSTALLPERUSER" ComponentId="{41BDFBB4-9E97-42BD-9AB0-54BF86F21C77}" Directory_="APPDIR" Attributes="260" KeyPath="AI_INSTALLPERUSER" Options="1"/>
+    <ROW Component="APPDIR" ComponentId="{582D3C4E-BE7A-470C-81F9-B37F3A672D5F}" Directory_="APPDIR" Attributes="0"/>
+    <ROW Component="Modules" ComponentId="{13119785-1482-4E6B-9AAA-B24F261D7591}" Directory_="Modules_Dir" Attributes="0"/>
+    <ROW Component="ProductInformation" ComponentId="{69027C41-5737-4ABC-B71D-238279267433}" Directory_="APPDIR" Attributes="260" KeyPath="Version"/>
+    <ROW Component="about_RepairSystem.help.txt" ComponentId="{52991D19-9B94-48C2-97D3-EB8F4CC5E12C}" Directory_="enUS_2_Dir" Attributes="0" KeyPath="about_RepairSystem.help.txt" Type="0"/>
+    <ROW Component="about_RepairSystem.help.txt_1" ComponentId="{D4AA1278-16F7-4147-BA45-5D1790A8E9EE}" Directory_="enUS_3_Dir" Attributes="0" KeyPath="about_RepairSystem.help.txt_1" Type="0"/>
+    <ROW Component="about_Shortcuts.help.txt" ComponentId="{0C7733BF-DFA5-4A5D-B44E-AC6741DAA50F}" Directory_="enUS_1_Dir" Attributes="0" KeyPath="about_Shortcuts.help.txt" Type="0"/>
+    <ROW Component="about_Shortcuts.help.txt_1" ComponentId="{3C53E5B1-DE6D-45EF-84F0-4DF1ADBF9864}" Directory_="enUS_4_Dir" Attributes="0" KeyPath="about_Shortcuts.help.txt_1" Type="0"/>
+    <ROW Component="about_TempDataCleanup.help.txt" ComponentId="{10F79A90-F65B-4CBB-AFF2-19F74A15DA90}" Directory_="enUS_Dir" Attributes="0" KeyPath="about_TempDataCleanup.help.txt" Type="0"/>
+    <ROW Component="about_TempDataCleanup.help.txt_1" ComponentId="{7D206DFE-051D-4C3A-968A-0AEA78B15B96}" Directory_="enUS_5_Dir" Attributes="0" KeyPath="about_TempDataCleanup.help.txt_1" Type="0"/>
+    <ROW Component="install.cmd" ComponentId="{5F7A3272-0CBE-4930-8E51-F84B71643D4A}" Directory_="TempDataCleanup_1_Dir" Attributes="0" KeyPath="README.MD" Type="0"/>
+    <ROW Component="install.cmd_1" ComponentId="{A71F3C50-AEE1-4E3C-B0A9-E785C8248146}" Directory_="Shortcuts_Dir" Attributes="0" KeyPath="README.MD_1" Type="0"/>
+    <ROW Component="install.cmd_2" ComponentId="{467AA67C-1421-416C-8672-2AF3E13F29E8}" Directory_="RepairSystem_Dir" Attributes="0" KeyPath="README.MD_2" Type="0"/>
+    <ROW Component="install.cmd_3" ComponentId="{9D99E0A4-B969-4508-995B-F9963F77B53B}" Directory_="RepairSystem_1_Dir" Attributes="0" KeyPath="install.cmd" Type="0"/>
+    <ROW Component="install.cmd_4" ComponentId="{A8B5CD75-DD67-4E00-9FEE-3B2C8667B9AB}" Directory_="Shortcuts_1_Dir" Attributes="0" KeyPath="install.cmd_2" Type="0"/>
+    <ROW Component="install.cmd_5" ComponentId="{562AA4DB-2401-4651-9BC1-6C76E28FCD3F}" Directory_="TempDataCleanup_Dir" Attributes="0" KeyPath="install.cmd_3" Type="0"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiFeatsComponent">
+    <ROW Feature="MainFeature" Title="MainFeature" Description="Description" Display="1" Level="1" Directory_="APPDIR" Attributes="0"/>
+    <ATTRIBUTE name="CurrentFeature" value="MainFeature"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiFilesComponent">
+    <ROW File="about_TempDataCleanup.help.txt" Component_="about_TempDataCleanup.help.txt" FileName="ABOUT_~1.TXT|about_TempDataCleanup.help.txt" Attributes="0" SourcePath="modules\TempDataCleanup\en-US\about_TempDataCleanup.help.txt" SelfReg="false"/>
+    <ROW File="README.MD" Component_="install.cmd" FileName="README.MD" Attributes="0" SourcePath="modules\TempDataCleanup\README.MD" SelfReg="false"/>
+    <ROW File="TempDataCleanup.psd1" Component_="install.cmd" FileName="TEMPDA~1.PSD|TempDataCleanup.psd1" Attributes="0" SourcePath="modules\TempDataCleanup\TempDataCleanup.psd1" SelfReg="false"/>
+    <ROW File="TempDataCleanup.psm1" Component_="install.cmd" FileName="TEMPDA~1.PSM|TempDataCleanup.psm1" Attributes="0" SourcePath="modules\TempDataCleanup\TempDataCleanup.psm1" SelfReg="false"/>
+    <ROW File="about_Shortcuts.help.txt" Component_="about_Shortcuts.help.txt" FileName="ABOUT_~1.TXT|about_Shortcuts.help.txt" Attributes="0" SourcePath="modules\Shortcuts\en-US\about_Shortcuts.help.txt" SelfReg="false"/>
+    <ROW File="README.MD_1" Component_="install.cmd_1" FileName="README.MD" Attributes="0" SourcePath="modules\Shortcuts\README.MD" SelfReg="false"/>
+    <ROW File="Shortcuts.psd1" Component_="install.cmd_1" FileName="SHORTC~1.PSD|Shortcuts.psd1" Attributes="0" SourcePath="modules\Shortcuts\Shortcuts.psd1" SelfReg="false"/>
+    <ROW File="Shortcuts.psm1" Component_="install.cmd_1" FileName="SHORTC~1.PSM|Shortcuts.psm1" Attributes="0" SourcePath="modules\Shortcuts\Shortcuts.psm1" SelfReg="false"/>
+    <ROW File="about_RepairSystem.help.txt" Component_="about_RepairSystem.help.txt" FileName="ABOUT_~1.TXT|about_RepairSystem.help.txt" Attributes="0" SourcePath="modules\Repair-System\en-US\about_RepairSystem.help.txt" SelfReg="false"/>
+    <ROW File="README.MD_2" Component_="install.cmd_2" FileName="README.MD" Attributes="0" SourcePath="modules\Repair-System\README.MD" SelfReg="false"/>
+    <ROW File="RepairSystem.psd1" Component_="install.cmd_2" FileName="REPAIR~1.PSD|RepairSystem.psd1" Attributes="0" SourcePath="modules\Repair-System\RepairSystem.psd1" SelfReg="false"/>
+    <ROW File="RepairSystem.psm1" Component_="install.cmd_2" FileName="REPAIR~1.PSM|RepairSystem.psm1" Attributes="0" SourcePath="modules\Repair-System\RepairSystem.psm1" SelfReg="false"/>
+    <ROW File="about_RepairSystem.help.txt_1" Component_="about_RepairSystem.help.txt_1" FileName="ABOUT_~1.TXT|about_RepairSystem.help.txt" Attributes="0" SourcePath="modules\Repair-System\en-US\about_RepairSystem.help.txt" SelfReg="false"/>
+    <ROW File="install.cmd" Component_="install.cmd_3" FileName="install.cmd" Attributes="0" SourcePath="modules\Repair-System\install.cmd" SelfReg="false"/>
+    <ROW File="README.MD_3" Component_="install.cmd_3" FileName="README.MD" Attributes="0" SourcePath="modules\Repair-System\README.MD" SelfReg="false"/>
+    <ROW File="RepairSystem.psd1_1" Component_="install.cmd_3" FileName="REPAIR~1.PSD|RepairSystem.psd1" Attributes="0" SourcePath="modules\Repair-System\RepairSystem.psd1" SelfReg="false"/>
+    <ROW File="RepairSystem.psm1_1" Component_="install.cmd_3" FileName="REPAIR~1.PSM|RepairSystem.psm1" Attributes="0" SourcePath="modules\Repair-System\RepairSystem.psm1" SelfReg="false"/>
+    <ROW File="about_Shortcuts.help.txt_1" Component_="about_Shortcuts.help.txt_1" FileName="ABOUT_~1.TXT|about_Shortcuts.help.txt" Attributes="0" SourcePath="modules\Shortcuts\en-US\about_Shortcuts.help.txt" SelfReg="false"/>
+    <ROW File="install.cmd_2" Component_="install.cmd_4" FileName="install.cmd" Attributes="0" SourcePath="modules\Shortcuts\install.cmd" SelfReg="false"/>
+    <ROW File="README.MD_4" Component_="install.cmd_4" FileName="README.MD" Attributes="0" SourcePath="modules\Shortcuts\README.MD" SelfReg="false"/>
+    <ROW File="Shortcuts.psd1_1" Component_="install.cmd_4" FileName="SHORTC~1.PSD|Shortcuts.psd1" Attributes="0" SourcePath="modules\Shortcuts\Shortcuts.psd1" SelfReg="false"/>
+    <ROW File="Shortcuts.psm1_1" Component_="install.cmd_4" FileName="SHORTC~1.PSM|Shortcuts.psm1" Attributes="0" SourcePath="modules\Shortcuts\Shortcuts.psm1" SelfReg="false"/>
+    <ROW File="about_TempDataCleanup.help.txt_1" Component_="about_TempDataCleanup.help.txt_1" FileName="ABOUT_~1.TXT|about_TempDataCleanup.help.txt" Attributes="0" SourcePath="modules\TempDataCleanup\en-US\about_TempDataCleanup.help.txt" SelfReg="false"/>
+    <ROW File="install.cmd_3" Component_="install.cmd_5" FileName="install.cmd" Attributes="0" SourcePath="modules\TempDataCleanup\install.cmd" SelfReg="false"/>
+    <ROW File="README.MD_5" Component_="install.cmd_5" FileName="README.MD" Attributes="0" SourcePath="modules\TempDataCleanup\README.MD" SelfReg="false"/>
+    <ROW File="TempDataCleanup.psd1_1" Component_="install.cmd_5" FileName="TEMPDA~1.PSD|TempDataCleanup.psd1" Attributes="0" SourcePath="modules\TempDataCleanup\TempDataCleanup.psd1" SelfReg="false"/>
+    <ROW File="TempDataCleanup.psm1_1" Component_="install.cmd_5" FileName="TEMPDA~1.PSM|TempDataCleanup.psm1" Attributes="0" SourcePath="modules\TempDataCleanup\TempDataCleanup.psm1" SelfReg="false"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.AiPersistentPropComponent">
+    <ROW Property="AI_INSTALLPERUSER" Registry="AI_INSTALLPERUSER" HklmSearch="AI_INSTALLPERUSER" HkcuSearch="AI_INSTALLPERUSER_1" Hklm64Search="AI_INSTALLPERUSER_2" Hkcu64Search="AI_INSTALLPERUSER_3"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.BootstrapperUISequenceComponent">
+    <ROW Action="AI_DetectSoftware" Sequence="151"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.BuildComponent">
+    <ROW BuildKey="DefaultBuild" BuildName="DefaultBuild" BuildOrder="1" BuildType="0" Languages="en" InstallationType="4" SummInfoMetadata="Page Count:450" UseLargeSchema="true" MsiPackageType="x64"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.DictionaryComponent">
+    <ROW Path="&lt;AI_DICTS&gt;ui.ail"/>
+    <ROW Path="&lt;AI_DICTS&gt;ui_en.ail"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.FragmentComponent">
+    <ROW Fragment="CommonUI.aip" Path="&lt;AI_FRAGS&gt;CommonUI.aip"/>
+    <ROW Fragment="FolderDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\FolderDlg.aip"/>
+    <ROW Fragment="InstallTypeDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\InstallTypeDlg.aip"/>
+    <ROW Fragment="LicenseAgreementDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\LicenseAgreementDlg.aip"/>
+    <ROW Fragment="MaintenanceTypeDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\MaintenanceTypeDlg.aip"/>
+    <ROW Fragment="MaintenanceWelcomeDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\MaintenanceWelcomeDlg.aip"/>
+    <ROW Fragment="SequenceDialogs.aip" Path="&lt;AI_THEMES&gt;classic\fragments\SequenceDialogs.aip"/>
+    <ROW Fragment="Sequences.aip" Path="&lt;AI_FRAGS&gt;Sequences.aip"/>
+    <ROW Fragment="StaticUIStrings.aip" Path="&lt;AI_FRAGS&gt;StaticUIStrings.aip"/>
+    <ROW Fragment="Themes.aip" Path="&lt;AI_FRAGS&gt;Themes.aip"/>
+    <ROW Fragment="UI.aip" Path="&lt;AI_THEMES&gt;classic\fragments\UI.aip"/>
+    <ROW Fragment="Validation.aip" Path="&lt;AI_FRAGS&gt;Validation.aip"/>
+    <ROW Fragment="VerifyRemoveDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\VerifyRemoveDlg.aip"/>
+    <ROW Fragment="VerifyRepairDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\VerifyRepairDlg.aip"/>
+    <ROW Fragment="WelcomeDlg.aip" Path="&lt;AI_THEMES&gt;classic\fragments\WelcomeDlg.aip"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiAppSearchComponent">
+    <ROW Property="AI_INSTALLPERUSER" Signature_="AI_INSTALLPERUSER"/>
+    <ROW Property="AI_INSTALLPERUSER" Signature_="AI_INSTALLPERUSER_1"/>
+    <ROW Property="AI_INSTALLPERUSER" Signature_="AI_INSTALLPERUSER_2"/>
+    <ROW Property="AI_INSTALLPERUSER" Signature_="AI_INSTALLPERUSER_3"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiBinaryComponent">
+    <ROW Name="SoftwareDetector.dll" SourcePath="&lt;AI_CUSTACTS&gt;SoftwareDetector.dll"/>
+    <ROW Name="aicustact.dll" SourcePath="&lt;AI_CUSTACTS&gt;aicustact.dll"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiControlComponent">
+    <ROW Dialog_="LicenseAgreementDlg" Control="AgreementText" Type="ScrollableText" X="20" Y="60" Width="330" Height="120" Attributes="7" Text="LICENSE.rtf" Order="400" TextLocId="Control.Text.LicenseAgreementDlg#AgreementText" MsiKey="LicenseAgreementDlg#AgreementText"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiControlEventComponent">
+    <ROW Dialog_="WelcomeDlg" Control_="Next" Event="NewDialog" Argument="InstallTypeDlg" Condition="AI_INSTALL" Ordering="1"/>
+    <ROW Dialog_="FolderDlg" Control_="Next" Event="NewDialog" Argument="VerifyReadyDlg" Condition="AI_INSTALL" Ordering="201"/>
+    <ROW Dialog_="FolderDlg" Control_="Back" Event="NewDialog" Argument="LicenseAgreementDlg" Condition="AI_INSTALL" Ordering="1"/>
+    <ROW Dialog_="MaintenanceWelcomeDlg" Control_="Next" Event="NewDialog" Argument="MaintenanceTypeDlg" Condition="AI_MAINT" Ordering="99"/>
+    <ROW Dialog_="VerifyReadyDlg" Control_="Install" Event="EndDialog" Argument="Return" Condition="AI_MAINT" Ordering="198"/>
+    <ROW Dialog_="VerifyReadyDlg" Control_="Back" Event="NewDialog" Argument="CustomizeDlg" Condition="AI_MAINT" Ordering="202"/>
+    <ROW Dialog_="VerifyReadyDlg" Control_="Install" Event="EndDialog" Argument="Return" Condition="AI_INSTALL" Ordering="197"/>
+    <ROW Dialog_="VerifyReadyDlg" Control_="Back" Event="NewDialog" Argument="FolderDlg" Condition="AI_INSTALL" Ordering="201"/>
+    <ROW Dialog_="CustomizeDlg" Control_="Next" Event="NewDialog" Argument="VerifyReadyDlg" Condition="AI_MAINT" Ordering="101"/>
+    <ROW Dialog_="CustomizeDlg" Control_="Back" Event="NewDialog" Argument="MaintenanceTypeDlg" Condition="AI_MAINT" Ordering="1"/>
+    <ROW Dialog_="MaintenanceTypeDlg" Control_="ChangeButton" Event="NewDialog" Argument="CustomizeDlg" Condition="AI_MAINT" Ordering="501"/>
+    <ROW Dialog_="MaintenanceTypeDlg" Control_="Back" Event="NewDialog" Argument="MaintenanceWelcomeDlg" Condition="AI_MAINT" Ordering="1"/>
+    <ROW Dialog_="MaintenanceTypeDlg" Control_="RemoveButton" Event="NewDialog" Argument="VerifyRemoveDlg" Condition="AI_MAINT AND InstallMode=&quot;Remove&quot;" Ordering="601"/>
+    <ROW Dialog_="VerifyRemoveDlg" Control_="Back" Event="NewDialog" Argument="MaintenanceTypeDlg" Condition="AI_MAINT AND InstallMode=&quot;Remove&quot;" Ordering="1"/>
+    <ROW Dialog_="MaintenanceTypeDlg" Control_="RepairButton" Event="NewDialog" Argument="VerifyRepairDlg" Condition="AI_MAINT AND InstallMode=&quot;Repair&quot;" Ordering="601"/>
+    <ROW Dialog_="VerifyRepairDlg" Control_="Back" Event="NewDialog" Argument="MaintenanceTypeDlg" Condition="AI_MAINT AND InstallMode=&quot;Repair&quot;" Ordering="1"/>
+    <ROW Dialog_="VerifyRepairDlg" Control_="Repair" Event="EndDialog" Argument="Return" Condition="AI_MAINT AND InstallMode=&quot;Repair&quot;" Ordering="399" Options="1"/>
+    <ROW Dialog_="VerifyRemoveDlg" Control_="Remove" Event="EndDialog" Argument="Return" Condition="AI_MAINT AND InstallMode=&quot;Remove&quot;" Ordering="299" Options="1"/>
+    <ROW Dialog_="PatchWelcomeDlg" Control_="Next" Event="NewDialog" Argument="VerifyReadyDlg" Condition="AI_PATCH" Ordering="201"/>
+    <ROW Dialog_="ResumeDlg" Control_="Install" Event="EndDialog" Argument="Return" Condition="AI_RESUME" Ordering="299"/>
+    <ROW Dialog_="LicenseAgreementDlg" Control_="Next" Event="NewDialog" Argument="FolderDlg" Condition="AI_INSTALL" Ordering="1"/>
+    <ROW Dialog_="LicenseAgreementDlg" Control_="Back" Event="NewDialog" Argument="InstallTypeDlg" Condition="AI_INSTALL" Ordering="1"/>
+    <ROW Dialog_="InstallTypeDlg" Control_="Next" Event="NewDialog" Argument="LicenseAgreementDlg" Condition="AI_INSTALL" Ordering="101"/>
+    <ROW Dialog_="VerifyReadyDlg" Control_="Install" Event="EndDialog" Argument="Return" Condition="AI_PATCH" Ordering="199"/>
+    <ROW Dialog_="VerifyReadyDlg" Control_="Back" Event="NewDialog" Argument="PatchWelcomeDlg" Condition="AI_PATCH" Ordering="203"/>
+    <ROW Dialog_="InstallTypeDlg" Control_="Back" Event="NewDialog" Argument="WelcomeDlg" Condition="AI_INSTALL" Ordering="1"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiCreateFolderComponent">
+    <ROW Directory_="APPDIR" Component_="APPDIR" ManualDelete="true"/>
+    <ROW Directory_="Modules_Dir" Component_="Modules" ManualDelete="false"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiCustActComponent">
+    <ROW Action="AI_AuthorSinglePackage" Type="1" Source="aicustact.dll" Target="AI_AuthorSinglePackage" WithoutSeq="true"/>
+    <ROW Action="AI_DOWNGRADE" Type="19" Target="4010"/>
+    <ROW Action="AI_DetectSoftware" Type="257" Source="SoftwareDetector.dll" Target="OnDetectSoftware"/>
+    <ROW Action="AI_DpiContentScale" Type="1" Source="aicustact.dll" Target="DpiContentScale"/>
+    <ROW Action="AI_EnableDebugLog" Type="321" Source="aicustact.dll" Target="EnableDebugLog"/>
+    <ROW Action="AI_InstallModeCheck" Type="1" Source="aicustact.dll" Target="UpdateInstallMode" WithoutSeq="true"/>
+    <ROW Action="AI_PREPARE_UPGRADE" Type="65" Source="aicustact.dll" Target="PrepareUpgrade"/>
+    <ROW Action="AI_PRESERVE_INSTALL_TYPE" Type="65" Source="aicustact.dll" Target="PreserveInstallType"/>
+    <ROW Action="AI_RESTORE_LOCATION" Type="65" Source="aicustact.dll" Target="RestoreLocation"/>
+    <ROW Action="AI_ResolveKnownFolders" Type="1" Source="aicustact.dll" Target="AI_ResolveKnownFolders"/>
+    <ROW Action="AI_SETMIXINSTLOCATION" Type="1" Source="aicustact.dll" Target="MixedAllUsersInstallLocation"/>
+    <ROW Action="AI_SHOW_LOG" Type="65" Source="aicustact.dll" Target="LaunchLogFile" WithoutSeq="true"/>
+    <ROW Action="AI_STORE_LOCATION" Type="51" Source="ARPINSTALLLOCATION" Target="[APPDIR]"/>
+    <ROW Action="SET_APPDIR" Type="307" Source="APPDIR" Target="[ProgramFilesFolder][Manufacturer]\[ProductName]" MultiBuildTarget="DefaultBuild:[AI_UserProgramFiles][Manufacturer]\[ProductName]"/>
+    <ROW Action="SET_SHORTCUTDIR" Type="307" Source="SHORTCUTDIR" Target="[ProgramMenuFolder][ProductName]"/>
+    <ROW Action="SET_TARGETDIR_TO_APPDIR" Type="51" Source="TARGETDIR" Target="[APPDIR]"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiFeatCompsComponent">
+    <ROW Feature_="MainFeature" Component_="APPDIR"/>
+    <ROW Feature_="MainFeature" Component_="ProductInformation"/>
+    <ROW Feature_="MainFeature" Component_="about_TempDataCleanup.help.txt"/>
+    <ROW Feature_="MainFeature" Component_="install.cmd"/>
+    <ROW Feature_="MainFeature" Component_="Modules"/>
+    <ROW Feature_="MainFeature" Component_="about_Shortcuts.help.txt"/>
+    <ROW Feature_="MainFeature" Component_="install.cmd_1"/>
+    <ROW Feature_="MainFeature" Component_="about_RepairSystem.help.txt"/>
+    <ROW Feature_="MainFeature" Component_="install.cmd_2"/>
+    <ROW Feature_="MainFeature" Component_="about_RepairSystem.help.txt_1"/>
+    <ROW Feature_="MainFeature" Component_="install.cmd_3"/>
+    <ROW Feature_="MainFeature" Component_="about_Shortcuts.help.txt_1"/>
+    <ROW Feature_="MainFeature" Component_="install.cmd_4"/>
+    <ROW Feature_="MainFeature" Component_="about_TempDataCleanup.help.txt_1"/>
+    <ROW Feature_="MainFeature" Component_="install.cmd_5"/>
+    <ROW Feature_="MainFeature" Component_="AI_INSTALLPERUSER"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiInstExSeqComponent">
+    <ROW Action="AI_DOWNGRADE" Condition="AI_NEWERPRODUCTFOUND AND (UILevel &lt;&gt; 5)" Sequence="210"/>
+    <ROW Action="AI_RESTORE_LOCATION" Condition="APPDIR=&quot;&quot;" Sequence="749"/>
+    <ROW Action="AI_STORE_LOCATION" Condition="(Not Installed) OR REINSTALL" Sequence="1501"/>
+    <ROW Action="AI_PREPARE_UPGRADE" Condition="AI_UPGRADE=&quot;No&quot; AND (Not Installed)" Sequence="1399"/>
+    <ROW Action="AI_ResolveKnownFolders" Sequence="52"/>
+    <ROW Action="AI_EnableDebugLog" Sequence="51"/>
+    <ROW Action="AI_DetectSoftware" Sequence="101"/>
+    <ROW Action="AI_SETMIXINSTLOCATION" Sequence="748"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiInstallUISequenceComponent">
+    <ROW Action="AI_PRESERVE_INSTALL_TYPE" Sequence="199"/>
+    <ROW Action="AI_RESTORE_LOCATION" Condition="APPDIR=&quot;&quot;" Sequence="749"/>
+    <ROW Action="AI_ResolveKnownFolders" Sequence="53"/>
+    <ROW Action="AI_DpiContentScale" Sequence="52"/>
+    <ROW Action="AI_EnableDebugLog" Sequence="51"/>
+    <ROW Action="AI_DetectSoftware" Sequence="101"/>
+    <ROW Action="AI_SETMIXINSTLOCATION" Sequence="748"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiLaunchConditionsComponent">
+    <ROW Condition="((VersionNT &lt;&gt; 501) AND (VersionNT &lt;&gt; 502))" Description="[ProductName] cannot be installed on [WindowsTypeNT5XDisplay]." DescriptionLocId="AI.LaunchCondition.NoNT5X" IsPredefined="true" Builds="DefaultBuild"/>
+    <ROW Condition="(VersionNT &lt;&gt; 400)" Description="[ProductName] cannot be installed on [WindowsTypeNT40Display]." DescriptionLocId="AI.LaunchCondition.NoNT40" IsPredefined="true" Builds="DefaultBuild"/>
+    <ROW Condition="(VersionNT &lt;&gt; 500)" Description="[ProductName] cannot be installed on [WindowsTypeNT50Display]." DescriptionLocId="AI.LaunchCondition.NoNT50" IsPredefined="true" Builds="DefaultBuild"/>
+    <ROW Condition="(VersionNT &lt;&gt; 600)" Description="[ProductName] cannot be installed on [WindowsTypeNT60Display]." DescriptionLocId="AI.LaunchCondition.NoNT60" IsPredefined="true" Builds="DefaultBuild"/>
+    <ROW Condition="VersionNT" Description="[ProductName] cannot be installed on [WindowsType9XDisplay]." DescriptionLocId="AI.LaunchCondition.No9X" IsPredefined="true" Builds="DefaultBuild"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiRegLocatorComponent">
+    <ROW Signature_="AI_INSTALLPERUSER" Root="2" Key="Software\[Manufacturer]\[UpgradeCode]" Name="AI_INSTALLPERUSER" Type="2"/>
+    <ROW Signature_="AI_INSTALLPERUSER_1" Root="1" Key="Software\[Manufacturer]\[UpgradeCode]" Name="AI_INSTALLPERUSER" Type="2"/>
+    <ROW Signature_="AI_INSTALLPERUSER_2" Root="2" Key="Software\[Manufacturer]\[UpgradeCode]" Name="AI_INSTALLPERUSER" Type="18"/>
+    <ROW Signature_="AI_INSTALLPERUSER_3" Root="1" Key="Software\[Manufacturer]\[UpgradeCode]" Name="AI_INSTALLPERUSER" Type="18"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiRegsComponent">
+    <ROW Registry="AI_INSTALLPERUSER" Root="-1" Key="Software\[Manufacturer]\[UpgradeCode]" Name="AI_INSTALLPERUSER" Value="[AI_INSTALLPERUSER]" Component_="AI_INSTALLPERUSER"/>
+    <ROW Registry="Manufacturer" Root="-1" Key="Software\[Manufacturer]" Name="\"/>
+    <ROW Registry="Path" Root="-1" Key="Software\[Manufacturer]\[ProductName]" Name="Path" Value="[APPDIR]" Component_="ProductInformation"/>
+    <ROW Registry="ProductName" Root="-1" Key="Software\[Manufacturer]\[ProductName]" Name="\"/>
+    <ROW Registry="Software" Root="-1" Key="Software" Name="\"/>
+    <ROW Registry="UpgradeCode" Root="-1" Key="Software\[Manufacturer]\[UpgradeCode]" Name="\"/>
+    <ROW Registry="Version" Root="-1" Key="Software\[Manufacturer]\[ProductName]" Name="Version" Value="[ProductVersion]" Component_="ProductInformation"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiThemeComponent">
+    <ATTRIBUTE name="UsedTheme" value="classic"/>
+  </COMPONENT>
+  <COMPONENT cid="caphyon.advinst.msicomp.MsiUpgradeComponent">
+    <ROW UpgradeCode="[|UpgradeCode]" VersionMin="0.0.1" VersionMax="[|ProductVersion]" Attributes="257" ActionProperty="OLDPRODUCTS"/>
+    <ROW UpgradeCode="[|UpgradeCode]" VersionMin="[|ProductVersion]" Attributes="2" ActionProperty="AI_NEWERPRODUCTFOUND"/>
+  </COMPONENT>
+</DOCUMENT>
