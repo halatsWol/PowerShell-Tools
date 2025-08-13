@@ -188,7 +188,7 @@ if ( -not $isElevated ) {
     Write-Host "`r`n`r`nStarting Autodesk Clean Uninstall...`r`nThis may take a while, please be patient...`r`n"
     # Stop all Autodesk Services
     Write-Log -Message "Stopping all Autodesk processes:" -StartLogEntry -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
-    $AdskProcesses = Get-Process | Where-Object { $_.Description -match "Autodesk" -or $_.Description -match "ADSK" -or $_.Description -match "AutoCAD" -or $_.Description -match "Inventor" }
+    $AdskProcesses = Get-Process | Where-Object { $_.Description -match "Autodesk" -or $_.Description -match "ADSK" -or $_.Description -match "AutoCAD" -or $_.Description -match "Inventor" -or $_.ProcessName -match "cer_service" -or $_.ProcessName -match "Autodesk" -or $_.ProcessName -match "ADSK" -or $_.ProcessName -match "AutoCAD" -or $_.ProcessName -match "Inventor" }
     if ($AdskProcesses.Count -eq 0) {
         Write-Log -Message "`r`nNo Autodesk processes found." -EndLogEntry -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
     } else {
