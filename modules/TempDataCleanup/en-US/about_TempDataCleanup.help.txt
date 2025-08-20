@@ -1,79 +1,100 @@
-TempDataCleanup PowerShell Module
-=================================
+TOPIC
+    about_TempDataCleanup
 
-Overview:
----------
-The TempDataCleanup PowerShell module is designed to clean up temporary files from both user profiles and system folders. It supports local and remote execution, making it useful for freeing up disk space and enhancing system performance across multiple machines. By using this module, you can automate the removal of temporary files, ensuring a cleaner, more efficient environment.
+SHORT DESCRIPTION
+    The TempDataCleanup PowerShell module is designed to clean up temporary files from both user profiles and system folders. It supports local and remote execution, making it useful for freeing up disk space and enhancing system performance across multiple machines. By using this module, you can automate the removal of temporary files, ensuring a cleaner, more efficient environment.
 
 
-Functionality:
+LONG DESCRIPTION
 --------------
-Invoke-TempDataCleanup:
-This core function handles the cleanup of temporary files in user profiles and, optionally, system folders. You can specify whether to clean files only from user directories or to include system-wide temporary directories by using the Full switch. This function supports remote execution through PowerShell remoting.
+    Invoke-TempDataCleanup:
+    This core function handles the cleanup of temporary files in user profiles and, optionally, system folders. You can specify whether to clean files only from user directories or to include system-wide temporary directories by using the Full switch. This function supports remote execution through PowerShell remoting.
 
 
-Parameters:
------------
-- ComputerName (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host.
-- IncludeSystemData (Optional): When this switch is used, system folders (such as Temp, Prefetch, and SoftwareDistribution) will also be cleaned up.
-- IncludeCCMCache (Optional): When this switch is provided, the cleanup will also include the Configuration Management Cache folder, if it exists.
-- IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
-- IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
-- IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
-- IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
-- LowDisk (Optional): Performs a System Cleanup using CleanMgr with basic settings. Additionally performs  `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
-- VeryLowDisk (Optional): Performs a System Cleanup as with 'LowDisk' with advanced settings. Additionally clears all Recycle-Bins and runs also -AutoClean
-- AutoClean (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
-- ConfirmWarning (Optional): Bypass Confirmation when using 'VeryLowDisk'
-- init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
+    Parameters:
+    -----------
+    - ComputerName (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host.
+    - IncludeSystemData (Optional): When this switch is used, system folders (such as Temp, Prefetch, and SoftwareDistribution) will also be cleaned up.
+    - IncludeCCMCache (Optional): When this switch is provided, the cleanup will also include the Configuration Management Cache folder, if it exists.
+    - IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
+    - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
+    - IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
+    - IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
+    - LowDisk (Optional): Performs a System Cleanup using CleanMgr with basic settings. Additionally performs  `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+    - VeryLowDisk (Optional): Performs a System Cleanup as with 'LowDisk' with advanced settings. Additionally clears all Recycle-Bins and runs also -AutoClean
+    - AutoClean (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+    - ConfirmWarning (Optional): Bypass Confirmation when using 'VeryLowDisk'
+    - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
+    - Credentials (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
+    This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
 
 
-Examples:
----------
-# Clean up temporary files from user profiles on the local machine
-Invoke-TempDataCleanup -ComputerName "localhost"
+EXAMPLES
+    Example 1: Clean up temporary files from user profiles on the local machine
+    -----------------------------------------------
+    Invoke-TempDataCleanup -ComputerName "localhost"
 
-# Clean up temporary files from user profiles on a remote computer
-Invoke-TempDataCleanup -ComputerName "Computer01"
+    Example 2: Clean up temporary files from user profiles on a remote computer
+    -----------------------------------------------
+    Invoke-TempDataCleanup -ComputerName "Computer01"
 
-# Clean up temporary files from user profiles on a Computer using Pipeline (will not default to localhost if not specified)
-"comp1","comp2","comp3" | Invoke-TempDataCleanup
+    Example 3: Clean up temporary files from user profiles on a Computer using Pipeline (will not default to localhost if not specified)
+    -----------------------------------------------
+    "comp1","comp2","comp3" | Invoke-TempDataCleanup
 
-# Clean up temporary files from user profiles on a Computer using Array (will default to localhost if element is null or empty "")
-Invoke-TempDataCleanup -ComputerName comp1,comp2,"",comp3
+    Example 4: Clean up temporary files from user profiles on a Computer using Array (will default to localhost if element is null or empty "")
+    -----------------------------------------------
+    Invoke-TempDataCleanup -ComputerName comp1,comp2,"",comp3
 
-# Perform a cleanup (user temp and system temp files) on the local computer
-Invoke-TempDataCleanup -ComputerName "localhost" -IncludeSystemData
+    Example 5: Perform a cleanup (user temp and system temp files) on the local computer
+    -----------------------------------------------
+    Invoke-TempDataCleanup -ComputerName "localhost" -IncludeSystemData
 
-# Perform a full cleanup (user temp, Browser Cache, MSTeams Cache and system temp files) on a remote computer
-Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBrowserData -IncludeMSTeamsCache
-
-
-Requirements:
--------------
-- Windows PowerShell: This module requires PowerShell to run both locally and on remote machines.
-- WinRM: Windows Remote Management (WinRM) must be enabled and configured on remote computers to run the function remotely.
-- Administrative Privileges: Some tasks, especially those involving system folders, may require administrative rights on the target machine.
-- Network Configuration: If using IP addresses or non-standard network setups, ensure proper configuration for remote execution.
+    Example 6: Perform a full cleanup (user temp, Browser Cache, MSTeams Cache and system temp files) on a remote computer
+    -----------------------------------------------
+    Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBrowserData -IncludeMSTeamsCache
 
 
-Notes:
-------
-- The script is provided "as-is" and is not supported by Microsoft.
-- Always test the script thoroughly in non-production environments to prevent unintended file deletions or other system disruptions.
-- Incorrect use of the script may cause system instability or data loss.
+NOTES
+    The script is provided "as-is" and is not supported by Microsoft.
+    Always test the script thoroughly in non-production environments to prevent unintended file deletions or other system disruptions.
+    Incorrect use of the script may cause system instability or data loss.
+
+    !! If in Windows Terminal Settings, Terminal is set as Default Terminal Application, Powershell 5.1 may throw an error instead of prompting for User Credentials.
+    As workaround you can pass on credentials using the `Get-CredentialObject` from the CredentialHander-Module (https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/CredentialHandler)
+
+    Example:
+    -----------------------------------------------
+    Invoke-TempDataCleanup -Computername myRemoteDevice1 -Credentials (Get-CredentialObject)
 
 
-Author:
--------
-- Author: Wolfram Halatschek
-- Contact: wolfram@kMarflow.com
-- Date: 2025-06-03
+    Requirements:
+    -------------
+    - Windows PowerShell: This module requires PowerShell to run both locally and on remote machines.
+    - WinRM: Windows Remote Management (WinRM) must be enabled and configured on remote computers to run the function remotely.
+    - Administrative Privileges: Some tasks, especially those involving system folders, may require administrative rights on the target machine.
+    - Network Configuration: If using IP addresses or non-standard network setups, ensure proper configuration for remote execution.
+
+    Warning:
+    -------------
+    - ALWAYS REVIEW AND UNDERSTAND THE CODE BEFORE EXECUTING IT.
+    - DO NOT RUN THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING.
+    - DELETING SYSTEM FILES WITHOUT UNDERSTANDING THEIR FUNCTION CAN CAUSE DATA LOSS OR SYSTEM INSTABILITY.
+    - NEVER MAKE CHANGES TO SYSTEM SETTINGS OR DELETE FILES WITHOUT PROPER AUTHORIZATION.
+
+FUNCTIONS
+    Repair-System
+
+SEE ALSO
+    Get-Help
+    Get-Command
+    Get-Member
+
+AUTHOR
+    Wolfram Halatschek
+    Contact: dev@kMarflow.com
+    Date: 2025-08-20
 
 
-Warnings:
----------
-- ALWAYS REVIEW AND UNDERSTAND THE CODE BEFORE EXECUTING IT.
-- DO NOT RUN THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING.
-- DELETING SYSTEM FILES WITHOUT UNDERSTANDING THEIR FUNCTION CAN CAUSE DATA LOSS OR SYSTEM INSTABILITY.
-- NEVER MAKE CHANGES TO SYSTEM SETTINGS OR DELETE FILES WITHOUT PROPER AUTHORIZATION.
+COPYRIGHT
+    © 2025 Wolfram Halatschek. All rights reserved.
