@@ -50,7 +50,7 @@ Name: "{#PS7Dir}\TempDataCleanup"
 Name: "{#PS7Dir}\RepairSystem"
 Name: "{#PS7Dir}\Shortcuts"
 ; uninst
-Name: "C:\ProgramData\{#MyAppPublisher}\{#MyAppName}\{#MyAppVersion}\uninst"
+Name: "{userappdata}\{#MyAppPublisher}\{#MyAppName}\{#MyAppVersion}\uninst"
 
 [Files]
 ; TempDataCleanup
