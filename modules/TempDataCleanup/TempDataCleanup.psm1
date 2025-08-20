@@ -610,7 +610,10 @@ function Invoke-TempDataCleanup {
         [switch]$ConfirmWarning,
 
         [Parameter(Mandatory=$false)]
-        [switch]$AutoClean
+        [switch]$AutoClean,
+
+        [Parameter(Mandatory=$false)]
+        [pscredential]$Credentials
 
     )
     begin {
