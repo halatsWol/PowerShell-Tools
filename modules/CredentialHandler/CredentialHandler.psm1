@@ -28,7 +28,7 @@ function Get-CredentialObject {
 
     .NOTES
     Author: Wolfram Halatschek
-    E-Mail: wolfram@kMarflow.com
+    E-Mail: dev@kMarflow.com
     Date: 2025-08-14
     #>
 
