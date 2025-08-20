@@ -26,7 +26,6 @@ CreateAppDir=no
 LicenseFile={#SourcePath}\LICENSE
 InfoBeforeFile={#SourcePath}\Pre-Install.nfo
 InfoAfterFile={#SourcePath}\Post-Install.nfo
-; Uncomment the following line to run in non administrative install mode (install for current user only.)
 OutputDir={#SourcePath}\installer
 OutputBaseFilename=Setup_Powershell-ModulesSuite_{#MyAppVersion}_UserInstaller
 UninstallFilesDir={userappdata}\{#MyAppPublisher}\{#MyAppName}\{#MyAppVersion}\uninst
