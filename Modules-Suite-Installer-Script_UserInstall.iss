@@ -12,7 +12,7 @@
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
 PrivilegesRequired=admin
-AppId={{2C740815-92FE-4573-9D18-35E1C903F7F2}
+AppId={{1A25E73F-95C7-437F-A1B6-C30B03D47142}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName}, {#MyAppVersion}
@@ -26,8 +26,6 @@ CreateAppDir=no
 LicenseFile={#SourcePath}\LICENSE
 InfoBeforeFile={#SourcePath}\Pre-Install.nfo
 InfoAfterFile={#SourcePath}\Post-Install.nfo
-; Uncomment the following line to run in non administrative install mode (install for current user only.)
-;PrivilegesRequired=lowest
 OutputDir={#SourcePath}\installer
 OutputBaseFilename=Setup_Powershell-ModulesSuite_{#MyAppVersion}
 UninstallFilesDir={userappdata}\{#MyAppPublisher}\{#MyAppName}\{#MyAppVersion}\uninst
