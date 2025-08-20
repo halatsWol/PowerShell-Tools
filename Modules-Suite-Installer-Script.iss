@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "PowerShell-Tools - Modules Suite"
-#define MyAppVersion "v1.3"
+#define MyAppVersion "v1.4"
 #define MyAppPublisher "Marflow Software"
 #define MyAppURL "https://www.kMarflow.com/"
 #define BaseDir "C:\Program Files\WindowsPowerShell\Modules"
@@ -80,6 +80,15 @@ Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psm1"; DestDir: "{#PS7Dir}\Sh
 Source: "{#SourcePath}\modules\Shortcuts\Shortcuts.psd1"; DestDir: "{#PS7Dir}\Shortcuts"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\Shortcuts\en-US\*"; DestDir: "{#PS7Dir}\Shortcuts\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; CredentialHandler
+Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psm1"; DestDir: "{#BaseDir}\CredentialHandler"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psd1"; DestDir: "{#BaseDir}\CredentialHandler"; Flags: ignoreversion
+ ;Source: "{#SourcePath}\modules\CredentialHandler\en-US\*"; DestDir: "{#BaseDir}\CredentialHandler\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+; PS7Dir
+Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psm1"; DestDir: "{#PS7Dir}\CredentialHandler"; Flags: ignoreversion
+Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psd1"; DestDir: "{#PS7Dir}\CredentialHandler"; Flags: ignoreversion
+; Source: "{#SourcePath}\modules\CredentialHandler\en-US\*"; DestDir: "{#PS7Dir}\CredentialHandler\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 
@@ -113,7 +122,7 @@ begin
   begin
     MsgBox(
       'Custom help' + #13#10#13#10#13#10 +
-      '--help' + #9#9 + 'Show this help message' + #13#10 + 
+      '--help' + #9#9 + 'Show this help message' + #13#10 +
       '/help, /?' + #9#9 + 'Show full advanced help' + #13#10 +
       '' + #9#9 + '(most flags will do nothing)' + #13#10 +
       '/silent' + #9#9 + 'Minimal UI, only shows progress and errors' + #13#10 +
