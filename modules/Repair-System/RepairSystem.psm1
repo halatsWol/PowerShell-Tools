@@ -776,19 +776,6 @@ function Repair-System {
             $global:LASTEXITCODE = $ExitCode
             break
         }
-        try{
-            Test-Path "$shareDrivePath\Windows"
-        } catch {
-            $errmsg="[$currentDateTime] - ERROR:`tNo Windows Directory found on Remote Device`r`nTested:`t'$shareDrivePath\Windows'"
-            $errmsg+="`r`nPlease check if The ShareDrive '$shareDrivePath' exists and is accessible!"
-            Write-Error $errmsg
-            Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$errmsg"
-            $ExitCode[0]=4
-            $exitCode=$exitCode | Sort-Object {$_} -Descending
-            $exitCode = $exitCode -join ""
-            $global:LASTEXITCODE = $ExitCode
-            break
-        }
     }
 
     if ($remote) {
