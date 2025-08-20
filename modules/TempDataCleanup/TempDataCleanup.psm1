@@ -889,7 +889,6 @@ function Invoke-TempDataCleanup {
 
 
             if ($remote) {
-                $RemoteLogDir="\\$comp\$ShareDrive\$TempFolder"
                 New-Folder -FolderPath $localTargetPath
 
                 $Session = New-PSSession @invokeParams
