@@ -414,28 +414,33 @@ function Repair-CCM {
         $ccmSetupLogFolder = "C:\Windows\ccmsetup\Logs"
         $ccmsetupLogFile="ccmsetup.log"
         # start $ccmrepairexe do not open new window and route output in current shell
-        Start-Process -FilePath $ccmrepairexe -NoNewWindow -Wait
-        if (Test-Path) {
-            $logLines = Get-Content -Path $ccmsetupLog -Tail 3
-            foreach ($line in $logLines) {
-                if ($line -match "<![LOG\[(.*?)\]LOG]!><time.*>") {
-                    $logMessage = $matches[0]
-                    # only print if logmessage starts with "CcmSetup is exiting with return code"
-                    if ($logMessage -like "CcmSetup is exiting with return code*") {
-                        Write-Host "Log Message: $logMessage"
+        try {
+            Start-Process -FilePath $ccmrepairexe -NoNewWindow -Wait
+            if (Test-Path $ccmsetupLogFile) {
+                $logLines = Get-Content -Path $ccmsetupLog -Tail 3
+                foreach ($line in $logLines) {
+                    if ($line -match "<![LOG\[(.*?)\]LOG]!><time.*>") {
+                        $logMessage = $matches[0]
+                        # only print if logmessage starts with "CcmSetup is exiting with return code"
+                        if ($logMessage -like "CcmSetup is exiting with return code*") {
+                            Write-Host "Log Message: $logMessage"
+                        }
                     }
                 }
-            }
-            # copy logfile to localtemppath
-            Copy-Item -Path "$ccmsetupLogFolder\$ccmsetupLogFile" -Destination $localTempPath -Force
-            if ( Test-Path "$localTempPath\$ccmsetupLogFile") {
-                Rename-Item -Path "$localTempPath\$ccmsetupLogFile" -NewName "CCMSetup_$timestamp.log" -Force
+                # copy logfile to localtemppath
+                Copy-Item -Path "$ccmsetupLogFolder\$ccmsetupLogFile" -Destination $localTempPath -Force
+                if ( Test-Path "$localTempPath\$ccmsetupLogFile") {
+                    Rename-Item -Path "$localTempPath\$ccmsetupLogFile" -NewName "CCMSetup_$timestamp.log" -Force
+                } else {
+                    Write-Host "CCMSetup log file not found in the expected location."
+                }
             } else {
-                Write-Host "CCMSetup log file not found in the expected location."
+                Write-Host "CCMSetup log file not found."
             }
-        } else {
-            Write-Host "CCMSetup log file not found."
+        } catch {
+            Write-Error "Failed to start $ccmrepairexe : $_"
         }
+
     } else {
         Write-Host "CCMRepair executable not found."
     }
@@ -954,7 +959,9 @@ function Repair-System {
     }
 
     if ($RepairCCM) {
-
+        if ($remote) {
+            Invoke-Command @invokeParams -ScriptBlock ${function:Repair-CCM} -ArgumentList $localTempPath, $Quiet, $VerboseOption
+        } else { Repair-CCM $localTempPath $Quiet $VerboseOption }
     }
 
 
