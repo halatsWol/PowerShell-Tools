@@ -389,6 +389,58 @@ function Invoke-WindowsUpdateCleanup {
     return 0
 }
 
+function Repair-CCM {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$localTempPath,
+
+        [Parameter(Mandatory=$true, Position=1)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
+
+    )
+    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+
+    if ($Quiet) {
+        $PSCmdlet.MyInvocation.BoundParameters['Verbose']=$false
+    }
+
+    $ccmrepairexe="C:\Windows\CCM\ccmrepair.exe"
+    $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
+    if ( Test-Path $ccmrepairexe) {
+        $ccmSetupLogFolder = "C:\Windows\ccmsetup\Logs"
+        $ccmsetupLogFile="ccmsetup.log"
+        # start $ccmrepairexe do not open new window and route output in current shell
+        Start-Process -FilePath $ccmrepairexe -NoNewWindow -Wait
+        if (Test-Path) {
+            $logLines = Get-Content -Path $ccmsetupLog -Tail 3
+            foreach ($line in $logLines) {
+                if ($line -match "<![LOG\[(.*?)\]LOG]!><time.*>") {
+                    $logMessage = $matches[0]
+                    # only print if logmessage starts with "CcmSetup is exiting with return code"
+                    if ($logMessage -like "CcmSetup is exiting with return code*") {
+                        Write-Host "Log Message: $logMessage"
+                    }
+                }
+            }
+            # copy logfile to localtemppath
+            Copy-Item -Path "$ccmsetupLogFolder\$ccmsetupLogFile" -Destination $localTempPath -Force
+            if ( Test-Path "$localTempPath\$ccmsetupLogFile") {
+                Rename-Item -Path "$localTempPath\$ccmsetupLogFile" -NewName "CCMSetup_$timestamp.log" -Force
+            } else {
+                Write-Host "CCMSetup log file not found in the expected location."
+            }
+        } else {
+            Write-Host "CCMSetup log file not found."
+        }
+    } else {
+        Write-Host "CCMRepair executable not found."
+    }
+}
+
 function Start-ZipFileCreation {
     param (
         [Parameter(Mandatory=$true, Position=0)]
@@ -641,7 +693,10 @@ function Repair-System {
         [switch]$init,
 
         [Parameter(Mandatory=$false)]
-        [PSCredential] $Credentials
+        [PSCredential] $Credentials,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$RepairCCM
 
     )
 
@@ -896,6 +951,10 @@ function Repair-System {
             Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
         }
         $ExitCode[7]=$updateCleanupExit
+    }
+
+    if ($RepairCCM) {
+
     }
 
 
