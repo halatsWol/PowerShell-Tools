@@ -24,7 +24,7 @@ jobs:
       - name: Upload Installer
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: installer
+          name: installerUserOnly
           path: make/installer/Setup_PowershellModulesSuite_UserInstaller.exe
 
   build-allUsers:
@@ -45,7 +45,7 @@ jobs:
       - name: Upload Installer
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: installer
+          name: installerAllUsers
           path: make/installer/Setup_PowershellModulesSuite.exe
 
   release:
