@@ -19,7 +19,6 @@ jobs:
           path: make/Modules-Suite-Installer-Script_UserInstall.iss
           options: >
             /DMyAppVersion=${{ github.ref_name }}
-            /Oinstaller/${{ github.ref_name }}
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4.6.2
@@ -40,7 +39,6 @@ jobs:
           path: make/Modules-Suite-Installer-Script.iss
           options: >
             /DMyAppVersion=${{ github.ref_name }}
-            /Oinstaller/${{ github.ref_name }}
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4.6.2
