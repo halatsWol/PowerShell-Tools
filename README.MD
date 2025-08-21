@@ -13,6 +13,7 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 			- [`Repair-System`](#repair-system)
 			- [`Shortcuts`](#shortcuts)
 			- [`TempDataCleanup`](#tempdatacleanup)
+			- [`CredentialHandler`](#credentialhandler)
 		- [Scripts](#scripts)
 			- [`AutoDeskCleanRemove.ps1`](#autodeskcleanremoveps1)
 			- [`bulkUninstall.ps1`](#bulkuninstallps1)
@@ -20,8 +21,6 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 		- [Upcoming Tools](#upcoming-tools)
 	- [Installation](#installation)
 		- [Installation of Modules](#installation-of-modules)
-		- [Temporary Import of Modules](#temporary-import-of-modules)
-	- [Usage](#usage)
 		- [Running a Script](#running-a-script)
 
 
@@ -59,6 +58,10 @@ The [Shortcuts](./modules/Shortcuts) module is a tool to print Shortcut-Properti
 
 The [TempDataCleanup](./modules/TempDataCleanup) module is a tool to clean up Temporary Data from a System.
 
+#### [`CredentialHandler`](./modules/CredentialHandler)
+
+The [CredentialHandler](./modules/CredentialHandler) module is a tool to prompt for credentials within the prompt (workaround for a PowerShell 5.1 Bug with `Get-Credential`)
+
 ### Scripts
 #### [`AutoDeskCleanRemove.ps1`](./scripts/AutoDeskCleanRemove.ps1)
 
@@ -75,7 +78,6 @@ The [bulkUninstall.ps1](./scripts/bulkUninstall.ps1) Script can be used to unins
 
 The [removeUserProfile.ps1](./scripts/removeUserProfile.ps1) Script is a tool to remove a Windows User Profile.
 
- :bangbang: ``Module not fully tested yet! Do only use on your own risk!``
 
 
 ### Upcoming Tools
@@ -88,32 +90,8 @@ More scripts and modules will be added to this repository over time. Stay tuned 
 ## Installation
 ### Installation of Modules
 
-To install and use modules from this repository simply run the [installer](https://github.com/halatsWol/PowerShell-Tools/releases) or via following steps:
+To install and use modules from this repository simply run the [installer](https://github.com/halatsWol/PowerShell-Tools/releases)
 
-1. Download the repository to your local machine:
-
-2. unzip the directory and open the modules folder:
-
-3. run as Administrator the ```install.cmd```-file within the Modules-Folder
-
-4. Restart any PowerShell session to use the functions of the module. For further information and help please visit the readme of the module
-
-### Temporary Import of Modules
-
-Alternatively, modules can also be used temporarily.
-
-1. Follow Step 1. & 2. in [Installation of Modules](#installation-of-modules) enter directly in the specific Module Directory
-2. copy the Path from the Explorer Address-Bar
-3. Open Windows PowerShell as Administrator and enter:
-	```PowerShell
-	cd <copied-Path>
-	```
-4. import module so it can be used
-	```PowerShell
-	Import-Module .\<Module-Name>
-	```
-
-## Usage
 
 ### Running a Script
 
