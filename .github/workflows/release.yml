@@ -21,6 +21,12 @@ jobs:
             /DMyAppVersion=${{ github.ref_name }}
             /Oinstaller/${{ github.ref_name }}
 
+      - name: Upload Installer
+        uses: actions/upload-artifact@v3
+        with:
+          name: installer
+          path: installer/*.exe
+
   build-allUsers:
     runs-on: windows-latest
 
@@ -35,6 +41,12 @@ jobs:
           options: >
             /DMyAppVersion=${{ github.ref_name }}
             /Oinstaller/${{ github.ref_name }}
+
+      - name: Upload Installer
+        uses: actions/upload-artifact@v3
+        with:
+          name: installer
+          path: installer/*.exe
 
   release:
     runs-on: windows-latest
@@ -61,6 +73,12 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
         shell: bash
 
+      - name: Download Installer
+        uses: actions/download-artifact@v3
+        with:
+          name: installer
+          path: installer/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -68,7 +86,8 @@ jobs:
           name: PowerShell-Tools - Installer ${{ github.ref_name }}
           body: ${{ steps.notes.outputs.content }}
           files: |
-            installer/*.exe
+            installer/Setup_PowershellModulesSuite_UserInstaller.exe
+            installer/Setup_PowershellModulesSuite.exe
           make_latest: true
           draft: true
         env:
