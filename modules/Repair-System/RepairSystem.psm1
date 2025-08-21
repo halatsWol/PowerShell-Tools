@@ -415,14 +415,15 @@ function Repair-CCM {
         $ccmsetupLogFile="ccmsetup.log"
         # start $ccmrepairexe do not open new window and route output in current shell
         try {
-            Start-Process -FilePath $ccmrepairexe -NoNewWindow -Wait
+            Write-Host "Starting CCMRepair... This may take a while."
+            Start-Process -FilePath $ccmrepairexe -Wait -NoNewWindow -ErrorAction Stop
             if (Test-Path $ccmsetupLogFile) {
                 $logLines = Get-Content -Path $ccmsetupLog -Tail 3
                 foreach ($line in $logLines) {
                     if ($line -match "<![LOG\[(.*?)\]LOG]!><time.*>") {
                         $logMessage = $matches[0]
                         # only print if logmessage starts with "CcmSetup is exiting with return code"
-                        if ($logMessage -like "CcmSetup is exiting with return code*") {
+                        if ($logMessage -like "CcmSetup is exiting with return code*" -or $logMessage -like "CcmSetup failed with error code*") {
                             Write-Host "Log Message: $logMessage"
                         }
                     }
