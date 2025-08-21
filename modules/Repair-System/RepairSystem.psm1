@@ -584,6 +584,9 @@ function Repair-System {
 
     If Get-Credential is used, to obtain the credentials interactively, and it throws an error without prompting, please use Get-CredentialObject from the CredentialHandler Module of the Module-Suite (https://github.com/halatsWol/PowerShell-Tools)
 
+    .PARAMETER RepairCCM
+    When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
+
     .EXAMPLE
     Repair-System -ComputerName <remote-device>
 

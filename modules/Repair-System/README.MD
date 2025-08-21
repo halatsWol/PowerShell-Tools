@@ -33,6 +33,7 @@ This function performs the following tasks on a specified computer (either local
 - **`-init`** (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
 - **`-Credentials`** (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
 This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
+- **`-RepairCCM`** (Optional): When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
 
 #### Examples
 
