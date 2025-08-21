@@ -47,7 +47,10 @@ jobs:
         id: vars
         run: |
           raw="${GITHUB_REF#refs/tags/}"
-          echo "tag=$raw" >> $GITHUB_OUTPUT
+          tag=$(echo "$raw" | xargs)  # trims whitespace
+          tag=$(echo "$tag" | tr -d '[:space:]')
+          tag=${tag//[\/:*?"<>|]/_}
+          echo "tag=$tag" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Read release notes
