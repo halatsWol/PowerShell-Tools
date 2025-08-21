@@ -98,7 +98,7 @@ function Start-UserCleanup {
         }
 
         if($IncludeMSTeamsCache) {
-            Get-Process ms-teams -ErrorAction SilentlyContinue | stop-process -Force 
+            Get-Process ms-teams -ErrorAction SilentlyContinue | stop-process -Force
             $path = Join-Path "C:\Users\$userProfile" $msTeamsCacheFolder
             $bgPath="$path\Microsoft\MSTeams"
             $bgBackupPath="$path\.."
@@ -509,6 +509,10 @@ function Invoke-TempDataCleanup {
     LocalTargetPath=C:\remote-Files             # Path where the Logs and Files will be copied to on the executing Client
     ```
 
+    .PARAMETER Credentials
+    Specifies the user credentials to use for the remote Connection to Remote Computers.
+
+    If Get-Credential is used, to obtain the credentials interactively, and it throws an error without prompting, please use Get-CredentialObject from the CredentialHandler Module of the Module-Suite (https://github.com/halatsWol/PowerShell-Tools)
 
     .EXAMPLE
     Invoke-TempDataCleanup -ComputerName "Computer01"
@@ -562,8 +566,8 @@ function Invoke-TempDataCleanup {
 
 
     Author: Wolfram Halatschek
-    E-Mail: wolfram@kMarflow.com
-    Date: 2025-06-03
+    E-Mail: dev@kMarflow.com
+    Date: 2025-08-20
     #>
 
 
@@ -606,7 +610,10 @@ function Invoke-TempDataCleanup {
         [switch]$ConfirmWarning,
 
         [Parameter(Mandatory=$false)]
-        [switch]$AutoClean
+        [switch]$AutoClean,
+
+        [Parameter(Mandatory=$false)]
+        [pscredential]$Credentials
 
     )
     begin {
@@ -811,7 +818,7 @@ function Invoke-TempDataCleanup {
             $logdir="C:\$TempFolder"
             $logfile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup.log"
             $VerboseLogFile="$logdir\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_TempDataCleanup_Verbose.log"
-
+            $invokeParams =@{}
             if (
                     -not [string]::IsNullOrWhiteSpace($comp) -and
                     $comp.ToLower() -ne "localhost" -and
@@ -822,6 +829,10 @@ function Invoke-TempDataCleanup {
                 $comp = "localhost"
             }
             if ($remote){
+                $invokeParams.ComputerName = $comp
+                if ($Credentials) {
+                    $invokeParams.Credential = $Credentials
+                }
                 if (-not (Test-Connection -ComputerName $comp -Count 1 -Quiet)){
                     Write-Host ""
                     Write-Warning "Computer $comp is not reachable`r`n"
@@ -829,11 +840,11 @@ function Invoke-TempDataCleanup {
                     continue
                 }
 
-                $initFree_bytes = Invoke-Command -ComputerName $comp -ScriptBlock {
+                $initFree_bytes = Invoke-Command @invokeParams -ScriptBlock {
                     (Get-Volume -DriveLetter C).SizeRemaining
                 }
-                Invoke-Command -ComputerName $comp -ScriptBlock ${function:New-Folder} -ArgumentList $logdir
-                Invoke-Command -ComputerName $comp -ScriptBlock {
+                Invoke-Command @invokeParams -ScriptBlock ${function:New-Folder} -ArgumentList $logdir
+                Invoke-Command @invokeParams -ScriptBlock {
                     param($logfile, $comp)
                     Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] Starting Cleanup on $comp"
                 } -ArgumentList $logfile, $comp
@@ -855,7 +866,7 @@ function Invoke-TempDataCleanup {
 
             Write-Host "Cleaning up User Data and Cache"
             if ($remote) {
-                Invoke-Command -ComputerName $comp -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
+                Invoke-Command @invokeParams -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
             } else {
                 Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache -VerboseOption:$VerboseOption -VerboseLogFile $VerboseLogFile
             }
@@ -864,7 +875,7 @@ function Invoke-TempDataCleanup {
             if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
                 Write-Host "Cleaning up System Data and Cache"
                 if ($remote) {
-                    Invoke-Command -ComputerName $comp -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
+                    Invoke-Command @invokeParams -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
                 } else {
                     Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache -VerboseOption:$VerboseOption -VerboseLogFile:$VerboseLogFile
                 }
@@ -872,7 +883,7 @@ function Invoke-TempDataCleanup {
 
             if($LowDisk -or $VeryLowDisk -or $AutoClean){
                 if ($remote) {
-                    Invoke-Command -ComputerName $comp -ScriptBlock ${function:Start-CleanMgr} -ArgumentList $logfile, $LowDisk, $VeryLowDisk, $ConfirmWarning, $AutoClean
+                    Invoke-Command @invokeParams -ScriptBlock ${function:Start-CleanMgr} -ArgumentList $logfile, $LowDisk, $VeryLowDisk, $ConfirmWarning, $AutoClean
                 } else {
                     Start-CleanMgr -logfile $logfile -LowDisk:$LowDisk -VeryLowDisk:$VeryLowDisk -ConfirmWarning:$ConfirmWarning -AutoClean:$AutoClean
                 }
@@ -881,12 +892,14 @@ function Invoke-TempDataCleanup {
 
 
             if ($remote) {
-                $RemoteLogDir="\\$comp\$ShareDrive\$TempFolder"
                 New-Folder -FolderPath $localTargetPath
-                Copy-Item -Path "$RemoteLogDir\*" -Destination $localTargetPath -Recurse -Force
+
+                $Session = New-PSSession @invokeParams
+                Copy-Item -Path "$logfile" -Destination $localTargetPath -Recurse -Force -FromSession $Session
+
                 if ($?) {
 
-                    Invoke-Command -ComputerName $comp -ScriptBlock {
+                    Invoke-Command @invokeParams -ScriptBlock {
                         Remove-Item -Path "$using:logdir" -Recurse
                     } -Verbose:$VerboseOption
 
@@ -896,7 +909,7 @@ function Invoke-TempDataCleanup {
             }
 
             if ($remote){
-                $exitFree_bytes = Invoke-Command -ComputerName $comp -ScriptBlock {
+                $exitFree_bytes = Invoke-Command @invokeParams -ScriptBlock {
                     (Get-Volume -DriveLetter C).SizeRemaining
                 }
             } else {

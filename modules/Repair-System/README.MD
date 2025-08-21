@@ -31,7 +31,8 @@ This function performs the following tasks on a specified computer (either local
 - **`-KeepLogs`** (Optional): log files will be kept on the remote Device, but still be copied to the Client
 - **`-noCopy`** (Optional): log files will not be copied to the Client. this will automatically use '-KeepLogs'
 - **`-init`** (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
-
+- **`-Credentials`** (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
+This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
 
 #### Examples
 
@@ -66,6 +67,14 @@ Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 - This script is provided as-is and is not supported by Microsoft.
 - Test thoroughly before using on production systems as improper use may cause data loss or system instability.
 - Ensure you understand the consequences before making system changes or deleting files.
+
+
+ :bangbang: If in Windows Terminal Settings, Terminal is set as Default Terminal Application, Powershell 5.1 may throw an error instead of prompting for User Credentials. As workaround you can pass on credentials using the `Get-CredentialObject` from the [`CredentialHander-Module`](https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/CredentialHandler)
+
+ Example:
+ ```Powershell
+ Repair-System -Computername myRemoteDevice1 -Credentials (Get-CredentialObject)
+ ```
 
 ## Author
 

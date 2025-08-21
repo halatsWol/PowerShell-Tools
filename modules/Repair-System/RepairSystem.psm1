@@ -522,6 +522,11 @@ function Repair-System {
     FinalDestinationPath=C:\remote-Files                # Path where the Logs and Files will be copied to on the executing Client
     ```
 
+    .PARAMETER Credentials
+    Specifies the user credentials to use for the remote Connection to Remote Computers.
+
+    If Get-Credential is used, to obtain the credentials interactively, and it throws an error without prompting, please use Get-CredentialObject from the CredentialHandler Module of the Module-Suite (https://github.com/halatsWol/PowerShell-Tools)
+
     .EXAMPLE
     Repair-System -ComputerName <remote-device>
 
@@ -595,8 +600,8 @@ function Repair-System {
 
 
     Author: Wolfram Halatschek
-    E-Mail: wolfram@kMarflow.com
-    Date: 2025-05-31
+    E-Mail: dev@kMarflow.com
+    Date: 2025-08-20
     #>
 
     [CmdletBinding()]
@@ -633,7 +638,10 @@ function Repair-System {
         [switch]$noCopy,
 
         [Parameter(Mandatory=$false)]
-        [switch]$init
+        [switch]$init,
+
+        [Parameter(Mandatory=$false)]
+        [PSCredential] $Credentials
 
     )
 
@@ -667,10 +675,11 @@ function Repair-System {
     $remoteTempPath=""
     # check if verbose param is set in command execution
     $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
-
+    $invokeParams =@{}
 
     if($ComputerName -ne "" -and $ComputerName -ne $env:COMPUTERNAME -and $ComputerName -ne "localhost"){
         $remote=$true
+
     }
 
     if (-not $remote) {
@@ -681,6 +690,11 @@ function Repair-System {
             Pause ; $("")
             $global:LASTEXITCODE=1
             return
+        }
+    } else {
+        $invokeParams.ComputerName = $ComputerName
+        if ($Credentials) {
+            $invokeParams.Credential = $Credentials
         }
     }
 
@@ -749,7 +763,7 @@ function Repair-System {
         # Check if the remote computer is reachable via WinRM
         $winRMexit = ""
         try{
-            Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+            Invoke-Command @invokeParams -ScriptBlock {
                 Write-Host "Connected to $env:COMPUTERNAME"
             } -Verbose:$VerboseOption -ErrorAction Stop
         } catch {
@@ -762,23 +776,10 @@ function Repair-System {
             $global:LASTEXITCODE = $ExitCode
             break
         }
-        try{
-            Test-Path "$shareDrivePath\Windows"
-        } catch {
-            $errmsg="[$currentDateTime] - ERROR:`tNo Windows Directory found on Remote Device`r`nTested:`t'$shareDrivePath\Windows'"
-            $errmsg+="`r`nPlease check if The ShareDrive '$shareDrivePath' exists and is accessible!"
-            Write-Error $errmsg
-            Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$errmsg"
-            $ExitCode[0]=4
-            $exitCode=$exitCode | Sort-Object {$_} -Descending
-            $exitCode = $exitCode -join ""
-            $global:LASTEXITCODE = $ExitCode
-            break
-        }
     }
 
     if ($remote) {
-        Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:New-Folder} -ArgumentList $localTempPath
+        Invoke-Command @invokeParams -ScriptBlock ${function:New-Folder} -ArgumentList $localTempPath
     } else {
         New-Folder -FolderPath $localTempPath
     }
@@ -787,7 +788,7 @@ function Repair-System {
         $dismScanLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_scanHealth.log"
         $dismScanResult=0
         if($remote){
-            $dismScanResult = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $Quiet, $VerboseOption
+            $dismScanResult = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $Quiet, $VerboseOption
         } else { $dismScanResult=Invoke-DISMScan $dismScanLog $Quiet $VerboseOption}
         $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
         $ExitCode[2]=$dismScanResult
@@ -798,12 +799,12 @@ function Repair-System {
             $dismScanExit=1
             $dismRestoreExit=0
             if($remote){
-                $dismScanExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Get-DISMScanResult} -ArgumentList $dismScanLog
+                $dismScanExit=Invoke-Command @invokeParams -ScriptBlock ${function:Get-DISMScanResult} -ArgumentList $dismScanLog
             } else { $dismScanExit=Get-DISMScanResult -dismScanLog $dismScanLog}
             if ($dismScanExit -eq 1) {
 
                 if ($remote) {
-                    $dismRestoreExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $Quiet, $VerboseOption
+                    $dismRestoreExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $Quiet, $VerboseOption
                 } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $Quiet $VerboseOption }
                 $ExitCode[3]=$dismRestoreExit
             }
@@ -811,7 +812,7 @@ function Repair-System {
             $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
             Write-Verbose $message
             if ($remote) {
-                Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                Invoke-Command @invokeParams -ScriptBlock {
                     param ($logPath, $logMessage)
                     Add-Content -Path $logPath -Value $logMessage
                 }  -Verbose:$VerboseOption -ArgumentList $dismRestoreLog, $message
@@ -824,7 +825,7 @@ function Repair-System {
             $analyzeComponentLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_analyze-component.log"
             $analyzeExit=0
             if ($remote) {
-                $analyzeExit = Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $Quiet, $VerboseOption
+                $analyzeExit = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $Quiet, $VerboseOption
             } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $Quiet $VerboseOption }
             $ExitCode[4]=$analyzeExit
 
@@ -834,18 +835,18 @@ function Repair-System {
             if ($analyzeExit -eq 0 -or $analyzeExit -eq "") {
                 $analyzeResult=$true
                 if ($remote) {
-                    $analyzeResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Get-DISMAnalyzeComponentStoreResult} -ArgumentList $analyzeComponentLog
+                    $analyzeResult=Invoke-Command @invokeParams -ScriptBlock ${function:Get-DISMAnalyzeComponentStoreResult} -ArgumentList $analyzeComponentLog
                 } else { $analyzeResult=Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeComponentLog }
                 $componentCleanupExit=0
                 if ($analyzeResult) {
 
                     if ($remote) {
-                        $componentCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $Quiet, $VerboseOption
+                        $componentCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $Quiet, $VerboseOption
                     } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $Quiet $VerboseOption }
                 } else {
                     $message = "No component store cleanup was needed on $ComputerName."
                     if($remote) {
-                        Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                        Invoke-Command @invokeParams -ScriptBlock {
                             param ($logPath, $logMessage)
                             Add-Content -Path $logPath -Value $logMessage
                         }  -Verbose:$VerboseOption -ArgumentList $componentCleanupLog, $message
@@ -868,7 +869,7 @@ function Repair-System {
         $sfcLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_sfc-scannow.log"
         $sfcExitCode=0
         if($remote){
-            $sfcExitCode= Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
+            $sfcExitCode= Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
         } else {$sfcExitCode=Invoke-SFC $sfcLog $Quiet $VerboseOption}
         $ExitCode[1]=$sfcExitCode
     }
@@ -878,7 +879,7 @@ function Repair-System {
         $sccmCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_SCCM_cleanup.log"
         $sccmCleanupResult=0
         if ($remote) {
-            $sccmCleanupResult=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList $sccmCleanupLog, $Quiet, $VerboseOption
+            $sccmCleanupResult=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList $sccmCleanupLog, $Quiet, $VerboseOption
         } else { $sccmCleanupResult=Invoke-SCCMCleanup $sccmCleanupLog $Quiet $VerboseOption }
 
         $ExitCode[6]=$sccmCleanupResult
@@ -888,7 +889,7 @@ function Repair-System {
         $updateCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_WinUpdt-BITS_reset-cleanup.log"
         $updateCleanupExit=0
         if ($remote) {
-            $updateCleanupExit=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $Quiet, $VerboseOption
+            $updateCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $Quiet, $VerboseOption
         } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup  $updateCleanupLog $Quiet $VerboseOption }
 
         if($updateCleanupExit -ne 0){
@@ -904,7 +905,7 @@ function Repair-System {
         $zipErrorLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_zip-errors.log"
         $zipErrorCode=0
         if ($remote) {
-            $zipErrorCode=Invoke-Command -ComputerName $ComputerName -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism
+            $zipErrorCode=Invoke-Command @invokeParams -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism
         } else {
             $zipErrorCode=Start-ZipFileCreation $localTempPath $zipFile $zipErrorLog $noDism
         }
@@ -924,12 +925,13 @@ function Repair-System {
                 New-Item -Path $finalDestinationPath -ItemType Directory -Force
             }
             try{
-                Copy-Item -Path "$remoteTempPath\*" -Destination $finalDestinationPath -Recurse -Force
+                $Session = New-PSSession @invokeParams
+                Copy-Item -Path "$localTempPath\*" -Destination $finalDestinationPath -Recurse -Force -FromSession $Session
 
                 # Clear remote _temp folder if copy was successful
 
                 if(-not $KeepLogs){
-                    Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+                    Invoke-Command @invokeParams -ScriptBlock {
                         Remove-Item -Path "$using:localTempPath" -Recurse -Force
                     } -Verbose:$VerboseOption
                     $extmsg+= $extmsglLogP

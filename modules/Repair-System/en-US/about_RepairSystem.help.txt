@@ -12,13 +12,12 @@ LONG DESCRIPTION
 
     Key features of the `RepairSystem` module include:
 
-    - **System Health Checks**: Functions to check the overall health of the system,
+    - System Health Checks: Functions to check the overall health of the system,
         including disk integrity, system file integrity, and more.
-    - **File Repair**: Functions to repair corrupted system files using tools like
+    - File Repair: Functions to repair corrupted system files using tools like
         SFC (System File Checker) and DISM (Deployment Imaging Service and Management Tool).
-    - **Service Management**: Functions to manage system services, stopping, Cache Cleanup and restarting services.
-    - **Event Log Management**: Functions to query and clear event logs to help diagnose issues.
-    - **Automated Maintenance**: Functions to automate common maintenance tasks, ensuring the
+    - Event Log Management: Functions to query and clear event logs to help diagnose issues.
+    - Automated Maintenance: Functions to automate common maintenance tasks, ensuring the
         system remains in optimal condition.
 
     The module is designed to be user-friendly, with clear parameters and examples provided for each function.
@@ -64,6 +63,15 @@ EXAMPLES
     This example performs the same Tasks as Example 2 but additionally cleans up the Windows Update Cache to fix
     issues regarding Windows Udates.
 
+Notes
+
+    !! If in Windows Terminal Settings, Terminal is set as Default Terminal Application, Powershell 5.1 may throw an error instead of prompting for User Credentials.
+    As workaround you can pass on credentials using the `Get-CredentialObject` from the CredentialHander-Module (https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/CredentialHandler)
+
+    Example:
+    -----------------------------------------------
+    PS C:\> Repair-System -Computername myRemoteDevice1 -Credentials (Get-CredentialObject)
+
 
 FUNCTIONS
     Repair-System
@@ -78,7 +86,8 @@ KEYWORDS
 
 AUTHOR
     Wolfram Halatschek
-    E-Mail: wolfram@kMarflow.com
+    E-Mail: dev@kMarflow.com
+    Date: 2025-08-20
 
 COPYRIGHT
     © 2025 Wolfram Halatschek. All rights reserved.
