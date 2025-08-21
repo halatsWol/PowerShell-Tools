@@ -25,7 +25,7 @@ jobs:
         uses: actions/upload-artifact@v4.6.2
         with:
           name: installer
-          path: installer/*.exe
+          path: make/installer/*.exe
 
   build-allUsers:
     runs-on: windows-latest
@@ -46,7 +46,7 @@ jobs:
         uses: actions/upload-artifact@v4.6.2
         with:
           name: installer
-          path: installer/*.exe
+          path: make/installer/*.exe
 
   release:
     runs-on: windows-latest
