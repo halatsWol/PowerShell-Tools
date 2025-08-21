@@ -83,11 +83,11 @@ Source: "{#SourcePath}\modules\Shortcuts\en-US\*"; DestDir: "{#PS7Dir}\Shortcuts
 ; CredentialHandler
 Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psm1"; DestDir: "{#BaseDir}\CredentialHandler"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psd1"; DestDir: "{#BaseDir}\CredentialHandler"; Flags: ignoreversion
- ;Source: "{#SourcePath}\modules\CredentialHandler\en-US\*"; DestDir: "{#BaseDir}\CredentialHandler\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}\modules\CredentialHandler\en-US\*"; DestDir: "{#BaseDir}\CredentialHandler\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; PS7Dir
 Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psm1"; DestDir: "{#PS7Dir}\CredentialHandler"; Flags: ignoreversion
 Source: "{#SourcePath}\modules\CredentialHandler\CredentialHandler.psd1"; DestDir: "{#PS7Dir}\CredentialHandler"; Flags: ignoreversion
-; Source: "{#SourcePath}\modules\CredentialHandler\en-US\*"; DestDir: "{#PS7Dir}\CredentialHandler\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}\modules\CredentialHandler\en-US\*"; DestDir: "{#PS7Dir}\CredentialHandler\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
