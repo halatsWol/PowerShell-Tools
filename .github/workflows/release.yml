@@ -68,7 +68,7 @@ jobs:
           name: PowerShell-Tools - Installer ${{ github.ref_name }}
           body: ${{ steps.notes.outputs.content }}
           files: |
-            installer/${{ github.ref_name }}/*.exe
+            installer/*.exe
           make_latest: true
           draft: true
         env:
