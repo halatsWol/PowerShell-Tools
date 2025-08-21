@@ -1,0 +1,72 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-userOnly:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build system-wide installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
+        with:
+          path: make/Modules-Suite-Installer-Script_UserInstall.iss
+          options: >
+            /DMyAppVersion=${{ github.ref_name }}
+            /Oinstaller/${{ github.ref_name }}
+
+  build-allUsers:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build system-wide installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
+        with:
+          path: make/Modules-Suite-Installer-Script.iss
+          options: >
+            /DMyAppVersion=${{ github.ref_name }}
+            /Oinstaller/${{ github.ref_name }}
+
+  release:
+    runs-on: windows-latest
+    needs: [build-userOnly, build-allUsers]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get tag name
+        id: vars
+        run: |
+          raw="${GITHUB_REF#refs/tags/}"
+          echo "tag=$raw" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Read release notes
+        id: notes
+        run: |
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          cat make/releasenote.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: PowerShell-Tools - Installer ${{ github.ref_name }}
+          body: ${{ steps.notes.outputs.content }}
+          files: |
+            installer/${{ github.ref_name }}/*.exe
+          make_latest: true
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
