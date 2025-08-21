@@ -73,10 +73,16 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Download Installer
+      - name: Download installerUserOnly
         uses: actions/download-artifact@v5.0.0
         with:
-          name: installer
+          name: installerUserOnly
+          path: installer/
+
+      - name: Download installerAllUsers
+        uses: actions/download-artifact@v5.0.0
+        with:
+          name: installerAllUsers
           path: installer/
 
       - name: Create GitHub Release
