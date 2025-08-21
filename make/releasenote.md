@@ -2,14 +2,16 @@ Easy installer for PowerShell-Tools
 
 This .exe-installer will install the following Modules:
 
-- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.3/modules/Repair-System) (v1.4)
-- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.3/modules/TempDataCleanup) (v1.5)
-- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.3/modules/Shortcuts) (v1.0)
-- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.3/modules/CredentialHandler) (v1.0)
+- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/Repair-System) (v1.4)
+- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/TempDataCleanup) (v1.5)
+- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/Shortcuts) (v1.0)
+- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/CredentialHandler) (v1.0)
 
 # Change Log:
 
 - Installers for global Installation and User-Only
+- Implementation to pass on Credentials for Authentication (for Remote devices only)
+- Added CCM Repair Option to Repair-System
 - PowerShell 7 Support (beta-availability, not yet thoroughly tested, cmdlets not migrated)
 
 ## New Module
