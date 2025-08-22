@@ -415,7 +415,7 @@ function Repair-CCM {
         $ccmsetupLogFile="ccmsetup.log"
         # start $ccmrepairexe do not open new window and route output in current shell
         try {
-            Write-Host "Starting CCMRepair... This may take a while."
+            Write-Host "Starting CCMRepair... This may take a while (~30min)."
             Start-Process -FilePath $ccmrepairexe -Wait -ErrorAction Stop -NoNewWindow
             if (Test-Path $ccmsetupLogFolder\$ccmsetupLogFile) {
                 $logLines = Get-Content -Path $ccmsetupLogFolder\$ccmsetupLogFile -Tail 3
