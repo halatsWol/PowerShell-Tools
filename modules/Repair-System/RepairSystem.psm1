@@ -1206,7 +1206,7 @@ function Repair-System {
     }
 
     if($remote) {$path=$finalDestinationPath} else {$path=$localTempPath}
-    $extmsg= "`r`nSystem-Repair performed. If Errors Occurred, or SFC/DISM/WindowsUpdate Cleanup and Diagnostics Jobs were Terminated due to Timeout, please restart the system and run once more."
+    $extmsg= "`r`nSystem-Repair performed.`r`n`r`nIf Errors Occurred, or SFC/DISM/WindowsUpdate Cleanup and Diagnostics Jobs were Terminated due to Timeout, please restart the system and run once more."
     $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'"
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     if (-not $noCopy){
@@ -1233,6 +1233,8 @@ function Repair-System {
                 Write-Error $message
                 $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
             }
+        } else {
+            $extmsg+= $extmsglLogP
         }
     } else {
         $extmsg+= $extmsgrLogP
