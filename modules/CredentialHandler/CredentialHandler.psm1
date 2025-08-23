@@ -26,6 +26,12 @@ function Get-CredentialObject {
     .EXAMPLE
     Get-CredentialObject -UserName admin
 
+    .LINK
+    https://github.com/halatsWol/PowerShell-Tools
+
+    .LINK
+	https://kMarflow.com/
+
     .NOTES
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com

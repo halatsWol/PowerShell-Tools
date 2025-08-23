@@ -830,6 +830,12 @@ function Repair-System {
 
     stops the Windows Update and related Services, renames the SoftwareDistribution and catroot2 folders, and restarts the services.
 
+    .LINK
+    https://github.com/halatsWol/PowerShell-Tools
+
+    .LINK
+	https://kMarflow.com/
+
     .NOTES
     This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
     WinRM must be enabled and configured on the remote computer for this script to work. Using IP addresses may require additional configuration.

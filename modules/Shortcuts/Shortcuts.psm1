@@ -107,6 +107,9 @@ function Set-Shortcut {
 	.EXAMPLE
 	Set-Shortcut -LinkPath 'C:\Users\Public\Desktop\Notepad.lnk' -Hotkey 'Ctrl+Alt+N' -IconLocation 'C:\Windows\System32\notepad.exe,0' -Arguments 'C:\Windows\System32\notepad.exe' -TargetPath 'C:\Windows\System32\notepad.exe' -WorkingDirectory 'C:\Windows\System32'
 
+    .LINK
+    https://github.com/halatsWol/PowerShell-Tools
+	https://kMarflow.com/
 
 	.NOTES
     This script is provided as-is and is not supported by Microsoft. Use it at your own risk.
