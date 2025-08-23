@@ -2,10 +2,10 @@ Easy installer for PowerShell-Tools v1.4.1
 
 This .exe-installer will install the following Modules:
 
-- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/Repair-System) (v1.5)
-- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/TempDataCleanup) (v1.5)
-- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/Shortcuts) (v1.0)
-- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/CredentialHandler) (v1.0)
+- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.1/modules/Repair-System) (v1.5)
+- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.1/modules/TempDataCleanup) (v1.5)
+- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.1/modules/Shortcuts) (v1.0)
+- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.1/modules/CredentialHandler) (v1.0)
 
 # Change Log:
 
