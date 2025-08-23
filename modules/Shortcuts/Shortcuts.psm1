@@ -109,6 +109,8 @@ function Set-Shortcut {
 
     .LINK
     https://github.com/halatsWol/PowerShell-Tools
+
+    .LINK
 	https://kMarflow.com/
 
 	.NOTES
