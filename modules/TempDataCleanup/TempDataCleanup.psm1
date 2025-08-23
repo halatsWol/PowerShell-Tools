@@ -545,6 +545,9 @@ function Invoke-TempDataCleanup {
 
     This will clean up temporary files including Browser-Cache Data and Microsoft Teams cache from user profiles and system folders on Computer01.
 
+    .INPUTS
+    [string[]]$ComputerName - Accepts pipeline input of Multiple Computer Names.
+
     .LINK
     https://github.com/halatsWol/PowerShell-Tools
 
