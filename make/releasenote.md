@@ -1,21 +1,24 @@
-Easy installer for PowerShell-Tools
+Easy installer for PowerShell-Tools v1.4.1
 
 This .exe-installer will install the following Modules:
 
-- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/Repair-System) (v1.4)
+- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/Repair-System) (v1.5)
 - [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/TempDataCleanup) (v1.5)
 - [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/Shortcuts) (v1.0)
 - [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4/modules/CredentialHandler) (v1.0)
 
 # Change Log:
 
+- `Repair System`: added TimeOut for SFC, DISM & Windows Update Diagnostics
+
+_from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
 - Installers for global Installation and User-Only
 - Implementation to pass on Credentials for Authentication (for Remote devices only)
 - Added CCM Repair Option to Repair-System
 - PowerShell 7 Support (beta-availability, not yet thoroughly tested, cmdlets not migrated)
 
 ## New Module
-### CredentialHandler
+### CredentialHandler _(from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4))_
 #### Description
 
 If Windows Terminal is set as default Terminal, powershell.exe will always open via Terminal
@@ -64,8 +67,31 @@ PS C:\>
 
 ## Changed Modules
 ### RepairSystem
+
+#### Changes:
+
+- added TimeOut for SFC, DISM & Windows Update Diagnostics
+  - timeout durations are as following:
+
+   | Task | Duration |
+   | ---- | --------: |
+   | DISM CheckHealth | 15 min |
+   | DISM Restore | 40 min |
+   | DISM Analyze Component Store | 5 min |
+   | DISM Component Store Cleanup | 20 min |
+   | SFC | 20 min |
+   | Diagnostics: WindowsUpdate | 15 min |
+   | Diagnostics: BITS | 10 min|
+
+  if any of these fail or run into Timeout, Restarting the device and re-running `Repair-System` is adviced.
+  Durations are approximated average Duration for medium corrupted Systems. Duration may be changed with a Multiplicator.
+
 #### New Features
 
+- **`-ChangeTimeout`:** use decimal value to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
+Range = 0.25 - 10.0
+
+_from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
 - **`-Credentials`:** to Authenticate Remote Access and permissions on a remote Machine
 Accepts PSCredential Object (Get-Credential / Get-CredentialObject)
 If non are provided, it will prompt for user-input (please keep the Bug in mind, mentioned in the CredentialHandler Module)
@@ -75,6 +101,7 @@ Prints install Exit Code and copies the ccmsetup.log file to the log-Directory o
 ### TempDataCleanup
 #### New Features
 
+_from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
 - **`-Credentials`:** to Authenticate Remote Access and permissions on a remote Machine
 Accepts PSCredential Object (Get-Credential / Get-CredentialObject)
 If non are provided, it will prompt for user-input (please keep the Bug in mind, mentioned in the CredentialHandler Module)

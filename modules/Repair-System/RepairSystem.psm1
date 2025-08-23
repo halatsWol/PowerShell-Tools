@@ -20,17 +20,51 @@ function Invoke-SFC {
 
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    Write-Host "executing SFC"
+    # get directory path from $sfcLog
+    $sfcLogDir = Split-Path -Path $sfcLog -Parent
+    $sfcErrorLog = Join-Path -Path $sfcLogDir -ChildPath "SFC_Error.log"
+    $SfcMaxDurationVal = 20
+    Write-Host "executing SFC (up to $SfcMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
         try{
-            if ($Quiet) {
-                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } > $sfcLog 2>&1
-            } else {
-                sfc /scannow | Where-Object { $_ -notmatch "^[^\x00-\x7F]" } | Tee-Object -FilePath $sfcLog -OutBuffer 1
+            $SfcMaxDuration = New-TimeSpan -Minutes $SfcMaxDurationVal
+            $process = Start-Process -FilePath "sfc" -ArgumentList "/scannow" -RedirectStandardOutput $sfcLog -RedirectStandardError $sfcErrorLog -NoNewWindow -PassThru
+            $SfcStartTime = Get-Date
+
+            # Monitor the process
+            while (-not $process.HasExited) {
+                Start-Sleep -Seconds 5
+
+                $elapsed = (Get-Date) - $SfcStartTime
+                if ($elapsed -gt $SfcMaxDuration) {
+                    $sfcStucknotify = "Sfc.exe has been running for more than $($SfcMaxDuration.TotalMinutes) minutes. Stopping it..."
+                    Add-Content -Path $sfcLog -Value "!!`t`t> $sfcStucknotify"
+                    Write-Warning $sfcStucknotify
+                    try {
+                        $process.Kill()
+                        $sfcStuckTerminate = "Sfc.exe terminated."
+                        Add-Content -Path $sfcLog -Value "!!`t`t> $sfcStuckTerminate"
+                        Write-Warning $sfcStuckTerminate
+                    } catch {
+                        $sfcStuckTerminateFail = "Failed to terminate Sfc.exe: $_"
+                        Add-Content -Path $sfcLog -Value "!!`t`t> $sfcStuckTerminateFail"
+                        Write-Warning $sfcStuckTerminateFail
+                    }
+                    break
+                }
             }
-            $sfcExitCode=$LASTEXITCODE
+
+            $sfcExitCode=$process.ExitCode
             $logContent = Get-Content $sfcLog -Raw
+            $logContent = $logContent -replace '[^\x00-\x7F]', ''
             $logContent = $logContent -replace [char]0
             Set-Content $sfcLog -Value $logContent
+
+            $errorLogContent = Get-Content $sfcErrorLog -Raw
+            $errorLogContent = $errorLogContent -replace '[^\x00-\x7F]', ''
+            $errorLogContent = $errorLogContent -replace [char]0
+            Add-Content -Path $sfcLog -Value "`r`n`r`nSFC Error Output:`r`n"
+            Add-Content $sfcLog -Value $errorLogContent
+            Remove-Item -Path $sfcErrorLog -Force -ErrorAction SilentlyContinue
             return $sfcExitCode
         } catch {
             $errorMessage = "An error occurred while performing SFC: `r`n$_"
@@ -46,22 +80,54 @@ function Invoke-DISMScan {
         [Parameter(Mandatory=$true, Position=0)]
         [string]$dismScanLog,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [Parameter(Mandatory = $true, Position=1)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory=$true, Position=2)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=3)]
         [switch]$VerboseArg
 
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    Write-Host "executing DISM/ScanHealth"
+    $dismScanLogDir = Split-Path -Path $dismScanLog -Parent
+    $dismErrorLog = Join-Path -Path $dismScanLogDir -ChildPath "DISM_Error.log"
+    $DismMaxDurationVal = 15
+    Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
-        if ($Quiet) {
-            dism /online /Cleanup-Image /Scanhealth > $dismScanLog 2>&1
-        } else {
-            dism /online /Cleanup-Image /Scanhealth | Tee-Object -FilePath $dismScanLog
+        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/Scanhealth" -RedirectStandardOutput $dismScanLog -RedirectStandardError $dismErrorLog -NoNewWindow -Wait -PassThru
+        $DismStartTime = Get-Date
+
+        # Monitor the process
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 5
+
+            $elapsed = (Get-Date) - $DismStartTime
+            if ($elapsed -gt $DismMaxDuration) {
+                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
+                Add-Content -Path $dismScanLog -Value "!!`t`t> $dismStucknotify"
+                Write-Warning $dismStucknotify
+                try {
+                    $process.Kill()
+                    $dismStuckTerminate = "Dism.exe terminated."
+                    Add-Content -Path $dismScanLog -Value "!!`t`t> $dismStuckTerminate"
+                    Write-Warning $dismStuckTerminate
+                } catch {
+                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
+                    Add-Content -Path $dismScanLog -Value "!!`t`t> $dismStuckTerminateFail"
+                    Write-Warning $dismStuckTerminateFail
+                }
+                break
+            }
         }
-        return $LASTEXITCODE
+        return $process.ExitCode
+
+        $dismLogContent = Get-Content $dismErrorLog -Raw
+        Add-Content -Path $dismScanLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
     } catch {
         $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
         Write-Error $errorMessage
@@ -94,23 +160,55 @@ function Invoke-DISMRestore {
         [Parameter(Mandatory=$true, Position=0)]
         [string]$dismRestoreLog,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [Parameter(Mandatory = $true, Position=1)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory=$true, Position=2)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=3)]
         [switch]$VerboseArg
 
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+    $dismLogDir = Split-Path -Path $dismRestoreLog -Parent
+    $dismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
 
-    Write-Host "executing DISM/RestoreHealth"
+    $DismMaxDurationVal = 40
+    Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
-        if ($Quiet) {
-            dism /online /Cleanup-Image /RestoreHealth > $dismRestoreLog 2>&1
-        } else {
-            dism /online /Cleanup-Image /RestoreHealth | Tee-Object -FilePath $dismRestoreLog
+        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/RestoreHealth" -RedirectStandardOutput $dismRestoreLog -RedirectStandardError $dismErrorLog -NoNewWindow -Wait -PassThru
+        $DismStartTime = Get-Date
+
+        # Monitor the process
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 5
+
+            $elapsed = (Get-Date) - $DismStartTime
+            if ($elapsed -gt $DismMaxDuration) {
+                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
+                Add-Content -Path $dismRestoreLog -Value "!!`t`t> $dismStucknotify"
+                Write-Warning $dismStucknotify
+                try {
+                    $process.Kill()
+                    $dismStuckTerminate = "Dism.exe terminated."
+                    Add-Content -Path $dismRestoreLog -Value "!!`t`t> $dismStuckTerminate"
+                    Write-Warning $dismStuckTerminate
+                } catch {
+                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
+                    Add-Content -Path $dismRestoreLog -Value "!!`t`t> $dismStuckTerminateFail"
+                    Write-Warning $dismStuckTerminateFail
+                }
+                break
+            }
         }
-        return $LASTEXITCODE
+        return $process.ExitCode
+
+        $dismLogContent = Get-Content $dismErrorLog -Raw
+        Add-Content -Path $dismRestoreLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Remove-Item -Path $dismErrorLog -Force-ErrorAction SilentlyContinue
     } catch {
         $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
         Write-Error $errorMessage
@@ -125,22 +223,54 @@ function Invoke-DISMAnalyzeComponentStore {
         [Parameter(Mandatory=$true, Position=0)]
         [string]$analyzeComponentLog,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [Parameter(Mandatory = $true, Position=1)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory=$true, Position=2)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=3)]
         [switch]$VerboseArg
 
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    Write-Host "executing DISM Analyze Component Store"
+    $DismLogDir = Split-Path -Path $analyzeComponentLog -Parent
+    $DismErrorLog = Join-Path -Path $DismLogDir -ChildPath "DISM_Error.log"
+
+    $DismMaxDurationVal = 5
+    Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
-        if ($Quiet) {
-            dism /Online /Cleanup-Image /AnalyzeComponentStore > $analyzeComponentLog 2>&1
-        } else {
-            dism /Online /Cleanup-Image /AnalyzeComponentStore | Tee-Object -FilePath $analyzeComponentLog
+        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/AnalyzeComponentStore" -RedirectStandardOutput $analyzeComponentLog -RedirectStandardError $DismErrorLog -NoNewWindow -Wait -PassThru
+        $DismStartTime = Get-Date
+
+        # Monitor the process
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 5
+
+            $elapsed = (Get-Date) - $DismStartTime
+            if ($elapsed -gt $DismMaxDuration) {
+                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
+                Add-Content -Path $analyzeComponentLog -Value "!!`t`t> $dismStucknotify"
+                Write-Warning $dismStucknotify
+                try {
+                    $process.Kill()
+                    $dismStuckTerminate = "Dism.exe terminated."
+                    Add-Content -Path $analyzeComponentLog -Value "!!`t`t> $dismStuckTerminate"
+                    Write-Warning $dismStuckTerminate
+                } catch {
+                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
+                    Add-Content -Path $analyzeComponentLog -Value "!!`t`t> $dismStuckTerminateFail"
+                    Write-Warning $dismStuckTerminateFail
+                }
+                break
+            }
         }
-        return $LASTEXITCODE
+        return $process.ExitCode
+        $dismLogContent = Get-Content $dismErrorLog -Raw
+        Add-Content -Path $analyzeComponentLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
     } catch {
         $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
         Write-Error $errorMessage
@@ -173,24 +303,54 @@ function Invoke-DISMComponentStoreCleanup {
         [Parameter(Mandatory=$true, Position=0)]
         [string]$componentCleanupLog,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [Parameter(Mandatory = $true, Position=1)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory=$true, Position=2)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=3)]
         [switch]$VerboseArg
 
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    Write-Host "executing DISM Component Store Cleanup"
+    $dismLogDir = Split-Path -Path $componentCleanupLog -Parent
+    $DismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
+    $DismMaxDurationVal = 20
+    Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
-        if ($Quiet) {
-            dism /Online /Cleanup-Image /StartComponentCleanup > $componentCleanupLog 2>&1
-        } else {
-            dism /Online /Cleanup-Image /StartComponentCleanup | Tee-Object -FilePath $componentCleanupLog
+        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/StartComponentCleanup" -RedirectStandardOutput $componentCleanupLog -RedirectStandardError $DismErrorLog -NoNewWindow -Wait -PassThru
+        $DismStartTime = Get-Date
+
+        # Monitor the process
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 5
+
+            $elapsed = (Get-Date) - $DismStartTime
+            if ($elapsed -gt $DismMaxDuration) {
+                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
+                Add-Content -Path $componentCleanupLog -Value "!!`t`t> $dismStucknotify"
+                Write-Warning $dismStucknotify
+                try {
+                    $process.Kill()
+                    $dismStuckTerminate = "Dism.exe terminated."
+                    Add-Content -Path $componentCleanupLog -Value "!!`t`t> $dismStuckTerminate"
+                    Write-Warning $dismStuckTerminate
+                } catch {
+                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
+                    Add-Content -Path $componentCleanupLog -Value "!!`t`t> $dismStuckTerminateFail"
+                    Write-Warning $dismStuckTerminateFail
+                }
+                break
+            }
         }
-        $message = "Component store cleanup performed."
-        Write-Verbose $message
-        Add-Content -Path $componentCleanupLog -Value $message
+        return $process.ExitCode
+
+        $dismLogContent = Get-Content $dismErrorLog -Raw
+        Add-Content -Path $componentCleanupLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
     } catch {
         $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
         Write-Error $message
@@ -259,10 +419,14 @@ function Invoke-WindowsUpdateCleanup {
         [Parameter(Mandatory=$true, Position=0)]
         [string]$updateCleanupLog,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [Parameter(Mandatory = $true, Position=1)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory=$true, Position=2)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=3)]
         [switch]$VerboseArg
 
     )
@@ -285,7 +449,7 @@ function Invoke-WindowsUpdateCleanup {
     if (Test-Path -Path $softwareDistributionBackupPath) {
         Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
         try{
-            Remove-Item -Path "\\?\$softwareDistributionBackupPath" -Recurse -Force
+            Remove-Item -Path "\\?\$softwareDistributionBackupPath" -Recurse -Force -ErrorAction SilentlyContinue
         } catch {
             $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
@@ -314,7 +478,7 @@ function Invoke-WindowsUpdateCleanup {
     if (Test-Path -Path $catroot2BackupPath) {
         Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
         try{
-            Remove-Item -Path "\\?\$catroot2BackupPath" -Recurse -Force
+            Remove-Item -Path "\\?\$catroot2BackupPath" -Recurse -Force -ErrorAction SilentlyContinue
         } catch {
             $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
             Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
@@ -343,6 +507,8 @@ function Invoke-WindowsUpdateCleanup {
         Write-Verbose "catroot2 folder does not exist. No need to rename."
     }
     Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
+
+
     Write-Host "Starting Diagnostics..."
     $winDiagMsg="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tStarting Diagnostics:"
     Add-Content -Path $updateCleanupLog -Value "$winDiagMsg"
@@ -350,9 +516,26 @@ function Invoke-WindowsUpdateCleanup {
     $updtDiagMsg="`t`tWindows Update Troubleshooting..."
     $bitsDiagMsg="`t`tBITS Troubleshooting..."
     try {
+        $DiagMaxDurationVal = 15
+        $DiagMaxDuration = New-TimeSpan -Minutes $DiagMaxDurationVal
         Add-Content -Path $updateCleanupLog -Value "$updtDiagMsg"
-        Write-Verbose $updtDiagMsg
-        Get-TroubleshootingPack -Path C:\Windows\diagnostics\system\WindowsUpdate | Invoke-TroubleshootingPack -Unattended
+        Write-Host "Starting Windows Update Troubleshooting... (up to $DiagMaxDurationVal min, Start: $(Get-Date -Format "HH:mm"))"
+        $job = Start-Job -ScriptBlock {
+            Get-TroubleshootingPack -Path 'C:\Windows\diagnostics\system\WindowsUpdate' | Invoke-TroubleshootingPack -Unattended
+        }
+        $startTime = Get-Date
+
+        while ($job.State -eq 'Running') {
+            Start-Sleep -Seconds 5
+            if ((Get-Date) - $startTime -gt $DiagMaxDuration) {
+                Write-Warning "Diagnostics timed out after $DiagMaxDurationVal minutes."
+                Stop-Job -Job $job
+            }
+        }
+        $jobResult = Receive-Job -Job $job -Wait
+        # write job result to log
+        Add-Content -Path $updateCleanupLog -Value "`t`tDiag Job-State: $($job.State)Result: $jobResult"
+        Remove-Job -Job $job
     }
     catch {
         $updtTrblShootErr="ERROR:`r`n$_"
@@ -360,9 +543,27 @@ function Invoke-WindowsUpdateCleanup {
         Write-Error $updtTrblShootErr
     }
     try {
+        $DiagMaxDurationVal = 10
+        $DiagMaxDuration = New-TimeSpan -Minutes $DiagMaxDurationVal
         Add-Content -Path $updateCleanupLog -Value "$bitsDiagMsg"
-        Write-Verbose $bitsDiagMsg
-        Get-TroubleshootingPack -Path C:\Windows\diagnostics\system\BITS | Invoke-TroubleshootingPack -Unattended
+        Write-Host "Starting BITS Troubleshooting... (up to $DiagMaxDurationVal min, Start: $(Get-Date -Format "HH:mm"))"
+        $job = Start-Job -ScriptBlock {
+            Get-TroubleshootingPack -Path 'C:\Windows\diagnostics\system\BITS' | Invoke-TroubleshootingPack -Unattended
+        }
+        $startTime = Get-Date
+
+        while ($job.State -eq 'Running') {
+            Start-Sleep -Seconds 5
+            if ((Get-Date) - $startTime -gt $DiagMaxDuration) {
+                Write-Warning "Diagnostics timed out after $DiagMaxDurationVal minutes."
+                Stop-Job -Job $job
+            }
+        }
+        $jobResult = Receive-Job -Job $job -Wait
+        # write job result to log
+        Add-Content -Path $updateCleanupLog -Value "`t`tDiag Job-State: $($job.State)Result: $jobResult"
+        Remove-Job -Job $job
+
     }
     catch {
         $bitsTrblShootErr="`t`tERROR:`r`n$_"
@@ -563,6 +764,11 @@ function Repair-System {
     When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
     This will also run the Windows Update and BITS Troubleshooting Packs.
 
+    .PARAMETER ChangeTimeout
+    Multiplicator
+    Use decimal value to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
+    Range = 0.25 - 10.0
+
     .PARAMETER KeepLogs
     When specified, log files will be kept on the remote Device, but still be copied to the Client
 
@@ -662,7 +868,7 @@ function Repair-System {
 
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2025-08-20
+    Date: 2025-08-23
     #>
 
     [CmdletBinding()]
@@ -688,6 +894,10 @@ function Repair-System {
 
         [Parameter(Mandatory = $false)]
         [switch]$WindowsUpdateCleanup,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory = $false)]
         [switch]$sccmCleanup,
@@ -852,8 +1062,8 @@ function Repair-System {
         $dismScanLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_scanHealth.log"
         $dismScanResult=0
         if($remote){
-            $dismScanResult = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $Quiet, $VerboseOption
-        } else { $dismScanResult=Invoke-DISMScan $dismScanLog $Quiet $VerboseOption}
+            $dismScanResult = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $ChangeTimeout, $Quiet, $VerboseOption
+        } else { $dismScanResult=Invoke-DISMScan $dismScanLog $ChangeTimeout $Quiet $VerboseOption}
         $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
         $ExitCode[2]=$dismScanResult
         $dismScanResultString = $dismScanResult.ToString()
@@ -868,8 +1078,8 @@ function Repair-System {
             if ($dismScanExit -eq 1) {
 
                 if ($remote) {
-                    $dismRestoreExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $Quiet, $VerboseOption
-                } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $Quiet $VerboseOption }
+                    $dismRestoreExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $ChangeTimeout, $Quiet, $VerboseOption
+                } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $ChangeTimeout $Quiet $VerboseOption }
                 $ExitCode[3]=$dismRestoreExit
             }
         } else {
@@ -889,8 +1099,8 @@ function Repair-System {
             $analyzeComponentLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_analyze-component.log"
             $analyzeExit=0
             if ($remote) {
-                $analyzeExit = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $Quiet, $VerboseOption
-            } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $Quiet $VerboseOption }
+                $analyzeExit = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $ChangeTimeout, $Quiet, $VerboseOption
+            } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $ChangeTimeout $Quiet $VerboseOption }
             $ExitCode[4]=$analyzeExit
 
             # Check the output and perform cleanup if recommended
@@ -905,8 +1115,8 @@ function Repair-System {
                 if ($analyzeResult) {
 
                     if ($remote) {
-                        $componentCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $Quiet, $VerboseOption
-                    } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $Quiet $VerboseOption }
+                        $componentCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption
+                    } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $ChangeTimeout $Quiet $VerboseOption }
                 } else {
                     $message = "No component store cleanup was needed on $ComputerName."
                     if($remote) {
@@ -933,8 +1143,8 @@ function Repair-System {
         $sfcLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_sfc-scannow.log"
         $sfcExitCode=0
         if($remote){
-            $sfcExitCode= Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $Quiet, $VerboseOption
-        } else {$sfcExitCode=Invoke-SFC $sfcLog $Quiet $VerboseOption}
+            $sfcExitCode= Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $ChangeTimeout, $Quiet, $VerboseOption
+        } else {$sfcExitCode=Invoke-SFC $sfcLog $ChangeTimeout $Quiet $VerboseOption}
         $ExitCode[1]=$sfcExitCode
     }
 
@@ -953,8 +1163,8 @@ function Repair-System {
         $updateCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_WinUpdt-BITS_reset-cleanup.log"
         $updateCleanupExit=0
         if ($remote) {
-            $updateCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $Quiet, $VerboseOption
-        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup  $updateCleanupLog $Quiet $VerboseOption }
+            $updateCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption
+        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup  $updateCleanupLog $ChangeTimeout $Quiet $VerboseOption }
 
         if($updateCleanupExit -ne 0){
             Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
@@ -986,7 +1196,7 @@ function Repair-System {
     }
 
     if($remote) {$path=$finalDestinationPath} else {$path=$localTempPath}
-    $extmsg= "`r`nSystem-Repair performed."
+    $extmsg= "`r`nSystem-Repair performed. If Errors Occurred, or SFC/DISM/WindowsUpdate Cleanup and Diagnostics Jobs were Terminated due to Timeout, please restart the system and run once more."
     $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'"
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     if (-not $noCopy){
