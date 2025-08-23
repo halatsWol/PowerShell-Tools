@@ -12,10 +12,14 @@ function Invoke-SFC {
         [Parameter(Mandatory=$true, Position=0)]
         [string]$sfcLog,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [Parameter(Mandatory = $true, Position=1)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory=$true, Position=2)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=3)]
         [switch]$VerboseArg
 
     )
@@ -23,7 +27,7 @@ function Invoke-SFC {
     # get directory path from $sfcLog
     $sfcLogDir = Split-Path -Path $sfcLog -Parent
     $sfcErrorLog = Join-Path -Path $sfcLogDir -ChildPath "SFC_Error.log"
-    $SfcMaxDurationVal = 20
+    $SfcMaxDurationVal = 20 * $ChangeTimeout
     Write-Host "executing SFC (up to $SfcMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
         try{
             $SfcMaxDuration = New-TimeSpan -Minutes $SfcMaxDurationVal
@@ -94,7 +98,7 @@ function Invoke-DISMScan {
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
     $dismScanLogDir = Split-Path -Path $dismScanLog -Parent
     $dismErrorLog = Join-Path -Path $dismScanLogDir -ChildPath "DISM_Error.log"
-    $DismMaxDurationVal = 15
+    $DismMaxDurationVal = 15 * $ChangeTimeout
     Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
@@ -175,7 +179,7 @@ function Invoke-DISMRestore {
     $dismLogDir = Split-Path -Path $dismRestoreLog -Parent
     $dismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
 
-    $DismMaxDurationVal = 40
+    $DismMaxDurationVal = 40 * $ChangeTimeout
     Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
@@ -238,7 +242,7 @@ function Invoke-DISMAnalyzeComponentStore {
     $DismLogDir = Split-Path -Path $analyzeComponentLog -Parent
     $DismErrorLog = Join-Path -Path $DismLogDir -ChildPath "DISM_Error.log"
 
-    $DismMaxDurationVal = 5
+    $DismMaxDurationVal = 5 * $ChangeTimeout
     Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
@@ -317,7 +321,7 @@ function Invoke-DISMComponentStoreCleanup {
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
     $dismLogDir = Split-Path -Path $componentCleanupLog -Parent
     $DismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
-    $DismMaxDurationVal = 20
+    $DismMaxDurationVal = 20 * $ChangeTimeout
     Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
@@ -516,7 +520,7 @@ function Invoke-WindowsUpdateCleanup {
     $updtDiagMsg="`t`tWindows Update Troubleshooting..."
     $bitsDiagMsg="`t`tBITS Troubleshooting..."
     try {
-        $DiagMaxDurationVal = 15
+        $DiagMaxDurationVal = 15 * $ChangeTimeout
         $DiagMaxDuration = New-TimeSpan -Minutes $DiagMaxDurationVal
         Add-Content -Path $updateCleanupLog -Value "$updtDiagMsg"
         Write-Host "Starting Windows Update Troubleshooting... (up to $DiagMaxDurationVal min, Start: $(Get-Date -Format "HH:mm"))"
@@ -543,7 +547,7 @@ function Invoke-WindowsUpdateCleanup {
         Write-Error $updtTrblShootErr
     }
     try {
-        $DiagMaxDurationVal = 10
+        $DiagMaxDurationVal = 10 * $ChangeTimeout
         $DiagMaxDuration = New-TimeSpan -Minutes $DiagMaxDurationVal
         Add-Content -Path $updateCleanupLog -Value "$bitsDiagMsg"
         Write-Host "Starting BITS Troubleshooting... (up to $DiagMaxDurationVal min, Start: $(Get-Date -Format "HH:mm"))"
