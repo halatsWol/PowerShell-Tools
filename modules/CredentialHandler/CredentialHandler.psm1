@@ -26,6 +26,9 @@ function Get-CredentialObject {
     .EXAMPLE
     Get-CredentialObject -UserName admin
 
+    .OUTPUTS
+    PSCredential
+
     .LINK
     https://github.com/halatsWol/PowerShell-Tools
 
