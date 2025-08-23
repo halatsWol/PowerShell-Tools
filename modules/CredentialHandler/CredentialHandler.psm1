@@ -33,7 +33,7 @@ function Get-CredentialObject {
     https://github.com/halatsWol/PowerShell-Tools
 
     .LINK
-	https://kMarflow.com/
+	https://www.kMarflow.com/
 
     .NOTES
     Author: Wolfram Halatschek
