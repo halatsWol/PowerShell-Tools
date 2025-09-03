@@ -770,7 +770,7 @@ if ( -not $isElevated ) {
     Write-Host "Please restart your computer to complete the uninstallation process." -ForegroundColor Yellow
     Write-Host "It is recommended to run this script a second time after the restart to ensure all Autodesk products are removed." -ForegroundColor Yellow
     Pause
-    $notification.Dispose()
+	if (-not $PSSenderInfo) { $notification.Dispose() }
     Read-Host -Prompt "`r`nWould you like to restart your computer now? (Y/N)" | ForEach-Object {
         if ($_ -eq "y") {
             Write-Log -Message "Restarting the computer as per user request." -Component "AutoDeskCleanRemove" -LogPath $MainLogFile
