@@ -937,7 +937,7 @@ function Repair-System {
 
     $ComputerName = $ComputerName.Trim()
     if ($ComputerName -and ($ComputerName -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
-        Write-Error "Invalid ComputerName format.`r`nValid Windows hostnames must:
+        Write-Error "Invalid ComputerName format: '$ComputerName'.`r`nValid Windows hostnames must:
         - Only contain letters (A-Z, a-z), numbers (0-9), hyphens (-), underscores (_), and dots (.)
         - Not contain spaces or special characters
         - Not start or end with a hyphen or dot

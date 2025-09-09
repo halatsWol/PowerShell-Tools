@@ -819,7 +819,18 @@ function Invoke-TempDataCleanup {
 
         foreach ( $comp in $computerList ){
 
+            $comp = $comp.Trim()
+            if ($comp -and ($comp -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
+                Write-Error "Invalid ComputerName format: '$comp'.`r`nValid Windows hostnames must:
+                - Only contain letters (A-Z, a-z), numbers (0-9), hyphens (-), underscores (_), and dots (.)
+                - Not contain spaces or special characters
+                - Not start or end with a hyphen or dot
+                - Each label (separated by dots) must be 1-63 characters
+                - The full name must be 1-255 characters
+                - Alternatively, a valid IPv4 address (e.g. 192.168.1.1) is allowed."
 
+                continue
+            }
 
             $remote=$false
             $LocalTargetPath = "$LocalTargetPath\$comp"
