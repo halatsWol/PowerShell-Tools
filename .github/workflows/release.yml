@@ -13,6 +13,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check installer script exists
+        run: |
+          if (!(Test-Path 'make/Modules-Suite-Installer-Script_UserInstall.iss')) {
+            Write-Error 'Installer script not found!'
+            exit 1
+          }
+        shell: pwsh
+
       - name: Build system-wide installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
         with:
@@ -32,6 +40,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check installer script exists
+        run: |
+          if (!(Test-Path 'make/Modules-Suite-Installer-Script.iss')) {
+            Write-Error 'Installer script not found!'
+            exit 1
+          }
+        shell: pwsh
 
       - name: Build system-wide installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
