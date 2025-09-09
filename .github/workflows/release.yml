@@ -21,8 +21,8 @@ jobs:
           }
         shell: pwsh
 
-      - name: Build system-wide installer
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
+      - name: Build User-Only installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
         with:
           path: make/Modules-Suite-Installer-Script_UserInstall.iss
           options: >
@@ -50,7 +50,7 @@ jobs:
         shell: pwsh
 
       - name: Build system-wide installer
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
         with:
           path: make/Modules-Suite-Installer-Script.iss
           options: >
