@@ -9,6 +9,8 @@ This .exe-installer will install the following Modules:
 
 # Change Log:
 
+_from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
+
 - `Repair System`: added TimeOut for SFC, DISM & Windows Update Diagnostics
 
 _from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
@@ -68,7 +70,15 @@ PS C:\>
 ## Changed Modules
 ### RepairSystem
 
+#### Fixes:
+
+- `-Computername`: Leading/Trailing Whitespaces will be trimmed and won't throw errors anymore.
+- *DISM_Error.log* will now be properly added into the Dism log-file each time after DISM has been executed.
+- reduced chance of DISM & SFC Error log handling to cause Access denied due to race conditions
+
 #### Changes:
+
+_from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
 
 - added TimeOut for SFC, DISM & Windows Update Diagnostics
   - timeout durations are as following:

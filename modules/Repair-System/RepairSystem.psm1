@@ -56,7 +56,7 @@ function Invoke-SFC {
                     break
                 }
             }
-
+            Start-Sleep -Seconds 2
             $sfcExitCode=$process.ExitCode
             $logContent = Get-Content $sfcLog -Raw
             $logContent = $logContent -replace '[^\x00-\x7F]', ''
@@ -66,8 +66,7 @@ function Invoke-SFC {
             $errorLogContent = Get-Content $sfcErrorLog -Raw
             $errorLogContent = $errorLogContent -replace '[^\x00-\x7F]', ''
             $errorLogContent = $errorLogContent -replace [char]0
-            Add-Content -Path $sfcLog -Value "`r`n`r`nSFC Error Output:`r`n"
-            Add-Content $sfcLog -Value $errorLogContent
+            Add-Content -Path $sfcLog -Value "`r`n`r`n// Start Error-Log:`r`n$errorLogContent`r`n// End Error-Log"
             Remove-Item -Path $sfcErrorLog -Force -ErrorAction SilentlyContinue
             return $sfcExitCode
         } catch {
@@ -127,11 +126,13 @@ function Invoke-DISMScan {
                 break
             }
         }
-        return $process.ExitCode
 
+        Start-Sleep -Seconds 2
         $dismLogContent = Get-Content $dismErrorLog -Raw
-        Add-Content -Path $dismScanLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Add-Content -Path $dismScanLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
+
+        return $process.ExitCode
     } catch {
         $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
         Write-Error $errorMessage
@@ -208,11 +209,13 @@ function Invoke-DISMRestore {
                 break
             }
         }
-        return $process.ExitCode
 
+        Start-Sleep -Seconds 2
         $dismLogContent = Get-Content $dismErrorLog -Raw
-        Add-Content -Path $dismRestoreLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Add-Content -Path $dismRestoreLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force-ErrorAction SilentlyContinue
+
+        return $process.ExitCode
     } catch {
         $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
         Write-Error $errorMessage
@@ -271,10 +274,12 @@ function Invoke-DISMAnalyzeComponentStore {
                 break
             }
         }
-        return $process.ExitCode
+        Start-Sleep -Seconds 2
         $dismLogContent = Get-Content $dismErrorLog -Raw
-        Add-Content -Path $analyzeComponentLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Add-Content -Path $analyzeComponentLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
+
+        return $process.ExitCode
     } catch {
         $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
         Write-Error $errorMessage
@@ -350,11 +355,13 @@ function Invoke-DISMComponentStoreCleanup {
                 break
             }
         }
-        return $process.ExitCode
 
+        Start-Sleep -Seconds 2
         $dismLogContent = Get-Content $dismErrorLog -Raw
-        Add-Content -Path $componentCleanupLog -Value "`r`n`r`nDISM Error Output:`r`n$dismLogContent"
+        Add-Content -Path $componentCleanupLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
+
+        return $process.ExitCode
     } catch {
         $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
         Write-Error $message
@@ -878,13 +885,12 @@ function Repair-System {
 
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2025-08-23
+    Date: 2025-09-09
     #>
 
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$false, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
-        [ValidatePattern('^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')]
         [string]$ComputerName,
 
         [Parameter(Mandatory=$false,Position=0)]
@@ -928,6 +934,19 @@ function Repair-System {
         [switch]$RepairCCM
 
     )
+
+    $ComputerName = $ComputerName.Trim()
+    if ($ComputerName -and ($ComputerName -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
+        Write-Error "Invalid ComputerName format.`r`nValid Windows hostnames must:
+        - Only contain letters (A-Z, a-z), numbers (0-9), hyphens (-), underscores (_), and dots (.)
+        - Not contain spaces or special characters
+        - Not start or end with a hyphen or dot
+        - Each label (separated by dots) must be 1-63 characters
+        - The full name must be 1-255 characters
+        - Alternatively, a valid IPv4 address (e.g. 192.168.1.1) is allowed."
+        $global:LASTEXITCODE = 1
+        return
+    }
 
     $confFile="$PSScriptRoot\RepairSystem.conf"
     $tempFolder="_IT-temp"
