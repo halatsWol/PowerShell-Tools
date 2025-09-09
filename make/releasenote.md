@@ -2,7 +2,7 @@ Easy installer for PowerShell-Tools v1.4.2
 
 This .exe-installer will install the following Modules:
 
-- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/Repair-System) (v1.5)
+- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/Repair-System) (v1.5.1)
 - [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/TempDataCleanup) (v1.5)
 - [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/Shortcuts) (v1.0)
 - [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/CredentialHandler) (v1.0)
@@ -76,9 +76,7 @@ PS C:\>
 - *DISM_Error.log* will now be properly added into the Dism log-file each time after DISM has been executed.
 - reduced chance of DISM & SFC Error log handling to cause Access denied due to race conditions
 
-#### Changes:
-
-_from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
+#### Changes: _from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
 
 - added TimeOut for SFC, DISM & Windows Update Diagnostics
   - timeout durations are as following:
@@ -96,7 +94,7 @@ _from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1
   if any of these fail or run into Timeout, Restarting the device and re-running `Repair-System` is adviced.
   Durations are approximated average Duration for medium corrupted Systems. Duration may be changed with a Multiplicator.
 
-#### New Features
+#### New Features _from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
 
 - **`-ChangeTimeout`:** use decimal value to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
 Range = 0.25 - 10.0
@@ -109,9 +107,13 @@ If non are provided, it will prompt for user-input (please keep the Bug in mind,
 Prints install Exit Code and copies the ccmsetup.log file to the log-Directory of the `Repair-System` Function
 
 ### TempDataCleanup
-#### New Features
 
-_from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
+#### Fixes
+
+- `-Computername`: Leading/Trailing Whitespaces will be trimmed and won't throw errors/Warnings anymore,
+Device Names will now be validated.
+
+#### New Features _from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
 - **`-Credentials`:** to Authenticate Remote Access and permissions on a remote Machine
 Accepts PSCredential Object (Get-Credential / Get-CredentialObject)
 If non are provided, it will prompt for user-input (please keep the Bug in mind, mentioned in the CredentialHandler Module)
