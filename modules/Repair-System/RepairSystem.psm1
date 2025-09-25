@@ -213,7 +213,7 @@ function Invoke-DISMRestore {
         Start-Sleep -Seconds 2
         $dismLogContent = Get-Content $dismErrorLog -Raw
         Add-Content -Path $dismRestoreLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-        Remove-Item -Path $dismErrorLog -Force-ErrorAction SilentlyContinue
+        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
 
         return $process.ExitCode
     } catch {
