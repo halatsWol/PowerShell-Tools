@@ -557,6 +557,16 @@ if ( -not $isElevated ) {
         }
     }
 
+	$programDataPath = "C:\ProgramData\Autodesk"
+	$excludePath     = Join-Path -Path $programDataPath -ChildPath Uninstallers
+	if (Test-Path $programDataPath) {
+    Get-ChildItem -Path $programDataPath -Force |
+        Where-Object { $_.FullName -ne $excludePath } |
+        ForEach-Object {
+            $autodeskFoldersAll.Add($_.FullName)
+        }
+	}
+
     $InstallDirPercentage = 100 / $autodeskFoldersAll.Count
     foreach ($folder in $autodeskFoldersAll) {
         if (Test-Path -Path $folder) {
