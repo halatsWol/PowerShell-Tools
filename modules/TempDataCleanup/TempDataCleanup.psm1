@@ -61,21 +61,38 @@ function Start-UserCleanup {
     foreach ($userProfile in $userProfiles) {
         Add-Content -Path $logfile -Value "`tUser Profile: $userProfile"
         try{
+            $tempFolderJobs = @()
             foreach ($folder in $userTempFolders) {
                 $path = Join-Path "C:\Users\$userProfile" $folder
-                if (Test-Path $path) {
-                    Add-Content -Path $logfile -Value "`t`t> $path"
-                    Remove-Item -Path "\\?\$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
-                }
-
-            }
-            if ($IncludeSystemLogs) {
-                foreach ($folder in $userReportingDirs) {
-                    $path = Join-Path "C:\Users\$userProfile" $folder
+                $tempFolderJobs += Start-Job -ScriptBlock {
+                    param($path, $logfile, $VerboseOption)
                     if (Test-Path $path) {
                         Add-Content -Path $logfile -Value "`t`t> $path"
                         Remove-Item -Path "\\?\$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
                     }
+                } -ArgumentList $path, $logfile, $VerboseOption
+            }
+            if ($tempFolderJobs) {
+                Wait-Job -Job $tempFolderJobs | Out-Null
+                Receive-Job -Job $tempFolderJobs
+                Remove-Job -Job $tempFolderJobs
+            }
+            if ($IncludeSystemLogs) {
+                $reportingDirJobs = @()
+                foreach ($folder in $userReportingDirs) {
+                    $path = Join-Path "C:\Users\$userProfile" $folder
+                    $reportingDirJobs += Start-Job -ScriptBlock {
+                        param($path, $logfile, $VerboseOption)
+                        if (Test-Path $path) {
+                            Add-Content -Path $logfile -Value "`t`t> $path"
+                            Remove-Item -Path "\\?\$path\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    } -ArgumentList $path, $logfile, $VerboseOption
+                }
+                if ($reportingDirJobs) {
+                    Wait-Job -Job $reportingDirJobs | Out-Null
+                    Receive-Job -Job $reportingDirJobs
+                    Remove-Job -Job $reportingDirJobs
                 }
             }
             if ($IncludeIconCache) {
@@ -183,25 +200,43 @@ function Start-SystemCleanup {
     Add-Content -Path $logfile -Value "[$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'))] System cleanup:"
 
     if($IncludeSystemData) {
+        $systemTempJobs = @()
         foreach ($folder in $systemTempFolders) {
-            if (Test-Path $folder) {
-                Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "\\?\$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
-            } else {
-                Add-Content -Path $logfile -Value "`t`t> $path (not found)"
-            }
+            $systemTempJobs += Start-Job -ScriptBlock {
+                param($folder, $logfile, $VerboseOption)
+                if (Test-Path $folder) {
+                    Add-Content -Path $logfile -Value "`t`t> $folder"
+                    Remove-Item -Path "\\?\$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                } else {
+                    Add-Content -Path $logfile -Value "`t`t> $folder (not found)"
+                }
+            } -ArgumentList $folder, $logfile, $VerboseOption
+        }
+        if ($systemTempJobs) {
+            Wait-Job -Job $systemTempJobs | Out-Null
+            Receive-Job -Job $systemTempJobs
+            Remove-Job -Job $systemTempJobs
         }
         Start-Sleep -Milliseconds 100
     }
 
     if($IncludeSystemLogs) {
+        $sysReportingJobs = @()
         foreach ($folder in $sysReportingDirs) {
-            if (Test-Path $folder) {
-                Add-Content -Path $logfile -Value "`t`t> $folder"
-                Remove-Item -Path "\\?\$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
-            } else {
-                Add-Content -Path $logfile -Value "`t`t> $path (not found)"
-            }
+            $sysReportingJobs += Start-Job -ScriptBlock {
+                param($folder, $logfile, $VerboseOption)
+                if (Test-Path $folder) {
+                    Add-Content -Path $logfile -Value "`t`t> $folder"
+                    Remove-Item -Path "\\?\$folder\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                } else {
+                    Add-Content -Path $logfile -Value "`t`t> $folder (not found)"
+                }
+            } -ArgumentList $folder, $logfile, $VerboseOption
+        }
+        if ($sysReportingJobs) {
+            Wait-Job -Job $sysReportingJobs | Out-Null
+            Receive-Job -Job $sysReportingJobs
+            Remove-Job -Job $sysReportingJobs
         }
         Start-Sleep -Milliseconds 100
     }
@@ -210,10 +245,25 @@ function Start-SystemCleanup {
 
     if($IncludeCCMCache) {
         if (Test-Path $ccmCachePath) {
-            Add-Content -Path $logfile -Value "`t`t> $ccmCachePath"
-            Remove-Item -Path "\\?\$ccmCachePath\*" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+            $ccmCacheJobs = @()
+            $ccmCacheItems = Get-ChildItem -Path $ccmCachePath -Force -ErrorAction SilentlyContinue
+            foreach ($item in $ccmCacheItems) {
+                $itemPath = $item.FullName
+                $ccmCacheJobs += Start-Job -ScriptBlock {
+                    param($itemPath, $logfile, $VerboseOption)
+                    if (Test-Path $itemPath) {
+                        Add-Content -Path $logfile -Value "`t`t> $itemPath"
+                        Remove-Item -Path "\\?\$itemPath" -Verbose:$VerboseOption -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                } -ArgumentList $itemPath, $logfile, $VerboseOption
+            }
+            if ($ccmCacheJobs) {
+                Wait-Job -Job $ccmCacheJobs | Out-Null
+                Receive-Job -Job $ccmCacheJobs
+                Remove-Job -Job $ccmCacheJobs
+            }
         } else {
-            Add-Content -Path $logfile -Value "`t`t> $path (not found)"
+            Add-Content -Path $logfile -Value "`t`t> $ccmCachePath (not found)"
         }
         Start-Sleep -Milliseconds 100
     }
@@ -576,7 +626,7 @@ function Invoke-TempDataCleanup {
 
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2025-08-20
+    Date: 2026-06-16
     #>
 
 
@@ -886,19 +936,27 @@ function Invoke-TempDataCleanup {
 
             Write-Host "Cleaning up User Data and Cache"
             if ($remote) {
-                Invoke-Command @invokeParams -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
+                $userCleanupJob = Invoke-Command @invokeParams -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile -AsJob
             } else {
-                Start-UserCleanup -logfile $logfile -userTempFolders $userTempFolders -userReportingDirs $userReportingDirs -explorerCacheDir $explorerCacheDir -localIconCacheDB $localIconCacheDB -msTeamsCacheFolder $msTeamsCacheFolder -teamsClassicPath $teamsClassicPath -IncludeSystemLogs:$IncludeSystemLogs -IncludeIconCache:$IncludeIconCache -IncludeMSTeamsCache:$IncludeMSTeamsCache -VerboseOption:$VerboseOption -VerboseLogFile $VerboseLogFile
+                $userCleanupJob = Start-Job -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
             }
 
-
+            $systemCleanupJob = $null
             if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
                 Write-Host "Cleaning up System Data and Cache"
                 if ($remote) {
-                    Invoke-Command @invokeParams -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
+                    $systemCleanupJob = Invoke-Command @invokeParams -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile -AsJob
                 } else {
-                    Start-SystemCleanup -logfile $logfile -systemTempFolders $systemTempFolders -sysReportingDirs $sysReportingDirs -ccmCachePath $ccmCachePath -IncludeSystemData:$IncludeSystemData -IncludeSystemLogs:$IncludeSystemLogs -IncludeCCMCache:$IncludeCCMCache -VerboseOption:$VerboseOption -VerboseLogFile:$VerboseLogFile
+                    $systemCleanupJob = Start-Job -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
                 }
+            }
+
+            $cleanupJobs = @($userCleanupJob)
+            if ($systemCleanupJob) { $cleanupJobs += $systemCleanupJob }
+            Wait-Job -Job $cleanupJobs | Out-Null
+            foreach ($job in $cleanupJobs) {
+                Receive-Job -Job $job
+                Remove-Job -Job $job
             }
 
             if($LowDisk -or $VeryLowDisk -or $AutoClean){
