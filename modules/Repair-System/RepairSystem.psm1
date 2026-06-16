@@ -6,6 +6,331 @@ function New-Folder {
     if (-not (Test-Path -Path $FolderPath)) {New-Item -Path $FolderPath -ItemType Directory -Force > $null}
 }
 
+<#
+Single source of truth for Repair-System's exit code: position -> step name/label.
+Used both when building the composite code and when decoding it via -AnalyzeExitCode.
+#>
+$script:RepairSystemSteps = [ordered]@{
+    0 = @{ Key = 'Startup';                   Label = 'Startup / Pre-Flight Checks' }
+    1 = @{ Key = 'SFC';                       Label = 'SFC /scannow' }
+    2 = @{ Key = 'DISMScanHealth';            Label = 'DISM /Online /Cleanup-Image /ScanHealth' }
+    3 = @{ Key = 'DISMRestoreHealth';         Label = 'DISM /Online /Cleanup-Image /RestoreHealth' }
+    4 = @{ Key = 'DISMAnalyzeComponentStore'; Label = 'DISM /Online /Cleanup-Image /AnalyzeComponentStore' }
+    5 = @{ Key = 'DISMComponentCleanup';      Label = 'DISM /Online /Cleanup-Image /StartComponentCleanup' }
+    6 = @{ Key = 'SCCMCleanup';               Label = 'SCCM Cache / SoftwareDistribution Cleanup' }
+    7 = @{ Key = 'WindowsUpdateCleanup';      Label = 'Windows Update Cleanup' }
+    8 = @{ Key = 'RepairCCM';                 Label = 'CCM Client Repair' }
+    9 = @{ Key = 'ZipLogs';                   Label = 'Zip CBS/DISM Logs' }
+}
+
+<#
+Well-known integer codes per step (by Key), plus a 'Generic' fallback used by every step.
+Anything not listed here falls back to a generic "tool-specific result code" message.
+#>
+$script:RepairSystemKnownCodes = @{
+    Generic = @{
+        '0'          = 'Success, or this step was not requested/applicable.'
+        '1'          = 'The step failed. See the step''s log file for details.'
+        '5'          = 'Skipped - the remote connection was lost before this step could run.'
+        '87'         = 'DISM: The parameter is incorrect (ERROR_INVALID_PARAMETER).'
+        '1726'       = 'DISM: The remote procedure call failed.'
+        '3010'       = 'DISM/SFC: Success, but a restart is required to finish applying changes.'
+        '4294967294' = 'Repair-System terminated the process because it exceeded its maximum allowed run time (timeout). Restarting the device and running the step again is recommended.'
+        '4294967293' = 'The process ended almost immediately, well before Repair-System killed it for a timeout. It was most likely closed by something else (e.g. Task Manager, a crash, a forced shutdown) before it could finish, so its own exit code could not be trusted and was not used.'
+    }
+    Startup = @{
+        '0' = 'Startup completed successfully.'
+        '1' = 'Invalid -ComputerName format.'
+        '2' = 'Remote computer unreachable (ping failed).'
+        '3' = 'Unable to establish a WinRM/remote PowerShell session.'
+        '4' = 'Connection to the remote device was lost during execution.'
+        '5' = 'Not running with administrative privileges.'
+        '6' = 'Error reading or writing the configuration file.'
+        '7' = 'Conflicting parameters were supplied (e.g. -IncludeComponentCleanup with -noDism).'
+    }
+}
+
+<#
+Out-of-band sentinel values used in place of a process's own (untrustworthy) exit code when
+Repair-System knows the raw exit code can't be trusted - either because Repair-System itself
+killed the process for exceeding its time budget, or because the process disappeared
+implausibly fast for the kind of operation it was running, which is a strong sign it was
+closed by something other than Repair-System. Chosen deliberately out near the top of the
+uint32 range so they can't be confused with a real Win32/DISM/SFC exit code.
+#>
+$script:RepairSystemProcessSentinel = @{
+    TimedOut             = -2 # 0xFFFFFFFE / 4294967294 as uint32
+    TerminatedExternally = -3 # 0xFFFFFFFD / 4294967293 as uint32
+}
+
+# Below this, a finished process is assumed to have had a real chance to do its job; below it,
+# an unforced exit is treated as suspicious. DISM/SFC scans realistically take much longer than
+# this, so a legitimate sub-30-second completion is not expected in normal use.
+$script:RepairSystemMinPlausibleDurationSeconds = 30
+
+function Get-RepairSystemProcessResult {
+    <#
+    Translates a finished process's raw exit code into the value Repair-System actually trusts
+    for that step. A raw exit code alone can't distinguish "finished the job" from "got
+    terminated by something else" (Task Manager, a crash, a forced shutdown) - both look
+    identical to .NET: HasExited = true, some ExitCode. So instead of trusting it blindly: if
+    Repair-System itself killed the process for exceeding its time budget, return the
+    dedicated TimedOut sentinel; if the process disappeared implausibly fast without
+    Repair-System killing it, return the dedicated TerminatedExternally sentinel; otherwise
+    trust the process's own exit code.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [System.Diagnostics.Process]$Process,
+
+        [Parameter(Mandatory=$true)]
+        [datetime]$StartTime,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$KilledByTimeout
+    )
+    if ($KilledByTimeout) { return $script:RepairSystemProcessSentinel.TimedOut }
+
+    if (((Get-Date) - $StartTime).TotalSeconds -lt $script:RepairSystemMinPlausibleDurationSeconds) {
+        return $script:RepairSystemProcessSentinel.TerminatedExternally
+    }
+
+    return $Process.ExitCode
+}
+
+function ConvertTo-RepairSystemExitCode {
+    <#
+    Renders each step's real return value (not a lossy category) as a length-prefixed hex
+    field - one hex digit (0-8) saying how many hex digits follow, then those digits ('0'
+    alone means the value is 0) - concatenated in fixed position order. No delimiters are
+    needed because the length prefix marks where each field ends, and a fully successful run
+    collapses to a string of 10 '0' characters instead of 80 hex characters.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [int[]]$Codes
+    )
+    $sb = [System.Text.StringBuilder]::new()
+    foreach ($code in $Codes) {
+        # [uint32] is a checked cast and throws on negative input; reinterpret the raw
+        # bytes instead so e.g. -1 becomes 0xFFFFFFFF rather than an exception.
+        $value = [BitConverter]::ToUInt32([BitConverter]::GetBytes($code), 0)
+        if ($value -eq 0) {
+            [void]$sb.Append('0')
+        } else {
+            $hex = '{0:X}' -f $value
+            [void]$sb.Append([string]$hex.Length)
+            [void]$sb.Append($hex)
+        }
+    }
+    return $sb.ToString()
+}
+
+function ConvertFrom-RepairSystemExitCode {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Code
+    )
+    $Code = $Code.Trim()
+    $stepCount = $script:RepairSystemSteps.Count
+    $values = [System.Collections.Generic.List[uint32]]::new()
+    $pos = 0
+
+    for ($i = 0; $i -lt $stepCount; $i++) {
+        if ($pos -ge $Code.Length) {
+            return [PSCustomObject]@{
+                IsValid = $false
+                Error   = "'$Code' is not a valid Repair-System exit code: ran out of characters while reading step $i of $stepCount."
+                Values  = $null
+            }
+        }
+
+        $lengthChar = $Code[$pos]
+        if ($lengthChar -notmatch '^[0-8]$') {
+            return [PSCustomObject]@{
+                IsValid = $false
+                Error   = "'$Code' is not a valid Repair-System exit code: invalid length marker '$lengthChar' at position $pos (expected 0-8)."
+                Values  = $null
+            }
+        }
+        $len = [int]"$lengthChar"
+        $pos++
+
+        if ($len -eq 0) {
+            $values.Add([uint32]0)
+            continue
+        }
+
+        if ($pos + $len -gt $Code.Length) {
+            return [PSCustomObject]@{
+                IsValid = $false
+                Error   = "'$Code' is not a valid Repair-System exit code: truncated value for step $i (expected $len hex digit(s))."
+                Values  = $null
+            }
+        }
+
+        $hexChunk = $Code.Substring($pos, $len)
+        if ($hexChunk -notmatch '^[0-9A-Fa-f]+$') {
+            return [PSCustomObject]@{
+                IsValid = $false
+                Error   = "'$Code' is not a valid Repair-System exit code: '$hexChunk' is not valid hexadecimal (step $i)."
+                Values  = $null
+            }
+        }
+
+        $values.Add([Convert]::ToUInt32($hexChunk, 16))
+        $pos += $len
+    }
+
+    if ($pos -ne $Code.Length) {
+        return [PSCustomObject]@{
+            IsValid = $false
+            Error   = "'$Code' is not a valid Repair-System exit code: $($Code.Length - $pos) unexpected trailing character(s)."
+            Values  = $null
+        }
+    }
+
+    return [PSCustomObject]@{
+        IsValid = $true
+        Error   = $null
+        Values  = @($values)
+    }
+}
+
+function Get-RepairSystemExitCodeSeverity {
+    <#
+    Boils the detailed per-step codes down to a single conventional process exit code:
+    0 = full success, 2 = startup/fatal error (nothing ran), 1 = anything else that
+    reported a problem (including a mid-run connection loss, which is degraded/partial
+    rather than a complete failure to start).
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [int[]]$Codes
+    )
+    if (($Codes | Where-Object { $_ -ne 0 }).Count -eq 0) { return 0 }
+    if ($Codes[0] -in 1,2,3,5,6,7) { return 2 }
+    return 1
+}
+
+function Set-RepairSystemExitCode {
+    <#
+    Single point where Repair-System's exit code is finalized: the full, lossless detail
+    goes to the console and $global:RepairSystemDetailedExitCode (mirroring the
+    ExitCode/DetailedExitCode pattern used elsewhere, e.g. ConfigMgr), while
+    $global:LASTEXITCODE - the value scripts/CI/batch actually branch on - stays a
+    conventional single digit.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [int[]]$Codes
+    )
+    $detailedCode = ConvertTo-RepairSystemExitCode -Codes $Codes
+    $global:RepairSystemDetailedExitCode = $detailedCode
+    Write-Host "Detailed Exit Code: $detailedCode"
+    $global:LASTEXITCODE = Get-RepairSystemExitCodeSeverity -Codes $Codes
+}
+
+function Write-RepairSystemExitCodeAnalysis {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Code
+    )
+
+    $parsed = ConvertFrom-RepairSystemExitCode -Code $Code
+    if (-not $parsed.IsValid) {
+        Write-Error $parsed.Error
+        $global:LASTEXITCODE = 1
+        return
+    }
+    $global:LASTEXITCODE = 0
+
+    $isFullSuccess = ($parsed.Values | Where-Object { $_ -ne 0 }).Count -eq 0
+    Write-Host "Repair-System Exit Code Analysis for: $Code"
+    Write-Host $(if ($isFullSuccess) { "Overall: SUCCESS - no errors reported by any step.`r`n" } else { "Overall: One or more steps reported an error or warning.`r`n" })
+
+    for ($position = 0; $position -lt $parsed.Values.Count; $position++) {
+        $step  = $script:RepairSystemSteps[$position]
+        $value = $parsed.Values[$position]
+
+        $valueKey = $value.ToString()
+        $description = $null
+        if ($script:RepairSystemKnownCodes.ContainsKey($step.Key) -and $script:RepairSystemKnownCodes[$step.Key].ContainsKey($valueKey)) {
+            $description = $script:RepairSystemKnownCodes[$step.Key][$valueKey]
+        } elseif ($script:RepairSystemKnownCodes.Generic.ContainsKey($valueKey)) {
+            $description = $script:RepairSystemKnownCodes.Generic[$valueKey]
+        } else {
+            $description = "Tool-specific result code (0x{0:X8} / {0}). See the step's log file for details." -f $value
+        }
+
+        Write-Host "[$position] $($step.Label)"
+        Write-Host "`tValue: 0x$('{0:X8}' -f $value) ($value)"
+        Write-Host "`t$description`r`n"
+    }
+}
+
+function New-RemoteFunctionScriptBlock {
+    <#
+    Invoke-Command -ScriptBlock ${function:Name} only ships that single function's body to the
+    remote session, so helper functions it depends on (eg. Stop-ServiceSafely) are otherwise
+    undefined there. This bundles the helper definitions together with the entry point into one
+    script block, so the helper stays defined in a single place but still works when shipped remotely.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string[]]$FunctionName,
+
+        [Parameter(Mandatory=$true)]
+        [string]$EntryPoint
+    )
+
+    $scriptText = ""
+    foreach ($name in $FunctionName) {
+        $scriptText += "function $name {`n" + (Get-Item "function:$name").ScriptBlock.ToString() + "`n}`n"
+    }
+    $scriptText += "$EntryPoint @args"
+    return [scriptblock]::Create($scriptText)
+}
+
+function Invoke-RemoteStep {
+    <#
+    Runs one remote repair step via Invoke-Command. Once a step fails to reach the remote
+    device, ConnectionLost is set so every later call into this function becomes a no-op,
+    instead of every remaining step also throwing its own remoting error.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [hashtable]$InvokeParams,
+
+        [Parameter(Mandatory=$true)]
+        [scriptblock]$ScriptBlock,
+
+        [Parameter(Mandatory=$false)]
+        [object[]]$ArgumentList = @(),
+
+        [Parameter(Mandatory=$true)]
+        [string]$ComputerName,
+
+        [Parameter(Mandatory=$true)]
+        [string]$StepName,
+
+        [Parameter(Mandatory=$true)]
+        [ref]$ConnectionLost
+    )
+
+    if ($ConnectionLost.Value) {
+        return $null
+    }
+
+    try {
+        return Invoke-Command @InvokeParams -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop
+    } catch {
+        $ConnectionLost.Value = $true
+        Write-Error "Lost connection to '$ComputerName' while performing '$StepName'. Skipping remaining repair steps.`r`n$_"
+        return $null
+    }
+}
+
 function Invoke-SFC {
     [CmdletBinding()]
     param (
@@ -33,6 +358,7 @@ function Invoke-SFC {
             $SfcMaxDuration = New-TimeSpan -Minutes $SfcMaxDurationVal
             $process = Start-Process -FilePath "sfc" -ArgumentList "/scannow" -RedirectStandardOutput $sfcLog -RedirectStandardError $sfcErrorLog -NoNewWindow -PassThru
             $SfcStartTime = Get-Date
+            $sfcKilledByTimeout = $false
 
             # Monitor the process
             while (-not $process.HasExited) {
@@ -43,6 +369,7 @@ function Invoke-SFC {
                     $sfcStucknotify = "Sfc.exe has been running for more than $($SfcMaxDuration.TotalMinutes) minutes. Stopping it..."
                     Add-Content -Path $sfcLog -Value "!!`t`t> $sfcStucknotify"
                     Write-Warning $sfcStucknotify
+                    $sfcKilledByTimeout = $true
                     try {
                         $process.Kill()
                         $sfcStuckTerminate = "Sfc.exe terminated."
@@ -57,7 +384,7 @@ function Invoke-SFC {
                 }
             }
             Start-Sleep -Seconds 2
-            $sfcExitCode=$process.ExitCode
+            $sfcExitCode = Get-RepairSystemProcessResult -Process $process -StartTime $SfcStartTime -KilledByTimeout:$sfcKilledByTimeout
             $logContent = Get-Content $sfcLog -Raw
             $logContent = $logContent -replace '[^\x00-\x7F]', ''
             $logContent = $logContent -replace [char]0
@@ -101,8 +428,9 @@ function Invoke-DISMScan {
     Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/Scanhealth" -RedirectStandardOutput $dismScanLog -RedirectStandardError $dismErrorLog -NoNewWindow -Wait -PassThru
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/Scanhealth" -RedirectStandardOutput $dismScanLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
         $DismStartTime = Get-Date
+        $dismKilledByTimeout = $false
 
         # Monitor the process
         while (-not $process.HasExited) {
@@ -113,6 +441,7 @@ function Invoke-DISMScan {
                 $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
                 Add-Content -Path $dismScanLog -Value "!!`t`t> $dismStucknotify"
                 Write-Warning $dismStucknotify
+                $dismKilledByTimeout = $true
                 try {
                     $process.Kill()
                     $dismStuckTerminate = "Dism.exe terminated."
@@ -132,7 +461,7 @@ function Invoke-DISMScan {
         Add-Content -Path $dismScanLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
 
-        return $process.ExitCode
+        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
     } catch {
         $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
         Write-Error $errorMessage
@@ -184,8 +513,9 @@ function Invoke-DISMRestore {
     Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/RestoreHealth" -RedirectStandardOutput $dismRestoreLog -RedirectStandardError $dismErrorLog -NoNewWindow -Wait -PassThru
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/RestoreHealth" -RedirectStandardOutput $dismRestoreLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
         $DismStartTime = Get-Date
+        $dismKilledByTimeout = $false
 
         # Monitor the process
         while (-not $process.HasExited) {
@@ -196,6 +526,7 @@ function Invoke-DISMRestore {
                 $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
                 Add-Content -Path $dismRestoreLog -Value "!!`t`t> $dismStucknotify"
                 Write-Warning $dismStucknotify
+                $dismKilledByTimeout = $true
                 try {
                     $process.Kill()
                     $dismStuckTerminate = "Dism.exe terminated."
@@ -215,7 +546,7 @@ function Invoke-DISMRestore {
         Add-Content -Path $dismRestoreLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
 
-        return $process.ExitCode
+        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
     } catch {
         $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
         Write-Error $errorMessage
@@ -249,8 +580,9 @@ function Invoke-DISMAnalyzeComponentStore {
     Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/AnalyzeComponentStore" -RedirectStandardOutput $analyzeComponentLog -RedirectStandardError $DismErrorLog -NoNewWindow -Wait -PassThru
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/AnalyzeComponentStore" -RedirectStandardOutput $analyzeComponentLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
         $DismStartTime = Get-Date
+        $dismKilledByTimeout = $false
 
         # Monitor the process
         while (-not $process.HasExited) {
@@ -261,6 +593,7 @@ function Invoke-DISMAnalyzeComponentStore {
                 $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
                 Add-Content -Path $analyzeComponentLog -Value "!!`t`t> $dismStucknotify"
                 Write-Warning $dismStucknotify
+                $dismKilledByTimeout = $true
                 try {
                     $process.Kill()
                     $dismStuckTerminate = "Dism.exe terminated."
@@ -279,7 +612,7 @@ function Invoke-DISMAnalyzeComponentStore {
         Add-Content -Path $analyzeComponentLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
 
-        return $process.ExitCode
+        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
     } catch {
         $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
         Write-Error $errorMessage
@@ -330,8 +663,9 @@ function Invoke-DISMComponentStoreCleanup {
     Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/StartComponentCleanup" -RedirectStandardOutput $componentCleanupLog -RedirectStandardError $DismErrorLog -NoNewWindow -Wait -PassThru
+        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/StartComponentCleanup" -RedirectStandardOutput $componentCleanupLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
         $DismStartTime = Get-Date
+        $dismKilledByTimeout = $false
 
         # Monitor the process
         while (-not $process.HasExited) {
@@ -342,6 +676,7 @@ function Invoke-DISMComponentStoreCleanup {
                 $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
                 Add-Content -Path $componentCleanupLog -Value "!!`t`t> $dismStucknotify"
                 Write-Warning $dismStucknotify
+                $dismKilledByTimeout = $true
                 try {
                     $process.Kill()
                     $dismStuckTerminate = "Dism.exe terminated."
@@ -361,7 +696,7 @@ function Invoke-DISMComponentStoreCleanup {
         Add-Content -Path $componentCleanupLog -Value "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
         Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
 
-        return $process.ExitCode
+        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
     } catch {
         $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
         Write-Error $message
@@ -424,6 +759,48 @@ function Invoke-SCCMCleanup {
     return $returnVal
 }
 
+function Stop-ServiceSafely {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true, Position=0)]
+        [string[]]$ServiceName,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Force,
+
+        [Parameter(Mandatory=$false)]
+        [int]$TimeoutSeconds = 10
+    )
+
+    $services = Get-Service -ErrorAction SilentlyContinue -Name $ServiceName
+    if (-not $services) { return }
+
+    # Stop-Service can hang indefinitely waiting on the SCM (eg. TrustedInstaller),
+    # so request the stop without waiting and enforce our own timeout below.
+    $services | Stop-Service -Force:$Force -NoWait -ErrorAction SilentlyContinue
+
+    $waitStart = Get-Date
+    $stillRunning = $null
+    do {
+        Start-Sleep -Seconds 1
+        $stillRunning = Get-Service -ErrorAction SilentlyContinue -Name $ServiceName | Where-Object { $_.Status -ne 'Stopped' }
+    } while ($stillRunning -and ((Get-Date) - $waitStart).TotalSeconds -lt $TimeoutSeconds)
+
+    foreach ($svc in $stillRunning) {
+        $svcStuckMsg = "Service '$($svc.Name)' did not stop within $TimeoutSeconds seconds. Stopping its process forcefully..."
+        Write-Warning $svcStuckMsg
+        try {
+            $svcProcessId = (Get-CimInstance -ClassName Win32_Service -Filter "Name='$($svc.Name)'" -ErrorAction Stop).ProcessId
+            if ($svcProcessId -and $svcProcessId -ne 0) {
+                Stop-Process -Id $svcProcessId -Force -ErrorAction Stop
+                Write-Verbose "Process (PID $svcProcessId) backing service '$($svc.Name)' was forcefully stopped."
+            }
+        } catch {
+            Write-Warning "Failed to forcefully stop process for service '$($svc.Name)': $_"
+        }
+    }
+}
+
 function Invoke-WindowsUpdateCleanup {
     [CmdletBinding()]
     param(
@@ -454,7 +831,7 @@ function Invoke-WindowsUpdateCleanup {
     $softDistErr=""
     $cat2= $false
     $cat2Err=""
-    Get-Service -ErrorAction SilentlyContinue $servicesStop | Stop-Service
+    Stop-ServiceSafely -ServiceName $servicesStop
     if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
     if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
     if (Test-Path -Path $softwareDistributionBackupPath) {
@@ -471,7 +848,7 @@ function Invoke-WindowsUpdateCleanup {
     } else {
         Write-Verbose "Backup directory does not exist. No need to delete."
     }
-    Get-Service -ErrorAction SilentlyContinue $servicesStop | Stop-Service -force
+    Stop-ServiceSafely -ServiceName $servicesStop -Force
     if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
     if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
     if (Test-Path -Path $softwareDistributionPath) {
@@ -500,7 +877,7 @@ function Invoke-WindowsUpdateCleanup {
     } else {
         Write-Verbose "Backup directory does not exist. No need to delete."
     }
-    Get-Service -ErrorAction SilentlyContinue $servicesStop | Stop-Service -force
+    Stop-ServiceSafely -ServiceName $servicesStop -Force
     if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
     if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
     if (Test-Path -Path $catroot2Path) {
@@ -608,9 +985,12 @@ function Repair-CCM {
         [string]$localTempPath,
 
         [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [string]$RepairCCMLog,
 
         [Parameter(Mandatory=$true, Position=2)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=3)]
         [switch]$VerboseArg
 
     )
@@ -620,43 +1000,115 @@ function Repair-CCM {
         $PSCmdlet.MyInvocation.BoundParameters['Verbose']=$false
     }
 
+    function Write-RepairCCMLog {
+        param([string]$Message)
+        Add-Content -Path $RepairCCMLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$Message"
+    }
+
     $ccmrepairexe="C:\Windows\CCM\ccmrepair.exe"
     $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
-    if ( Test-Path $ccmrepairexe) {
-        $ccmSetupLogFolder = "C:\Windows\ccmsetup\Logs"
-        $ccmsetupLogFile="ccmsetup.log"
-        # start $ccmrepairexe do not open new window and route output in current shell
-        try {
-            Write-Host "Starting CCMRepair... This may take a while (~30min)."
-            Start-Process -FilePath $ccmrepairexe -Wait -ErrorAction Stop -NoNewWindow
-            if (Test-Path $ccmsetupLogFolder\$ccmsetupLogFile) {
-                $logLines = Get-Content -Path $ccmsetupLogFolder\$ccmsetupLogFile -Tail 3
-                foreach ($line in $logLines) {
-                    if ($line -match "<!\[LOG\[(.*?)\]LOG\]!>") {
-                        $logMessage = $matches[1]
-                        # only print if logmessage starts with "CcmSetup is exiting with return code"
-                        if ($logMessage -like "CcmSetup is exiting with return code*" -or $logMessage -like "CcmSetup failed with error code*") {
-                            Write-Host "Log Message: $logMessage"
-                        }
-                    }
-                }
-                # copy logfile to localtemppath
-                Copy-Item -Path "$ccmsetupLogFolder\$ccmsetupLogFile" -Destination $localTempPath -Force
-                if ( Test-Path "$localTempPath\$ccmsetupLogFile") {
-                    Rename-Item -Path "$localTempPath\$ccmsetupLogFile" -NewName "CCMSetup_$timestamp.log" -Force
-                } else {
-                    Write-Host "CCMSetup log file not found in the expected Temp location."
-                }
-            } else {
-                Write-Host "CCMSetup log file not found."
-            }
-        } catch {
-            Write-Error "Failed to start $ccmrepairexe : $_"
+
+    if (-not (Test-Path $ccmrepairexe)) {
+        Write-Host "CCMRepair executable not found."
+        Write-RepairCCMLog "CCMRepair executable not found at $ccmrepairexe."
+        return 1
+    }
+
+    try {
+        # Restart SCCM Client Service
+        Write-Host "Restarting SCCM Service..."
+        Write-RepairCCMLog "Restarting SCCM Service..."
+
+        $stopProcessErrors = $null
+        Stop-Process -Name SCClient,CcmExec -Force -ErrorAction SilentlyContinue -ErrorVariable stopProcessErrors
+        foreach ($stopProcessError in $stopProcessErrors) {
+            Write-RepairCCMLog "ERROR: Failed to stop process: $stopProcessError"
         }
 
-    } else {
-        Write-Host "CCMRepair executable not found."
+        $restartServiceErrors = $null
+        Restart-Service CcmExec -Force -ErrorAction SilentlyContinue -ErrorVariable restartServiceErrors
+        foreach ($restartServiceError in $restartServiceErrors) {
+            Write-RepairCCMLog "ERROR: Failed to restart service CcmExec: $restartServiceError"
+        }
+
+        Start-Sleep -Seconds 10
+
+        # Run SCCM Client Repair
+        Write-Host "Starting CCMRepair... This may take a while (~30min)."
+        Write-RepairCCMLog "Starting CCMRepair..."
+        Start-Process -FilePath $ccmrepairexe -Wait -ErrorAction Stop -NoNewWindow
+        Write-RepairCCMLog "CCMRepair process finished."
+
+        # Print Repair Result
+        $ccmSetupLogFolder = "C:\Windows\ccmsetup\Logs"
+        $ccmsetupLogFile="ccmsetup.log"
+        if (Test-Path "$ccmSetupLogFolder\$ccmsetupLogFile") {
+            $logLines = Get-Content -Path "$ccmSetupLogFolder\$ccmsetupLogFile" -Tail 3
+            foreach ($line in $logLines) {
+                if ($line -match "<!\[LOG\[(.*?)\]LOG\]!>") {
+                    $logMessage = $matches[1]
+                    # only print if logmessage starts with "CcmSetup is exiting with return code"
+                    if ($logMessage -like "CcmSetup is exiting with return code*" -or $logMessage -like "CcmSetup failed with error code*") {
+                        Write-Host "Log Message: $logMessage"
+                        Write-RepairCCMLog "ccmsetup.log result: $logMessage"
+                    }
+                }
+            }
+            # copy logfile to localtemppath
+            Copy-Item -Path "$ccmSetupLogFolder\$ccmsetupLogFile" -Destination $localTempPath -Force
+            if ( Test-Path "$localTempPath\$ccmsetupLogFile") {
+                Rename-Item -Path "$localTempPath\$ccmsetupLogFile" -NewName "CCMSetup_$timestamp.log" -Force
+                Write-RepairCCMLog "Copied $ccmsetupLogFile to $localTempPath as CCMSetup_$timestamp.log."
+            } else {
+                Write-Host "CCMSetup log file not found in the expected Temp location."
+                Write-RepairCCMLog "CCMSetup log file not found in the expected Temp location ($localTempPath)."
+            }
+        } else {
+            Write-Host "CCMSetup log file not found."
+            Write-RepairCCMLog "CCMSetup log file not found at $ccmSetupLogFolder\$ccmsetupLogFile."
+        }
+
+        # Clear SCCM Cache
+        Write-Host "Clearing SCCM Cache..."
+        Write-RepairCCMLog "Clearing SCCM Cache..."
+        $CachePath = "C:\Windows\ccmcache\*"
+        if (Test-Path $CachePath) {
+            Remove-Item $CachePath -Recurse -Force -ErrorAction SilentlyContinue
+            Write-RepairCCMLog "SCCM Cache cleared."
+        } else {
+            Write-RepairCCMLog "SCCM Cache folder does not exist. No need to clear."
+        }
+
+        # Trigger SCCM Cycles
+        Write-Host "Triggering SCCM Client Actions..."
+        Write-RepairCCMLog "Triggering SCCM Client Actions..."
+        $SCCMActions = @{
+            "Hardware Inventory Cycle"                     = "{00000000-0000-0000-0000-000000000001}"
+            "Software Inventory Cycle"                     = "{00000000-0000-0000-0000-000000000002}"
+            "Discovery Data Collection Cycle"               = "{00000000-0000-0000-0000-000000000003}"
+            "File Collection Cycle"                         = "{00000000-0000-0000-0000-000000000010}"
+            "Machine Policy Retrieval & Evaluation Cycle"   = "{00000000-0000-0000-0000-000000000021}"
+            "Software Metering Usage Report Cycle"          = "{00000000-0000-0000-0000-000000000031}"
+            "Windows Installer Source List Update Cycle"    = "{00000000-0000-0000-0000-000000000032}"
+            "Software Updates Scan Cycle"                   = "{00000000-0000-0000-0000-000000000113}"
+            "Software Updates Deployment Evaluation Cycle"  = "{00000000-0000-0000-0000-000000000108}"
+            "Application Deployment Evaluation Cycle"       = "{00000000-0000-0000-0000-000000000121}"
+        }
+
+        foreach ($Action in $SCCMActions.GetEnumerator()) {
+            Write-Host "  - $($Action.Key)"
+            Write-RepairCCMLog "  - Triggered: $($Action.Key)"
+            Invoke-WmiMethod -Namespace "root\ccm" -Class SMS_Client -Name TriggerSchedule -ArgumentList $Action.Value | Out-Null
+        }
+        Write-Host "All SCCM Client Actions triggered."
+        Write-RepairCCMLog "All SCCM Client Actions triggered."
+    } catch {
+        $errorMessage = "Failed to repair CCM: $_"
+        Write-Error $errorMessage
+        Write-RepairCCMLog "ERROR: $errorMessage"
+        return 2
     }
+    return 0
 }
 
 function Start-ZipFileCreation {
@@ -805,6 +1257,15 @@ function Repair-System {
     .PARAMETER RepairCCM
     When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
 
+    .PARAMETER AnalyzeExitCode
+    Decodes a previously produced Repair-System exit code (see Exit-Codes in .NOTES) into a human-readable, per-step breakdown.
+    Cannot be combined with any other parameter, and never performs any repair actions (no SFC/DISM/SCCM/etc. is executed).
+
+    .EXAMPLE
+    Repair-System -AnalyzeExitCode "0000000000"
+
+    Decodes the given exit code ("0000000000" = every step succeeded/was not requested) and prints a description of each step's result. Runs standalone; performs no repair actions.
+
     .EXAMPLE
     Repair-System -ComputerName <remote-device>
 
@@ -861,11 +1322,32 @@ function Repair-System {
 
 
     Exit-Codes:
-    Repair-System Module returns an exit code that can be used to determine the success or failure of the script.
-    0 if the script was executed successfully. Any other value indicates an error.
-    The exit code is a string of 8 digits, each representing the exit code of a specific step in the script.
-    The exit codes possitions are as follows:
-    Position 0: Startup (Synthax Error, Network Error, WinRM Error)
+    $global:LASTEXITCODE - the value scripts/CI/batch should branch on - is a conventional
+    single digit:
+        0 = full success (every step succeeded or was not requested)
+        1 = the run completed (possibly only partially, e.g. a mid-run connection loss) but
+            one or more steps reported a problem
+        2 = a startup/fatal error meant no repair steps ran at all (bad parameters, target
+            unreachable, WinRM failure, not elevated, config error, conflicting parameters)
+
+    The full, lossless detail behind that digit is written to the console as "Repair-System
+    Detailed Exit Code: <code>" and also stored in $global:RepairSystemDetailedExitCode
+    (mirroring the ExitCode/DetailedExitCode pattern used elsewhere, e.g. ConfigMgr), so it can
+    still be inspected or logged even though LASTEXITCODE itself is now a plain digit.
+
+    The detailed code is made up of one field per step, concatenated in a fixed position order
+    (no reordering/sorting, no delimiters). Each field starts with a single hex digit (0-8)
+    giving the number of hex digits that follow ('0' alone means the step's value is 0); the
+    digits that follow (if any) are the step's real return value (DISM/SFC's own exit code, or
+    the step's own small result code) rendered as hex, so no detail is lost. Because the length
+    prefix marks where each field ends, no separators are needed and a fully successful run
+    collapses to "0000000000" (ten '0' characters) instead of a long fixed-width string. Run
+    `Repair-System -AnalyzeExitCode <code>` to get a human-readable breakdown of a previously
+    produced detailed code; this mode never performs any repair actions and cannot be combined
+    with any other parameter.
+
+    The step positions are as follows:
+    Position 0: Startup (parameter/network/WinRM/elevation/config errors), or a connection-lost code if the remote connection was lost mid-execution
     Position 1: SFC
     Position 2: DISM Scan Health
     Position 3: Dism Restore Healt
@@ -873,11 +1355,20 @@ function Repair-System {
     Position 5: Dism Component Cleanup
     Position 6: SCCM Cleanup
     Position 7: Windows Update Cleanup
-    Position 8: Zip CBS/DISM Logs
+    Position 8: Repair CCM
+    Position 9: Zip CBS/DISM Logs
+
+    For the SFC and DISM steps (Positions 1-5) specifically, a raw process exit code is only
+    trusted if the process actually had a fair chance to run. If Repair-System itself killed
+    the process for exceeding its time budget, that field instead reads 4294967294 (a
+    dedicated out-of-band "timed out" value, distinct from any real SFC/DISM exit code). If the
+    process disappeared in well under 30 seconds without Repair-System killing it - implausibly
+    fast for a real scan/repair - that field instead reads 4294967293 ("likely terminated
+    externally, e.g. via Task Manager - its own exit code could not be trusted").
 
 
-    Except for Position 0, the exit code is the return value of the corresponding command.
-    If the command was not executed, the exit code is 0.
+    Except for Position 0, the detailed exit code field is the return value of the corresponding command.
+    If the command was not executed (skipped, or not reached because the remote connection was lost), the field is 0.
     Furthermore only if startup fails, the Repair-System will quit and return the exit code.
     All other errors will not interrupt the script.
 
@@ -888,52 +1379,62 @@ function Repair-System {
     Date: 2025-09-09
     #>
 
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName='Default')]
     param (
-        [Parameter(Mandatory=$false, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory=$false, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true, ParameterSetName='Default')]
         [string]$ComputerName,
 
-        [Parameter(Mandatory=$false,Position=0)]
+        [Parameter(Mandatory=$false,Position=0, ParameterSetName='Default')]
         [string]$remoteShareDrive,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
         [switch]$noSfc,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
         [switch]$noDism,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
         [switch]$Quiet,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
         [switch]$IncludeComponentCleanup,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
         [switch]$WindowsUpdateCleanup,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
         [ValidateRange(0.25,10.0)]
         [decimal]$ChangeTimeout = 1.0,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
         [switch]$sccmCleanup,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [switch]$KeepLogs,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [switch]$noCopy,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [switch]$init,
 
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [PSCredential] $Credentials,
 
-        [Parameter(Mandatory=$false)]
-        [switch]$RepairCCM
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [switch]$RepairCCM,
+
+        [Parameter(Mandatory=$true, ParameterSetName='Analyze')]
+        [string]$AnalyzeExitCode
 
     )
+
+    if ($PSCmdlet.ParameterSetName -eq 'Analyze') {
+        Write-RepairSystemExitCodeAnalysis -Code $AnalyzeExitCode
+        return
+    }
+
+    $ExitCode = @(0,0,0,0,0,0,0,0,0,0) #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
 
     $ComputerName = $ComputerName.Trim()
     if ($ComputerName -and ($ComputerName -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
@@ -944,7 +1445,8 @@ function Repair-System {
         - Each label (separated by dots) must be 1-63 characters
         - The full name must be 1-255 characters
         - Alternatively, a valid IPv4 address (e.g. 192.168.1.1) is allowed."
-        $global:LASTEXITCODE = 1
+        $ExitCode[0]=1
+        Set-RepairSystemExitCode -Codes $ExitCode
         return
     }
 
@@ -972,8 +1474,8 @@ function Repair-System {
         return
     }
 
-    $ExitCode=0,0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Zip CBS/DISM Logs
     $remote=$false
+    $remoteConnectionLost=$false
     $shareDrivePath=""
     $remoteTempPath=""
     # check if verbose param is set in command execution
@@ -991,7 +1493,8 @@ function Repair-System {
         if ( -not $isElevated ) {
             $("") ; Write-Warning "`r`nThis script must be run with administrative privileges. Please restart the script in an elevated PowerShell session.`r`n"
             Pause ; $("")
-            $global:LASTEXITCODE=1
+            $ExitCode[0]=5
+            Set-RepairSystemExitCode -Codes $ExitCode
             return
         }
     } else {
@@ -1004,10 +1507,8 @@ function Repair-System {
     # Validation to ensure -IncludeComponentCleanup is not used with -noDism
     if ($noDism -and $IncludeComponentCleanup) {
         Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
-        $ExitCode[0]=1
-        $exitCode=$exitCode | Sort-Object {$_} -Descending
-        $exitCode = $exitCode -join ""
-        $global:LASTEXITCODE = $ExitCode
+        $ExitCode[0]=7
+        Set-RepairSystemExitCode -Codes $ExitCode
         break
     }
 
@@ -1026,7 +1527,8 @@ function Repair-System {
                 $finalDestinationPath = $Matches[1]
             } else {
                 Write-Warning "Invalid line in config file $confFile : `t$line`r`n`tAllowed Variables: ShareDrive, TempDirName, FinalDestinationPath"
-                $global:LASTEXITCODE = 1
+                $ExitCode[0]=6
+                Set-RepairSystemExitCode -Codes $ExitCode
                 return
             }
         }
@@ -1039,9 +1541,7 @@ function Repair-System {
         if (-not $pingResult) {
             Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
             $ExitCode[0]=2
-            $exitCode=$exitCode | Sort-Object {$_} -Descending
-            $exitCode = $exitCode -join ""
-            $global:LASTEXITCODE = $ExitCode
+            Set-RepairSystemExitCode -Codes $ExitCode
             break
         }
 
@@ -1074,154 +1574,172 @@ function Repair-System {
             Write-Error $winRMexit
             Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
             $ExitCode[0]=3
-            $exitCode=$exitCode | Sort-Object {$_} -Descending
-            $exitCode = $exitCode -join ""
-            $global:LASTEXITCODE = $ExitCode
+            Set-RepairSystemExitCode -Codes $ExitCode
             break
         }
     }
 
     if ($remote) {
-        Invoke-Command @invokeParams -ScriptBlock ${function:New-Folder} -ArgumentList $localTempPath
+        Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:New-Folder} -ArgumentList @($localTempPath) -ComputerName $ComputerName -StepName 'Creating remote temp folder' -ConnectionLost ([ref]$remoteConnectionLost) | Out-Null
     } else {
         New-Folder -FolderPath $localTempPath
     }
 
-    if (-not $noDism) {
+    if (-not $noDism -and -not $remoteConnectionLost) {
         $dismScanLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_scanHealth.log"
         $dismScanResult=0
         if($remote){
-            $dismScanResult = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList $dismScanLog, $ChangeTimeout, $Quiet, $VerboseOption
+            $dismScanResult = Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Invoke-DISMScan} -ArgumentList @($dismScanLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM ScanHealth' -ConnectionLost ([ref]$remoteConnectionLost)
         } else { $dismScanResult=Invoke-DISMScan $dismScanLog $ChangeTimeout $Quiet $VerboseOption}
-        $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
-        $ExitCode[2]=$dismScanResult
-        $dismScanResultString = $dismScanResult.ToString()
 
-        $dismRestoreLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_restoreHealth.log"
-        if ($dismScanResultString -eq 0) {
-            $dismScanExit=1
-            $dismRestoreExit=0
-            if($remote){
-                $dismScanExit=Invoke-Command @invokeParams -ScriptBlock ${function:Get-DISMScanResult} -ArgumentList $dismScanLog
-            } else { $dismScanExit=Get-DISMScanResult -dismScanLog $dismScanLog}
-            if ($dismScanExit -eq 1) {
+        if (-not $remoteConnectionLost) {
+            $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
+            $ExitCode[2]=$dismScanResult
+            $dismScanResultString = $dismScanResult.ToString()
+        } else { $ExitCode[2]=5 }
 
-                if ($remote) {
-                    $dismRestoreExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList $dismRestoreLog, $ChangeTimeout, $Quiet, $VerboseOption
-                } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $ChangeTimeout $Quiet $VerboseOption }
-                $ExitCode[3]=$dismRestoreExit
-            }
-        } else {
-            $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
-            Write-Verbose $message
-            if ($remote) {
-                Invoke-Command @invokeParams -ScriptBlock {
-                    param ($logPath, $logMessage)
-                    Add-Content -Path $logPath -Value $logMessage
-                }  -Verbose:$VerboseOption -ArgumentList $dismRestoreLog, $message
-            } else {
-                Add-Content -Path $dismRestoreLog -Value $message
-                Write-Output $message
-            }
-        }
-        if ($IncludeComponentCleanup) {
-            $analyzeComponentLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_analyze-component.log"
-            $analyzeExit=0
-            if ($remote) {
-                $analyzeExit = Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList $analyzeComponentLog, $ChangeTimeout, $Quiet, $VerboseOption
-            } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $ChangeTimeout $Quiet $VerboseOption }
-            $ExitCode[4]=$analyzeExit
+        if (-not $remoteConnectionLost) {
 
-            # Check the output and perform cleanup if recommended
-            $message = ""
-            $componentCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_componentStore-cleanup.log"
-            if ($analyzeExit -eq 0 -or $analyzeExit -eq "") {
-                $analyzeResult=$true
-                if ($remote) {
-                    $analyzeResult=Invoke-Command @invokeParams -ScriptBlock ${function:Get-DISMAnalyzeComponentStoreResult} -ArgumentList $analyzeComponentLog
-                } else { $analyzeResult=Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeComponentLog }
-                $componentCleanupExit=0
-                if ($analyzeResult) {
+            $dismRestoreLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_restoreHealth.log"
+            if ($dismScanResultString -eq 0) {
+                $dismScanExit=1
+                $dismRestoreExit=0
+                if($remote){
+                    $dismScanExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Get-DISMScanResult} -ArgumentList @($dismScanLog) -ComputerName $ComputerName -StepName 'DISM ScanHealth result check' -ConnectionLost ([ref]$remoteConnectionLost)
+                } else { $dismScanExit=Get-DISMScanResult -dismScanLog $dismScanLog}
+                if (-not $remoteConnectionLost -and $dismScanExit -eq 1) {
 
                     if ($remote) {
-                        $componentCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList $componentCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption
-                    } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $ChangeTimeout $Quiet $VerboseOption }
+                        $dismRestoreExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Invoke-DISMRestore} -ArgumentList @($dismRestoreLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM RestoreHealth' -ConnectionLost ([ref]$remoteConnectionLost)
+                    } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $ChangeTimeout $Quiet $VerboseOption }
+                    if (-not $remoteConnectionLost) { $ExitCode[3]=$dismRestoreExit } else { $ExitCode[3]=5 }
+                }
+            } else {
+                $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
+                Write-Verbose $message
+                if ($remote) {
+                    Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock {
+                        param ($logPath, $logMessage)
+                        Add-Content -Path $logPath -Value $logMessage
+                    } -ArgumentList @($dismRestoreLog, $message) -ComputerName $ComputerName -StepName 'Logging DISM ScanHealth result' -ConnectionLost ([ref]$remoteConnectionLost) | Out-Null
                 } else {
-                    $message = "No component store cleanup was needed on $ComputerName."
-                    if($remote) {
-                        Invoke-Command @invokeParams -ScriptBlock {
-                            param ($logPath, $logMessage)
-                            Add-Content -Path $logPath -Value $logMessage
-                        }  -Verbose:$VerboseOption -ArgumentList $componentCleanupLog, $message
+                    Add-Content -Path $dismRestoreLog -Value $message
+                    Write-Output $message
+                }
+            }
+            if (-not $remoteConnectionLost -and $IncludeComponentCleanup) {
+                $analyzeComponentLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_analyze-component.log"
+                $analyzeExit=0
+                if ($remote) {
+                    $analyzeExit = Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Invoke-DISMAnalyzeComponentStore} -ArgumentList @($analyzeComponentLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM AnalyzeComponentStore' -ConnectionLost ([ref]$remoteConnectionLost)
+                } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $ChangeTimeout $Quiet $VerboseOption }
+
+                if ($remoteConnectionLost) { $ExitCode[4]=5 }
+
+                if (-not $remoteConnectionLost) {
+                    $ExitCode[4]=$analyzeExit
+
+                    # Check the output and perform cleanup if recommended
+                    $message = ""
+                    $componentCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_componentStore-cleanup.log"
+                    if ($analyzeExit -eq 0 -or $analyzeExit -eq "") {
+                        $analyzeResult=$true
+                        if ($remote) {
+                            $analyzeResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Get-DISMAnalyzeComponentStoreResult} -ArgumentList @($analyzeComponentLog) -ComputerName $ComputerName -StepName 'DISM AnalyzeComponentStore result check' -ConnectionLost ([ref]$remoteConnectionLost)
+                        } else { $analyzeResult=Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeComponentLog }
+                        $componentCleanupExit=0
+                        if (-not $remoteConnectionLost -and $analyzeResult) {
+
+                            if ($remote) {
+                                $componentCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Invoke-DISMComponentStoreCleanup} -ArgumentList @($componentCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM Component Store Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
+                            } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $ChangeTimeout $Quiet $VerboseOption }
+                        } elseif (-not $remoteConnectionLost) {
+                            $message = "No component store cleanup was needed on $ComputerName."
+                            if($remote) {
+                                Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock {
+                                    param ($logPath, $logMessage)
+                                    Add-Content -Path $logPath -Value $logMessage
+                                } -ArgumentList @($componentCleanupLog, $message) -ComputerName $ComputerName -StepName 'Logging Component Store Cleanup result' -ConnectionLost ([ref]$remoteConnectionLost) | Out-Null
+                            } else {
+                                Write-Verbose $message
+                                Add-Content -Path $componentCleanupLog -Value $message
+                            }
+                        }
+
+                        if (-not $remoteConnectionLost) { $ExitCode[5]=$componentCleanupExit } else { $ExitCode[5]=5 }
                     } else {
-                        Write-Verbose $message
+                        $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
+                        Write-Output $message
                         Add-Content -Path $componentCleanupLog -Value $message
                     }
                 }
-
-                $ExitCode[5]=$componentCleanupExit
-            } else {
-                $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
-                Write-Output $message
-                Add-Content -Path $componentCleanupLog -Value $message
             }
         }
     }
 
-    if(-not $noSfc){
+    if(-not $noSfc -and -not $remoteConnectionLost){
         $sfcLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_sfc-scannow.log"
         $sfcExitCode=0
         if($remote){
-            $sfcExitCode= Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-SFC} -ArgumentList $sfcLog, $ChangeTimeout, $Quiet, $VerboseOption
+            $sfcExitCode= Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Invoke-SFC} -ArgumentList @($sfcLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'SFC /scannow' -ConnectionLost ([ref]$remoteConnectionLost)
         } else {$sfcExitCode=Invoke-SFC $sfcLog $ChangeTimeout $Quiet $VerboseOption}
-        $ExitCode[1]=$sfcExitCode
+        if (-not $remoteConnectionLost) { $ExitCode[1]=$sfcExitCode } else { $ExitCode[1]=5 }
     }
 
 
-    if ($sccmCleanup) {
+    if ($sccmCleanup -and -not $remoteConnectionLost) {
         $sccmCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_SCCM_cleanup.log"
         $sccmCleanupResult=0
         if ($remote) {
-            $sccmCleanupResult=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList $sccmCleanupLog, $Quiet, $VerboseOption
+            $sccmCleanupResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList @($sccmCleanupLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'SCCM Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
         } else { $sccmCleanupResult=Invoke-SCCMCleanup $sccmCleanupLog $Quiet $VerboseOption }
 
-        $ExitCode[6]=$sccmCleanupResult
+        if (-not $remoteConnectionLost) { $ExitCode[6]=$sccmCleanupResult } else { $ExitCode[6]=5 }
     }
 
-    if ($WindowsUpdateCleanup) {,
+    if ($WindowsUpdateCleanup -and -not $remoteConnectionLost) {
         $updateCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_WinUpdt-BITS_reset-cleanup.log"
         $updateCleanupExit=0
         if ($remote) {
-            $updateCleanupExit=Invoke-Command @invokeParams -ScriptBlock ${function:Invoke-WindowsUpdateCleanup} -ArgumentList $updateCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption
+            $updateCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Stop-ServiceSafely', 'Invoke-WindowsUpdateCleanup') -EntryPoint 'Invoke-WindowsUpdateCleanup'
+            $updateCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $updateCleanupBlock -ArgumentList @($updateCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'Windows Update Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
         } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup  $updateCleanupLog $ChangeTimeout $Quiet $VerboseOption }
 
-        if($updateCleanupExit -ne 0){
-            Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
-        }
-        $ExitCode[7]=$updateCleanupExit
+        if (-not $remoteConnectionLost) {
+            if($updateCleanupExit -ne 0){
+                Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
+            }
+            $ExitCode[7]=$updateCleanupExit
+        } else { $ExitCode[7]=5 }
     }
 
-    if ($RepairCCM) {
+    if ($RepairCCM -and -not $remoteConnectionLost) {
+        $repairCCMLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CCM_repair.log"
+        $repairCCMResult=0
         if ($remote) {
-            Invoke-Command @invokeParams -ScriptBlock ${function:Repair-CCM} -ArgumentList $localTempPath, $Quiet, $VerboseOption
-        } else { Repair-CCM $localTempPath $Quiet $VerboseOption }
+            $repairCCMResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Repair-CCM} -ArgumentList @($localTempPath, $repairCCMLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'CCM Repair' -ConnectionLost ([ref]$remoteConnectionLost)
+        } else { $repairCCMResult=Repair-CCM $localTempPath $repairCCMLog $Quiet $VerboseOption }
+
+        if (-not $remoteConnectionLost) { $ExitCode[8]=$repairCCMResult } else { $ExitCode[8]=5 }
     }
 
 
     # Zip CBS.log and DISM.log
-    if (-not $noSfc -or -not $noDism) {
+    if ((-not $noSfc -or -not $noDism) -and -not $remoteConnectionLost) {
         $zipFile = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_sys-logs.zip"
         $zipErrorLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_zip-errors.log"
         $zipErrorCode=0
         if ($remote) {
-            $zipErrorCode=Invoke-Command @invokeParams -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList $localTempPath, $zipFile, $zipErrorLog, $noDism
+            $zipErrorCode=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList @($localTempPath, $zipFile, $zipErrorLog, $noDism) -ComputerName $ComputerName -StepName 'Zip CBS/DISM logs' -ConnectionLost ([ref]$remoteConnectionLost)
         } else {
             $zipErrorCode=Start-ZipFileCreation $localTempPath $zipFile $zipErrorLog $noDism
         }
 
-        $ExitCode[8]=$zipErrorCode
+        if (-not $remoteConnectionLost) { $ExitCode[9]=$zipErrorCode } else { $ExitCode[9]=5 }
+    } elseif ($remoteConnectionLost) {
+        $ExitCode[9]=5
     } else {
-        $ExitCode[8]=0
+        $ExitCode[9]=0
     }
 
     if($remote) {$path=$finalDestinationPath} else {$path=$localTempPath}
@@ -1230,27 +1748,31 @@ function Repair-System {
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     if (-not $noCopy){
         if ($remote){
-            if (-not (Test-Path -Path $finalDestinationPath)) {
-                New-Item -Path $finalDestinationPath -ItemType Directory -Force
-            }
-            try{
-                $Session = New-PSSession @invokeParams
-                Copy-Item -Path "$localTempPath\*" -Destination $finalDestinationPath -Recurse -Force -FromSession $Session
-
-                # Clear remote _temp folder if copy was successful
-
-                if(-not $KeepLogs){
-                    Invoke-Command @invokeParams -ScriptBlock {
-                        Remove-Item -Path "$using:localTempPath" -Recurse -Force
-                    } -Verbose:$VerboseOption
-                    $extmsg+= $extmsglLogP
-                } else {
-                    $extmsg+= $extmsgrLogP
+            if ($remoteConnectionLost) {
+                $extmsg+= "`r`n[WARNING]`tConnection to $ComputerName was lost during the repair process. Log files could not be copied from the remote device."
+            } else {
+                if (-not (Test-Path -Path $finalDestinationPath)) {
+                    New-Item -Path $finalDestinationPath -ItemType Directory -Force
                 }
-            } catch {
-                $message = "An error occurred while copying the log files from $ComputerName."
-                Write-Error $message
-                $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
+                try{
+                    $Session = New-PSSession @invokeParams
+                    Copy-Item -Path "$localTempPath\*" -Destination $finalDestinationPath -Recurse -Force -FromSession $Session
+
+                    # Clear remote _temp folder if copy was successful
+
+                    if(-not $KeepLogs){
+                        Invoke-Command @invokeParams -ScriptBlock {
+                            Remove-Item -Path "$using:localTempPath" -Recurse -Force
+                        } -Verbose:$VerboseOption
+                        $extmsg+= $extmsglLogP
+                    } else {
+                        $extmsg+= $extmsgrLogP
+                    }
+                } catch {
+                    $message = "An error occurred while copying the log files from $ComputerName."
+                    Write-Error $message
+                    $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
+                }
             }
         } else {
             $extmsg+= $extmsglLogP
@@ -1259,10 +1781,13 @@ function Repair-System {
         $extmsg+= $extmsgrLogP
     }
 
+    if ($remoteConnectionLost) {
+        if ($ExitCode[0] -eq 0) { $ExitCode[0] = 4 }
+        $extmsg += "`r`n[WARNING]`tRemaining repair steps were skipped because the connection to $ComputerName was lost."
+    }
+
     Start-Sleep -Seconds 1
     Write-Host $extmsg
-    $exitCode=$exitCode | Sort-Object {$_} -Descending
-    $exitCode = $exitCode -join ""
-    $global:LASTEXITCODE = $ExitCode
+    Set-RepairSystemExitCode -Codes $ExitCode
 }
 Export-ModuleMember -Function Repair-System, Repair-LocalSystem, Repair-RemoteSystem

@@ -2,36 +2,51 @@ TOPIC
     about_RepairSystem
 
 SHORT DESCRIPTION
-    The `RepairSystem` module provides a set of functions to diagnose and repair common issues on Windows systems.
+    The `RepairSystem` module provides a function to repair Windows systems locally or remotely by running System File Checker (SFC) and Deployment Imaging Service and Management Tool (DISM) commands, with optional Component Store cleanup, Windows Update Cache cleanup, SCCM cache cleanup, and CCM repair.
+
 
 LONG DESCRIPTION
-    The `RepairSystem` module is designed to help system administrators and advanced users diagnose
-    and repair common issues on Windows systems. This module includes a variety of functions that
-    can be used to check system health, repair corrupted system files, manage system services,
-    and perform other maintenance tasks.
+--------------
+    Repair-System:
+    This function performs the following tasks on a specified computer (either locally or a Remote-Device):
 
-    Key features of the `RepairSystem` module include:
+    - Pings the remote machine to check its availability.
+    - Executes `sfc /scannow` to check and repair system files.
+    - Optionally, executes `DISM /Online /Cleanup-Image /ScanHealth` and `DISM /Online /Cleanup-Image /RestoreHealth` to repair the Windows image.
+    - Optionally, performs Component Store cleanup and Windows Update Cache cleanup.
+    - Optionally, deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder, and/or runs CCMRepair.exe.
+    - Logs the results on the remote machine and optionally shows them on the local console.
+    - Transfers the logs and relevant system files to the local machine.
 
-    - System Health Checks: Functions to check the overall health of the system,
-        including disk integrity, system file integrity, and more.
-    - File Repair: Functions to repair corrupted system files using tools like
-        SFC (System File Checker) and DISM (Deployment Imaging Service and Management Tool).
-    - Event Log Management: Functions to query and clear event logs to help diagnose issues.
-    - Automated Maintenance: Functions to automate common maintenance tasks, ensuring the
-        system remains in optimal condition.
 
-    The module is designed to be user-friendly, with clear parameters and examples provided for each function.
-    By using this module, administrators and advanced users can ensure their systems remain healthy and efficient,
-    reducing downtime and improving overall performance.
+    Parameters:
+    -----------
+    - ComputerName (Optional): The hostname or IP address of the remote computer. If not provided, the command will be run locally; if provided, it will run on the specified remote-device.
+    - remoteShareDrive (Optional): The ShareDrive of the Remote-Device on which Windows is installed. If none is provided, Default-Value 'C$' will be used.
+        The Command `Repair-System -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path \\SomeDevice\D$\
+    - noSfc (Optional): When specified, the `sfc /scannow` command is skipped.
+    - noDism (Optional): When specified, all DISM commands are skipped. This cannot be used in combination with `-IncludeComponentCleanup`.
+    - Quiet (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
+    - IncludeComponentCleanup (Optional): Analyzes and, if recommended, cleans up the Windows Component Store. This cannot be used in combination with `-noDism`.
+    - WindowsUpdateCleanup (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update Cache cleanup. Additionally runs Windows Update and BITS Diagnostics.
+    - ChangeTimeout (Optional): Decimal multiplier to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it). Range = 0.25 - 10.0
+    - sccmCleanup (Optional): Deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder.
+    - KeepLogs (Optional): Log files will be kept on the remote Device, but still be copied to the Client.
+    - noCopy (Optional): Log files will not be copied to the Client. This will automatically use '-KeepLogs'.
+    - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File. No other parameter will be executed when this is specified.
+    - Credentials (Optional): When specified, this will prompt for User-Credentials that will be used for the Remote-Access.
+        This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
+    - RepairCCM (Optional): When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
+    - AnalyzeExitCode (Optional): Decodes a previously produced exit code (see EXIT CODES below) into a human-readable, per-step breakdown. Cannot be combined with any other parameter and never performs any repair actions.
+
 
 EXAMPLES
-
     Example 1: Repair corrupted system files remotely
     -----------------------------------------------
     PS C:\> Repair-System -ComputerName <remote-device>
 
     This example repairs corrupted system files using the System File Checker (SFC) tool and runs
-    DISM Scan and if required DISM Restore on a Remote Machine.
+    DISM Scan and, if required, DISM Restore on a Remote Machine.
 
 
     Example 2: Repair corrupted system files locally
@@ -39,31 +54,59 @@ EXAMPLES
     PS C:\> Repair-System
 
     This example repairs corrupted system files using the System File Checker (SFC) tool and runs
-    DISM Scan and if required DISM Restore on the Local Macine.
+    DISM Scan and, if required, DISM Restore on the Local Machine.
 
 
-    Example 3: Repair corrupted system files remotely with Component Cleanup
+    Example 3: Connect to a non-default Share-Drive
+    -----------------------------------------------
+    PS C:\> Repair-System -ComputerName SomeDevice -remoteShareDrive D$
+
+    Connects to \\SomeDevice\D$\. This can be used if the SystemRoot (installation of Windows) is either
+    not on Drive C:, or if the Share-Drive has a different name.
+
+
+    Example 4: Run only SFC on the remote computer
+    -----------------------------------------------
+    PS C:\> Repair-System -ComputerName <remote-device> -noDism
+
+    This example performs the same tasks as Example 1, but skips all DISM commands.
+
+
+    Example 5: Run SFC and DISM on the remote computer with no console output
+    -----------------------------------------------
+    PS C:\> Repair-System -ComputerName <remote-device> -Quiet
+
+    Outputs are logged to files but not shown on the console.
+
+
+    Example 6: Repair corrupted system files remotely with Component Cleanup
     -----------------------------------------------
     PS C:\> Repair-System -ComputerName <remote-device> -IncludeComponentCleanup
 
-    This example performs the same Tasks as Example 1 but additionally checks the ComponentStore for issues
+    This example performs the same tasks as Example 1 but additionally analyzes the Component Store
+    and removes old data which is not required anymore. Cannot be used with '-noDism'.
 
 
-    Example 4: Repair corrupted system files locally with Component Cleanup
+    Example 7: Perform Windows Update Cache cleanup
     -----------------------------------------------
-    PS C:\> Repair-System -IncludeComponentCleanup
+    PS C:\> Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 
-    This example performs the same Tasks as Example 2 but additionally checks the ComponentStore for issues
+    Stops the Windows Update and related services, renames the SoftwareDistribution and catroot2 folders,
+    restarts the services, and runs the Windows Update and BITS Diagnostics.
 
 
-    Example 5: Cleanup Windows Update Cache
+    Example 8: Decode a previously produced exit code
     -----------------------------------------------
-    PS C:\> Repair-System -WindowsUpdateCleanup
+    PS C:\> Repair-System -AnalyzeExitCode "0000000000"
 
-    This example performs the same Tasks as Example 2 but additionally cleans up the Windows Update Cache to fix
-    issues regarding Windows Udates.
+    Decodes the given exit code ("0000000000" = every step succeeded/was not requested) and prints a
+    description of each step's result. Runs standalone; performs no repair actions.
 
-Notes
+
+NOTES
+    The script is provided "as-is" and is not supported by Microsoft.
+    Test thoroughly before using on production systems, as improper use may cause data loss or system instability.
+    Ensure you understand the consequences before making system changes or deleting files.
 
     !! If in Windows Terminal Settings, Terminal is set as Default Terminal Application, Powershell 5.1 may throw an error instead of prompting for User Credentials.
     As workaround you can pass on credentials using the `Get-CredentialObject` from the CredentialHander-Module (https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/CredentialHandler)
@@ -71,6 +114,65 @@ Notes
     Example:
     -----------------------------------------------
     PS C:\> Repair-System -Computername myRemoteDevice1 -Credentials (Get-CredentialObject)
+
+
+    Requirements:
+    -------------
+    - WinRM: Must be enabled and configured on the remote computer, to be able to work with `-ComputerName`.
+    - Administrative Privileges: Running this script requires administrative privileges on the intended computer.
+        For running this for a remote device, Powershell must be started as the user which has administrative privileges on the remote computer.
+
+    Warning:
+    -------------
+    - ALWAYS REVIEW AND UNDERSTAND THE CODE BEFORE EXECUTING.
+    - NEVER MAKE SYSTEM CHANGES WITHOUT AUTHORIZATION.
+    - DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING.
+
+
+EXIT CODES
+    $LASTEXITCODE after Repair-System runs is a conventional single digit, suitable for scripts/CI/batch to branch on:
+
+        0 = Full success - every step succeeded or was not requested.
+        1 = The run completed (possibly only partially, e.g. a mid-run connection loss) but one or
+            more steps reported a problem.
+        2 = A startup/fatal error meant no repair steps ran at all (bad parameters, target
+            unreachable, WinRM failure, not elevated, config error, conflicting parameters).
+
+    The full, lossless detail behind that digit is printed to the console as "Repair-System Detailed
+    Exit Code: <code>" and also stored in $global:RepairSystemDetailedExitCode, so it remains
+    available even though $LASTEXITCODE itself is just a plain digit.
+
+    The detailed code is made up of one field per step, concatenated in a fixed position order (no
+    reordering, no delimiters). Each field starts with a single hex digit (0-8) giving how many hex
+    digits follow ('0' alone means the step's value is 0), then those digits (if any) are the step's
+    real return value (DISM/SFC's own exit code, or the step's own small result code). A fully
+    successful run collapses to "0000000000" (ten '0' characters).
+
+    Step positions:
+        0 = Startup / Pre-Flight Checks (parameter/network/WinRM/elevation/config errors, or
+            connection-lost mid-run)
+        1 = SFC /scannow
+        2 = DISM ScanHealth
+        3 = DISM RestoreHealth
+        4 = DISM AnalyzeComponentStore
+        5 = DISM StartComponentCleanup
+        6 = SCCM Cleanup
+        7 = Windows Update Cleanup
+        8 = Repair CCM
+        9 = Zip CBS/DISM Logs
+
+    If a step was not requested, or was skipped because the remote connection was already lost, its
+    field is 0. A field value of 5 means the step was requested but skipped because the remote
+    connection was lost while/after the previous step ran.
+
+    For the SFC and DISM steps (positions 1-5), a raw process exit code is only trusted if the
+    process actually had a fair chance to run: if Repair-System itself killed it for exceeding its
+    time budget, that field reads 4294967294 ("timed out"); if it disappeared in well under 30
+    seconds without Repair-System killing it, that field reads 4294967293 ("likely terminated
+    externally, e.g. via Task Manager; its own exit code could not be trusted").
+
+    Run `Repair-System -AnalyzeExitCode <code>` to get a readable explanation of any code produced
+    by a previous run.
 
 
 FUNCTIONS
@@ -82,12 +184,12 @@ SEE ALSO
     Get-Member
 
 KEYWORDS
-    System Repair, Maintenance, Troubleshoot, Windows
+    System Repair, Maintenance, Troubleshoot, Windows, SFC, DISM
 
 AUTHOR
     Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2025-08-23
+    Date: 2026-06-16
 
 COPYRIGHT
-    © 2025 Wolfram Halatschek. All rights reserved.
+    © 2026 Wolfram Halatschek. All rights reserved.
