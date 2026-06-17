@@ -572,7 +572,8 @@ function Invoke-RemoteStep {
     }
 
     try {
-        return Invoke-Command @InvokeParams -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop
+        $stepResult = Invoke-Command @InvokeParams -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop
+        return $stepResult
     } catch {
         $stepError = $_
         Write-Warning "Connection to '$ComputerName' interrupted during '$StepName'. Retrying for up to $ReconnectTimeoutSec seconds..."
@@ -1743,7 +1744,7 @@ function Repair-System {
         return
     }
 
-    $ExitCode = @(0,0,0,0,0,0,0,0,0,0) #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
+    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
 
     $ComputerName = $ComputerName.Trim()
     $targetDevice   = $env:COMPUTERNAME
