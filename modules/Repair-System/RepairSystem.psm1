@@ -539,9 +539,10 @@ function New-RemoteFunctionScriptBlock {
 
 function Invoke-RemoteStep {
     <#
-    Runs one remote repair step via Invoke-Command. Once a step fails to reach the remote
-    device, ConnectionLost is set so every later call into this function becomes a no-op,
-    instead of every remaining step also throwing its own remoting error.
+    Runs one remote repair step via Invoke-Command. If the step fails with a remoting
+    error, retries the connection for up to $ReconnectTimeoutSec seconds. If the machine
+    comes back online the interrupted step is marked failed but remaining steps continue.
+    If not, ConnectionLost is set so every later call becomes a no-op.
     #>
     param(
         [Parameter(Mandatory=$true)]
@@ -560,7 +561,10 @@ function Invoke-RemoteStep {
         [string]$StepName,
 
         [Parameter(Mandatory=$true)]
-        [ref]$ConnectionLost
+        [ref]$ConnectionLost,
+
+        [Parameter(Mandatory=$false)]
+        [int]$ReconnectTimeoutSec = 90
     )
 
     if ($ConnectionLost.Value) {
@@ -570,8 +574,27 @@ function Invoke-RemoteStep {
     try {
         return Invoke-Command @InvokeParams -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop
     } catch {
+        $stepError = $_
+        Write-Warning "Connection to '$ComputerName' interrupted during '$StepName'. Retrying for up to $ReconnectTimeoutSec seconds..."
+
+        $deadline = (Get-Date).AddSeconds($ReconnectTimeoutSec)
+        $reconnected = $false
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 10
+            try {
+                Invoke-Command @InvokeParams -ScriptBlock { $true } -ErrorAction Stop | Out-Null
+                $reconnected = $true
+                break
+            } catch { }
+        }
+
+        if ($reconnected) {
+            Write-Warning "Reconnected to '$ComputerName'. Step '$StepName' did not complete — marking as failed and continuing."
+            return 1
+        }
+
         $ConnectionLost.Value = $true
-        Write-Error "Lost connection to '$ComputerName' while performing '$StepName'. Skipping remaining repair steps.`r`n$_"
+        Write-Error "Lost connection to '$ComputerName' while performing '$StepName'. Skipping remaining repair steps.`r`n$stepError"
         return $null
     }
 }
