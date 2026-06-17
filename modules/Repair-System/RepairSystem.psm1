@@ -258,10 +258,13 @@ function Get-RepairSystemProcessResult {
         [Parameter(Mandatory=$false)]
         [switch]$KilledByTimeout
     )
-    if ($KilledByTimeout) { return $script:RepairSystemProcessSentinel.TimedOut }
+    # Use literal values so this function remains self-contained when shipped to a remote
+    # session via New-RemoteFunctionScriptBlock (script-scope variables don't cross the wire).
+    if ($KilledByTimeout) { return -2 }   # $script:RepairSystemProcessSentinel.TimedOut
 
-    if (((Get-Date) - $StartTime).TotalSeconds -lt $script:RepairSystemMinPlausibleDurationSeconds) {
-        return $script:RepairSystemProcessSentinel.TerminatedExternally
+    $minDur = if ($null -ne $script:RepairSystemMinPlausibleDurationSeconds) { $script:RepairSystemMinPlausibleDurationSeconds } else { 30 }
+    if (((Get-Date) - $StartTime).TotalSeconds -lt $minDur) {
+        return -3   # $script:RepairSystemProcessSentinel.TerminatedExternally
     }
 
     return $Process.ExitCode
@@ -457,9 +460,9 @@ function Set-RepairSystemExitCode {
                     'Success (restart required)'
                 } elseif ($val -eq 5) {
                     'Skipped (connection lost)'
-                } elseif ($val -eq [uint32]0xFFFFFFFE) {
+                } elseif ($val -eq [uint32]4294967294) {
                     'Timed out'
-                } elseif ($val -eq [uint32]0xFFFFFFFD) {
+                } elseif ($val -eq [uint32]4294967293) {
                     'Terminated externally'
                 } else {
                     $step.Description
@@ -1909,7 +1912,7 @@ function Repair-System {
         $dismScanResult=0
         Write-RepairLog -Message "Starting DISM ScanHealth..." -Component "DISM-ScanHealth" -LogPath $masterLogPath
         if($remote){
-            $dismScanBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Invoke-DISMScan') -EntryPoint 'Invoke-DISMScan'
+            $dismScanBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMScan') -EntryPoint 'Invoke-DISMScan'
             $dismScanResult = Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $dismScanBlock -ArgumentList @($dismScanLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM ScanHealth' -ConnectionLost ([ref]$remoteConnectionLost)
         } else { $dismScanResult=Invoke-DISMScan $dismScanLog $ChangeTimeout $Quiet $VerboseOption}
 
@@ -1934,7 +1937,7 @@ function Repair-System {
 
                     Write-RepairLog -Message "Starting DISM RestoreHealth..." -Component "DISM-RestoreHealth" -LogPath $masterLogPath
                     if ($remote) {
-                        $dismRestoreBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Invoke-DISMRestore') -EntryPoint 'Invoke-DISMRestore'
+                        $dismRestoreBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMRestore') -EntryPoint 'Invoke-DISMRestore'
                         $dismRestoreExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $dismRestoreBlock -ArgumentList @($dismRestoreLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM RestoreHealth' -ConnectionLost ([ref]$remoteConnectionLost)
                     } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $ChangeTimeout $Quiet $VerboseOption }
                     if (-not $remoteConnectionLost) { $ExitCode[3]=$dismRestoreExit } else { $ExitCode[3]=5 }
@@ -1961,7 +1964,7 @@ function Repair-System {
                 $analyzeExit=0
                 Write-RepairLog -Message "Starting DISM AnalyzeComponentStore..." -Component "DISM-Analyze" -LogPath $masterLogPath
                 if ($remote) {
-                    $analyzeBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Invoke-DISMAnalyzeComponentStore') -EntryPoint 'Invoke-DISMAnalyzeComponentStore'
+                    $analyzeBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMAnalyzeComponentStore') -EntryPoint 'Invoke-DISMAnalyzeComponentStore'
                     $analyzeExit = Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $analyzeBlock -ArgumentList @($analyzeComponentLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM AnalyzeComponentStore' -ConnectionLost ([ref]$remoteConnectionLost)
                 } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $ChangeTimeout $Quiet $VerboseOption }
 
@@ -1986,7 +1989,7 @@ function Repair-System {
 
                             Write-RepairLog -Message "Starting DISM ComponentStoreCleanup..." -Component "DISM-ComponentCleanup" -LogPath $masterLogPath
                             if ($remote) {
-                                $componentCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Invoke-DISMComponentStoreCleanup') -EntryPoint 'Invoke-DISMComponentStoreCleanup'
+                                $componentCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMComponentStoreCleanup') -EntryPoint 'Invoke-DISMComponentStoreCleanup'
                                 $componentCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $componentCleanupBlock -ArgumentList @($componentCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM Component Store Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
                             } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $ChangeTimeout $Quiet $VerboseOption }
                         } elseif (-not $remoteConnectionLost) {
@@ -2024,7 +2027,7 @@ function Repair-System {
         $sfcExitCode=0
         Write-RepairLog -Message "Starting SFC /scannow..." -Component "SFC" -LogPath $masterLogPath
         if($remote){
-            $sfcBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Invoke-SFC') -EntryPoint 'Invoke-SFC'
+            $sfcBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-SFC') -EntryPoint 'Invoke-SFC'
             $sfcExitCode= Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $sfcBlock -ArgumentList @($sfcLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'SFC /scannow' -ConnectionLost ([ref]$remoteConnectionLost)
         } else {$sfcExitCode=Invoke-SFC $sfcLog $ChangeTimeout $Quiet $VerboseOption}
         if (-not $remoteConnectionLost) { $ExitCode[1]=[int]($sfcExitCode | Select-Object -Last 1) } else { $ExitCode[1]=5 }
