@@ -14,8 +14,8 @@ This function performs the following tasks on a specified computer (either local
 - Executes `sfc /scannow` to check and repair system files.
 - Optionally, executes `DISM /Online /Cleanup-Image /ScanHealth` and `DISM /Online /Cleanup-Image /RestoreHealth` to repair the Windows image.
 - Optionally, performs Component Store cleanup and Windows Update Cache cleanup.
-- Logs the results on the remote machine and optionally shows them on the local console.
-- Transfers the logs and relevant system files to the local machine.
+- Prints progress and status to the local console. Step outputs are written to temporary log files, then consolidated into a single master repair log (`SystemRepair_<PC>_<date>.log`) in CMTrace-compatible format; individual step log files are removed after embedding.
+- On remote runs, transfers the master log and a CBS/DISM system log archive to the local machine.
 
 #### Parameters
 
@@ -30,8 +30,7 @@ This function performs the following tasks on a specified computer (either local
 - **`-ChangeTimeout`** (Optional) use decimal value to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
 Range = 0.25 - 10.0
 - **`-sccmCleanup`** (Optional): deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder
-- **`-KeepLogs`** (Optional): log files will be kept on the remote Device, but still be copied to the Client
-- **`-noCopy`** (Optional): log files will not be copied to the Client. this will automatically use '-KeepLogs'
+- **`-KeepLogs`** (Optional): individual step log files are retained alongside the master log instead of being deleted after their content is embedded. On remote runs, step logs remain on the remote device and the full set (step logs + master log) is transferred to the Client.
 - **`-init`** (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
 - **`-Credentials`** (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
 This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
@@ -119,7 +118,7 @@ Example: `0000000000` means every step succeeded; `171100000000` means Startup r
 
 - **Author**: Wolfram Halatschek
 - **Contact**: dev@kMarflow.com
-- **Date**: 2026-06-16
+- **Date**: 2026-06-17
 
 ## Warnings
 

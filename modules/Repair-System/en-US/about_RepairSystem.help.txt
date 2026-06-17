@@ -15,8 +15,8 @@ LONG DESCRIPTION
     - Optionally, executes `DISM /Online /Cleanup-Image /ScanHealth` and `DISM /Online /Cleanup-Image /RestoreHealth` to repair the Windows image.
     - Optionally, performs Component Store cleanup and Windows Update Cache cleanup.
     - Optionally, deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder, and/or runs CCMRepair.exe.
-    - Logs the results on the remote machine and optionally shows them on the local console.
-    - Transfers the logs and relevant system files to the local machine.
+    - Prints progress and status to the local console. Step outputs are written to temporary log files, then consolidated into a single master repair log (SystemRepair_<PC>_<date>.log) in CMTrace-compatible format; individual step log files are removed after embedding.
+    - On remote runs, transfers the master log and a CBS/DISM system log archive to the local machine.
 
 
     Parameters:
@@ -31,8 +31,7 @@ LONG DESCRIPTION
     - WindowsUpdateCleanup (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update Cache cleanup. Additionally runs Windows Update and BITS Diagnostics.
     - ChangeTimeout (Optional): Decimal multiplier to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it). Range = 0.25 - 10.0
     - sccmCleanup (Optional): Deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder.
-    - KeepLogs (Optional): Log files will be kept on the remote Device, but still be copied to the Client.
-    - noCopy (Optional): Log files will not be copied to the Client. This will automatically use '-KeepLogs'.
+    - KeepLogs (Optional): Individual step log files are retained alongside the master log instead of being deleted after their content is embedded. On remote runs, step logs remain on the remote device and the full set (step logs + master log) is transferred to the Client.
     - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File. No other parameter will be executed when this is specified.
     - Credentials (Optional): When specified, this will prompt for User-Credentials that will be used for the Remote-Access.
         This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
@@ -103,6 +102,29 @@ EXAMPLES
     description of each step's result. Runs standalone; performs no repair actions.
 
 
+    Example 9: Access result properties after a run
+    -----------------------------------------------
+    PS C:\> Repair-System -noSfc
+    PS C:\> $RepairSystemResult.Actions
+    PS C:\> $RepairSystemResult.Analysis | Format-Table
+
+    After any run, the full result object is available in $RepairSystemResult. Actions shows which
+    steps were requested; Analysis gives a per-step status breakdown.
+
+
+    Example 10: Inline property access
+    -----------------------------------------------
+    PS C:\> (Repair-System -ComputerName SomeDevice).DetailedExitCode
+
+    Retrieves only the detailed exit code string from a remote run.
+
+
+    Example 11: Filter analysis to only active steps
+    -----------------------------------------------
+    PS C:\> $r = Repair-System
+    PS C:\> $r.Analysis | Where-Object { $_.Status -ne 'Not requested' } | Format-Table Position, Label, Status
+
+
 NOTES
     The script is provided "as-is" and is not supported by Microsoft.
     Test thoroughly before using on production systems, as improper use may cause data loss or system instability.
@@ -129,6 +151,30 @@ NOTES
     - DO NOT USE THIS SCRIPT ON PRODUCTION SYSTEMS WITHOUT PROPER TESTING.
 
 
+OUTPUT
+    Repair-System returns a RepairSystem.Result object that is suppressed from the default display.
+    Access it via assignment, inline property access, or the $RepairSystemResult module global:
+
+        $r = Repair-System ...
+        $r.ExitCode             # 0 / 1 / 2
+        $r.DetailedExitCode     # e.g. "0000000000"
+        $r.ComputerName         # target device
+        $r.LogPath              # full path to master log ($null for pre-log early exits)
+        $r.Actions              # PSCustomObject — which steps were requested (bool per step):
+                                #   SFC, DISMScanHealth, DISMRestoreHealth,
+                                #   DISMAnalyzeComponentStore, DISMComponentCleanup,
+                                #   SCCMCleanup, WindowsUpdateCleanup, RepairCCM
+        $r.Analysis             # array of per-step objects:
+                                #   Position, Label, Value, Status
+                                #   Status: Success | Not requested | Skipped (connection lost) |
+                                #           Success (restart required) | Timed out |
+                                #           Terminated externally | <known-code description>
+
+    The last result is also stored in $global:RepairSystemResult after every run.
+
+    -AnalyzeExitCode does not return an object; it writes directly to the host.
+
+
 EXIT CODES
     $LASTEXITCODE after Repair-System runs is a conventional single digit, suitable for scripts/CI/batch to branch on:
 
@@ -138,9 +184,8 @@ EXIT CODES
         2 = A startup/fatal error meant no repair steps ran at all (bad parameters, target
             unreachable, WinRM failure, not elevated, config error, conflicting parameters).
 
-    The full, lossless detail behind that digit is printed to the console as "Repair-System Detailed
-    Exit Code: <code>" and also stored in $global:RepairSystemDetailedExitCode, so it remains
-    available even though $LASTEXITCODE itself is just a plain digit.
+    The full, lossless detail behind that digit is printed to the console as "Detailed Exit Code:
+    <code>" and returned as the DetailedExitCode property of the result object (see OUTPUT above).
 
     The detailed code is made up of one field per step, concatenated in a fixed position order (no
     reordering, no delimiters). Each field starts with a single hex digit (0-8) giving how many hex
@@ -189,7 +234,7 @@ KEYWORDS
 AUTHOR
     Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2026-06-16
+    Date: 2026-06-17
 
 COPYRIGHT
     © 2026 Wolfram Halatschek. All rights reserved.
