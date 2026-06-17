@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check installer script exists
         run: |
@@ -29,7 +29,7 @@ jobs:
             /DMyAppVersion=${{ github.ref_name }}
 
       - name: Upload Installer
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v6
         with:
           name: installerUserOnly
           path: make/installer/Setup_PowershellModulesSuite_UserInstaller.exe
@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check installer script exists
         run: |
@@ -57,7 +57,7 @@ jobs:
             /DMyAppVersion=${{ github.ref_name }}
 
       - name: Upload Installer
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v6
         with:
           name: installerAllUsers
           path: make/installer/Setup_PowershellModulesSuite.exe
@@ -65,9 +65,11 @@ jobs:
   release:
     runs-on: windows-latest
     needs: [build-userOnly, build-allUsers]
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Get tag name
         id: vars
@@ -88,19 +90,19 @@ jobs:
         shell: bash
 
       - name: Download installerUserOnly
-        uses: actions/download-artifact@v5.0.0
+        uses: actions/download-artifact@v7
         with:
           name: installerUserOnly
           path: installer/
 
       - name: Download installerAllUsers
-        uses: actions/download-artifact@v5.0.0
+        uses: actions/download-artifact@v7
         with:
           name: installerAllUsers
           path: installer/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: PowerShell-Tools - Installer ${{ github.ref_name }}
@@ -111,4 +113,4 @@ jobs:
           make_latest: true
           draft: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
