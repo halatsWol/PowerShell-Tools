@@ -2037,7 +2037,6 @@ function Repair-System {
     }
 
     $zipJob      = $null
-    $zipFetchJob = $null
     $zipFile     = $null
     $zipErrorLog = $null
     if ((-not $noSfc -or -not $noDism) -and -not $remoteConnectionLost) {
@@ -2047,21 +2046,6 @@ function Repair-System {
         try {
             if ($remote) {
                 $zipJob = Invoke-Command @invokeParams -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList @($localTempPath, $zipFile, $zipErrorLog, $noDism) -AsJob
-                # Immediately start a fetch job: polls the UNC path and copies the zip to
-                # $finalDestinationPath as soon as it appears there — overlaps SCCM/WU/CCM steps.
-                $remoteZipUncPath = "$remoteTempPath\$(Split-Path $zipFile -Leaf)"
-                $zipFetchJob = Start-Job -ScriptBlock {
-                    param($src, $dst, $maxSec)
-                    $waited = 0
-                    while (-not (Test-Path $src) -and $waited -lt $maxSec) {
-                        Start-Sleep -Seconds 5; $waited += 5
-                    }
-                    if (Test-Path $src) {
-                        Copy-Item -Path $src -Destination $dst -Force -ErrorAction SilentlyContinue
-                        return 0
-                    }
-                    return 1
-                } -ArgumentList $remoteZipUncPath, $finalDestinationPath, 600
             } else {
                 $zipJob = Start-Job -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList @($localTempPath, $zipFile, $zipErrorLog, $noDism)
             }
@@ -2145,10 +2129,14 @@ function Repair-System {
             Write-RepairLog -Message "Error waiting for zip background job: $_" -Component "ZipLogs" -LogPath $masterLogPath
             $zipErrorCode = 1
         }
-        if ($null -ne $zipFetchJob) {
-            # Zip is confirmed done on remote; fetch job should finish very shortly
-            $zipFetchJob | Wait-Job -Timeout 120 | Out-Null
-            $zipFetchJob | Remove-Job -Force -ErrorAction SilentlyContinue
+        if ($remote -and $zipErrorCode -eq 0) {
+            try {
+                $zipCopySession = New-PSSession @invokeParams -ErrorAction Stop
+                Copy-Item -Path $zipFile -Destination $finalDestinationPath -Force -FromSession $zipCopySession -ErrorAction SilentlyContinue
+                Remove-PSSession $zipCopySession -ErrorAction SilentlyContinue
+            } catch {
+                Write-RepairLog -Message "Failed to copy zip to local immediately: $_" -Component "ZipLogs" -LogPath $masterLogPath
+            }
         }
         if (-not $remoteConnectionLost) { $ExitCode[9]=$zipErrorCode } else { $ExitCode[9]=5 }
     } elseif ($remoteConnectionLost) {
