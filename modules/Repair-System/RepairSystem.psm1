@@ -2035,7 +2035,7 @@ function Repair-System {
                         }
                     } else {
                         $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
-                        Write-Output $message
+                        if ($analyzeResult) { Write-Output $message }
                         Add-Content -Path $componentCleanupLog -Value $message
                     }
                     & $removeStepLog $analyzeComponentLog;  $stepLogPaths.Add($analyzeComponentLog)
