@@ -589,7 +589,7 @@ function Invoke-RemoteStep {
         }
 
         if ($reconnected) {
-            Write-Warning "Reconnected to '$ComputerName'. Step '$StepName' did not complete — marking as failed and continuing."
+            Write-Warning "Reconnected to '$ComputerName'. Step '$StepName' did not complete - marking as failed and continuing."
             return 1
         }
 
