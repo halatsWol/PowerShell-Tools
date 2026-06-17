@@ -65,10 +65,12 @@ Source: "{#SourcePath}\..\modules\TempDataCleanup\en-US\*"; DestDir: "{#PS7Dir}\
 ; RepairSystem
 Source: "{#SourcePath}\..\modules\Repair-System\RepairSystem.psd1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
+Source: "{#SourcePath}\..\modules\Repair-System\RepairSystem.format.ps1xml"; DestDir: "{#BaseDir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\Repair-System\en-US\*"; DestDir: "{#BaseDir}\RepairSystem\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; PS7Dir
 Source: "{#SourcePath}\..\modules\Repair-System\RepairSystem.psd1"; DestDir: "{#PS7Dir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\Repair-System\RepairSystem.psm1"; DestDir: "{#PS7Dir}\RepairSystem"; Flags: ignoreversion
+Source: "{#SourcePath}\..\modules\Repair-System\RepairSystem.format.ps1xml"; DestDir: "{#PS7Dir}\RepairSystem"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\Repair-System\en-US\*"; DestDir: "{#PS7Dir}\RepairSystem\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Shortcuts
