@@ -1,122 +1,56 @@
-Easy installer for PowerShell-Tools v1.4.2
+Easy installer for PowerShell-Tools v1.5
 
 This .exe-installer will install the following Modules:
 
-- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/Repair-System) (v1.5.1)
-- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/TempDataCleanup) (v1.5)
-- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/Shortcuts) (v1.0)
-- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.4.2/modules/CredentialHandler) (v1.0)
+- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/Repair-System) (v1.6)
+- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/TempDataCleanup) (v1.6)
+- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/Shortcuts) (v1.0)
+- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/CredentialHandler) (v1.0)
 
 # Change Log:
 
-_from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
 
-- `Repair System`: added TimeOut for SFC, DISM & Windows Update Diagnostics
+- `Repair System`: added structured Exit Code system (`$LASTEXITCODE` 0/1/2 + detailed per-step exit code) and `-AnalyzeExitCode` to decode it
+- `Repair System`: result object with `ExitCode`, `DetailedExitCode`, `ComputerName`, `LogPath`, `Actions`, `Analysis` — suppressed from default display, accessible via `$RepairSystemResult` global or property access
+- `Repair System`: safer, more thorough service handling and CCM Repair logic
+- `TempDataCleanup`: parallelized folder cleanup with background jobs to reduce total cleanup time
 
-_from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
-- Installers for global Installation and User-Only
-- Implementation to pass on Credentials for Authentication (for Remote devices only)
-- Added CCM Repair Option to Repair-System
-- PowerShell 7 Support (beta-availability, not yet thoroughly tested, cmdlets not migrated)
 
-## New Module
-### CredentialHandler _(from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4))_
-#### Description
 
-If Windows Terminal is set as default Terminal, powershell.exe will always open via Terminal
-When starting Powershell directly via PowerShell.exe, the Get-Credential cmdlet may not prompt for credentials as expected, but throws instantly an error.
-This bug is caused in the dotNet framework (dotNet Foundation), which is not maintained anymore (in favour of dotNet core), which should normally Prompt Users using WPF GUI, which fails.
-(This Bug does not occur when starting PowerShell by directly starting Terminal, or  in PowerShell 7)
 
-More information on the Bog on [Github: microsoft/Terminal - Issue #11847](https://github.com/microsoft/terminal/issues/11847#issuecomment-1402554766) and [Github: microsoft/Terminal - Issue #14119](https://github.com/microsoft/terminal/issues/14119)
-
-An alternative Solution to this Custom Module is to enable ConsolePrompting in the Registry:
-```Powershell
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\PowerShell\1\ShellIds" -Name "ConsolePrompting" -Value $true
-```
-
-#### Function
-
-- **`Get-CredentialObject`:** will prompt for User-Credentials
-
-#### Usage
-
-- As One-Liner
-```Powershell
-PS C:\> Repair-System -ComputerName somePC1 -Credentials (Get-CredentialObject)
-
-PowerShell credential request
-Enter your credentials.
-User Name: someDomain\someAdminUser
-Password: ***************
-...
-```
-
-- or as pre-defined Var (for multiple commands e.g. in a script)
-```Powershell
-PS C:\> $ComputerName = somePC1
-PS C:\> $cred = Get-CredentialObject -UserName "someDomain\someAdminUser"
-
-PowerShell credential request
-Enter your credentials.
-Password: ***************
-
-PS C:\>
->> Invoke-TempDataCleanup -ComputerName $ComputerName -Credentials $cred
->> Repair-System -ComputerName $ComputerName -Credentials $cred
->> $cred = $null
-```
 
 ## Changed Modules
 ### RepairSystem
 
+
+
+#### New Features:
+
+- a consolidated master repair log (`SystemRepair_<PC>_<date>.log`) in CMTrace-compatible format is now created; individual step logs are embedded into it and deleted after embedding (unless `-KeepLogs`)
+- added a structured Exit Code system: `$LASTEXITCODE` is now a conventional `0`/`1`/`2` result suitable for scripting/CI, while the full per-step detail is printed to console as `Detailed Exit Code: <code>`
+- **`-AnalyzeExitCode`:** decodes a previously produced (detailed) exit code into a human-readable, per-step breakdown. Cannot be combined with any other parameter and never performs any repair actions. Value `0` for non-Startup steps is noted as ambiguous — success, not requested, or skipped cannot be distinguished without the original run context.
+- **Result object:** `Repair-System` now returns a `RepairSystem.Result` object, suppressed from default display. Properties: `ExitCode`, `DetailedExitCode`, `ComputerName`, `LogPath`, `Actions` (which steps were requested), `Analysis` (per-step `Position`/`Label`/`Value`/`Status`). Access via `$r = Repair-System`, `(Repair-System).Property`, or `$RepairSystemResult` after any run.
+- **`$global:RepairSystemResult`:** stores the last result object for post-run access without assignment.
+
 #### Fixes:
 
-- `-Computername`: Leading/Trailing Whitespaces will be trimmed and won't throw errors anymore.
-- *DISM_Error.log* will now be properly added into the Dism log-file each time after DISM has been executed.
-- reduced chance of DISM & SFC Error log handling to cause Access denied due to race conditions
+- SCCM Client Action triggering in `Repair-CCM` now has per-action error handling; a single failed trigger no longer aborts the remaining actions
+- step log writes (e.g. timeout/kill messages) now retry with a short back-off when the log file is locked, preventing lost entries when DISM/SFC still holds the file handle at termination time
+- safer service stop/restart handling (`Stop-ServiceSafely`): services are stopped gracefully first, with a forced fallback (including killing the underlying process) only if they don't stop in time, reducing the risk of issues or hanging tasks due to processes not stopping when stopping Windows Update/BITS/CCM services during cleanup
 
-#### Changes: _from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
+#### Changes:
 
-- added TimeOut for SFC, DISM & Windows Update Diagnostics
-  - timeout durations are as following:
 
-   | Task | Duration |
-   | ---- | --------: |
-   | DISM CheckHealth | 15 min |
-   | DISM Restore | 40 min |
-   | DISM Analyze Component Store | 5 min |
-   | DISM Component Store Cleanup | 20 min |
-   | SFC | 20 min |
-   | Diagnostics: WindowsUpdate | 15 min |
-   | Diagnostics: BITS | 10 min|
-
-  if any of these fail or run into Timeout, Restarting the device and re-running `Repair-System` is adviced.
-  Durations are approximated average Duration for medium corrupted Systems. Duration may be changed with a Multiplicator.
-
-#### New Features _from [v1.4.1](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4.1)_
-
-- **`-ChangeTimeout`:** use decimal value to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
-Range = 0.25 - 10.0
-
-_from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
-- **`-Credentials`:** to Authenticate Remote Access and permissions on a remote Machine
-Accepts PSCredential Object (Get-Credential / Get-CredentialObject)
-If non are provided, it will prompt for user-input (please keep the Bug in mind, mentioned in the CredentialHandler Module)
-- **`-RepairCCM`:** Repairs the Microsoft Configuration Manager Client (Software Center) on the remote machine
-Prints install Exit Code and copies the ccmsetup.log file to the log-Directory of the `Repair-System` Function
+- CBS/DISM log zip now runs as a background job starting immediately after the last SFC/DISM step, overlapping with optional SCCM/WU/CCM steps
+- `Repair-CCM`: now also clears the SCCM cache and triggers the standard SCCM Client Action schedules (Hardware/Software Inventory, Discovery Data, Machine Policy, Software Updates Scan/Deployment Evaluation, etc.) after the repair, and logs each step to a dedicated CCM repair log
+- remote step execution (SFC/DISM/SCCM/Windows Update/CCM) now shares a single connection-loss handling path (`Invoke-RemoteStep` / `New-RemoteFunctionScriptBlock`), so a lost remote connection is reported consistently for whichever step it occurs in
 
 ### TempDataCleanup
 
-#### Fixes
+#### Changes:
 
-- `-Computername`: Leading/Trailing Whitespaces will be trimmed and won't throw errors/Warnings anymore,
-Device Names will now be validated.
+- folder cleanup (user/system temp folders, reporting directories, CCM cache) now runs as parallel background jobs instead of sequentially, and the user/system cleanup phases run concurrently, reducing total cleanup time on profiles/systems with many target folders
 
-#### New Features _from [v1.4](https://github.com/halatsWol/PowerShell-Tools/releases/tag/v1.4)_
-- **`-Credentials`:** to Authenticate Remote Access and permissions on a remote Machine
-Accepts PSCredential Object (Get-Credential / Get-CredentialObject)
-If non are provided, it will prompt for user-input (please keep the Bug in mind, mentioned in the CredentialHandler Module)
 
 
 
