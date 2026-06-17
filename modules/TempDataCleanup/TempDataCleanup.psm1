@@ -940,8 +940,10 @@ function Invoke-TempDataCleanup {
             } else {
                 $userCleanupJob = Start-Job -ScriptBlock ${function:Start-UserCleanup} -ArgumentList $logfile, $userTempFolders, $userReportingDirs, $explorerCacheDir, $localIconCacheDB, $msTeamsCacheFolder, $teamsClassicPath, $IncludeSystemLogs, $IncludeIconCache, $IncludeMSTeamsCache, $VerboseOption, $VerboseLogFile
             }
+            Wait-Job -Job $userCleanupJob | Out-Null
+            Receive-Job -Job $userCleanupJob
+            Remove-Job -Job $userCleanupJob
 
-            $systemCleanupJob = $null
             if( $IncludeSystemData -or $IncludeSystemLogs -or $IncludeCCMCache) {
                 Write-Host "Cleaning up System Data and Cache"
                 if ($remote) {
@@ -949,14 +951,9 @@ function Invoke-TempDataCleanup {
                 } else {
                     $systemCleanupJob = Start-Job -ScriptBlock ${function:Start-SystemCleanup} -ArgumentList $logfile, $systemTempFolders, $sysReportingDirs, $ccmCachePath, $IncludeSystemData, $IncludeSystemLogs, $IncludeCCMCache, $VerboseOption, $VerboseLogFile
                 }
-            }
-
-            $cleanupJobs = @($userCleanupJob)
-            if ($systemCleanupJob) { $cleanupJobs += $systemCleanupJob }
-            Wait-Job -Job $cleanupJobs | Out-Null
-            foreach ($job in $cleanupJobs) {
-                Receive-Job -Job $job
-                Remove-Job -Job $job
+                Wait-Job -Job $systemCleanupJob | Out-Null
+                Receive-Job -Job $systemCleanupJob
+                Remove-Job -Job $systemCleanupJob
             }
 
             if($LowDisk -or $VeryLowDisk -or $AutoClean){
