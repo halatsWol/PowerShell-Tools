@@ -24,12 +24,15 @@
          profile, and removes Autodesk registry keys from HKLM and every loaded
          user hive.
       6. Removes Autodesk entries from the Uninstall and Installer\Products hives.
-      7. Queues anything still locked into PendingFileRenameOperations and
+      7. Sweeps C:\ProgramData\Autodesk again - the uninstall helpers in step 3
+         recreate part of it (IDSDK) as they remove themselves. Only the
+         Uninstallers folder is kept, deliberately.
+      8. Queues anything still locked into PendingFileRenameOperations and
          registers a one-shot SYSTEM task that, at next boot, unregisters the
-         Autodesk COM/shell extensions and cleans the per-user registry keys -
-         including for users who never sign in.
+         Autodesk COM/shell extensions, cleans the per-user registry keys -
+         including for users who never sign in - and sweeps ProgramData once more.
 
-    Step 7 exists because AcSignCore16.dll (Autodesk Signature Core) is registered
+    Step 8 exists because AcSignCore16.dll (Autodesk Signature Core) is registered
     as a shell extension under hundreds of CLSIDs. explorer.exe loads it at every
     logon and it recreates HKCU\SOFTWARE\Autodesk, and because Explorer holds the
     file open it can never be deleted while Windows is running. Doing that work at
@@ -128,6 +131,12 @@
               This removes per-user Autodesk data for EVERY profile on the machine,
               including customisations under AppData\Roaming\Autodesk. Use -WhatIf
               first if you are unsure what will be removed.
+
+              Autodesk Fusion must be uninstalled MANUALLY BEFOREHAND. It is not an
+              MSI/ODIS product, so this script cannot uninstall it - but it does
+              delete AppData\Local\Autodesk, which is where Fusion lives, without
+              running Fusion's uninstaller. Running this with Fusion still installed
+              leaves a corrupted, half-removed Fusion behind.
 
               If any errors occur that you wish to report to the Author, please
               open an issue on https://github.com/halatsWol/PowerShell-Tools
@@ -239,16 +248,57 @@ $script:ExitCode       = 0
 # shell-extension DLLs that explorer.exe has loaded). Collected here and scheduled
 # for deletion at next boot in a single registry write.
 $script:PendingDeletePaths = New-Object System.Collections.Generic.List[string]
+# Cumulative count across every Set-PendingFileDeletes call. The list above is
+# emptied on each write so a later call cannot re-queue what is already pending,
+# so it can no longer be used to answer "was anything scheduled at all?".
+$script:PendingDeleteTotal = 0
+
+# C:\ProgramData\Autodesk is kept ONLY for its Uninstallers folder; everything else
+# under it is residue.
+$script:AdskProgramDataPath = 'C:\ProgramData\Autodesk'
+$script:AdskProgramDataKeep = Join-Path -Path $script:AdskProgramDataPath -ChildPath 'Uninstallers'
+
+function Get-AdskProgramDataResidue {
+    <#
+        Everything under C:\ProgramData\Autodesk except the Uninstallers folder.
+    #>
+    if (-not (Test-Path -LiteralPath $script:AdskProgramDataPath)) { return @() }
+    return @(Get-ChildItem -LiteralPath $script:AdskProgramDataPath -Force -ErrorAction SilentlyContinue |
+             Where-Object { $_.FullName -ne $script:AdskProgramDataKeep })
+}
+
+function Remove-AdskProgramDataResidue {
+    <#
+        Deletes that residue and returns whatever survived.
+
+        Called a SECOND time after the shared-component uninstall helpers have run:
+        AdskIdentityManager and message_router recreate IDSDK while uninstalling
+        themselves, so the earlier pass - which necessarily runs before them - always
+        leaves it behind.
+    #>
+    $survivors = New-Object System.Collections.Generic.List[string]
+    foreach ($residueItem in (Get-AdskProgramDataResidue)) {
+        if (-not (Test-ShouldProcess -Target $residueItem.FullName -Action 'Delete folder recursively')) { continue }
+        Write-Log -Message "Deleting ProgramData residue $($residueItem.FullName)" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+        Remove-Item -LiteralPath $residueItem.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $residueItem.FullName) { $survivors.Add($residueItem.FullName) }
+    }
+    return $survivors.ToArray()
+}
 
 function Set-PendingFileDeletes {
     <#
         Queues $script:PendingDeletePaths into PendingFileRenameOperations so the
         Session Manager removes them very early at next boot, before anything can
         load them again. A "\??\<path>" entry followed by an empty string means
-        delete. Written once, preserving entries Windows already had pending.
+        delete. Existing entries Windows already had pending are preserved.
+
+        Returns the paths it scheduled and empties the list, so it can be called
+        again later in the run for items found after the first pass without
+        re-queuing everything from the first one.
     #>
-    if ($script:PendingDeletePaths.Count -eq 0) { return 0 }
-    if (-not (Test-ShouldProcess -Target "$($script:PendingDeletePaths.Count) locked item(s)" -Action 'Schedule deletion at next boot (PendingFileRenameOperations)')) { return 0 }
+    if ($script:PendingDeletePaths.Count -eq 0) { return @() }
+    if (-not (Test-ShouldProcess -Target "$($script:PendingDeletePaths.Count) locked item(s)" -Action 'Schedule deletion at next boot (PendingFileRenameOperations)')) { return @() }
     $sessionMgr = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
     $entries = New-Object System.Collections.Generic.List[string]
     $existing = (Get-ItemProperty -Path $sessionMgr -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
@@ -261,7 +311,10 @@ function Set-PendingFileDeletes {
     }
     Set-ItemProperty -Path $sessionMgr -Name PendingFileRenameOperations `
                      -Value ([string[]]$entries.ToArray()) -Type MultiString -ErrorAction Stop
-    return $script:PendingDeletePaths.Count
+    $scheduledPaths = $script:PendingDeletePaths.ToArray()
+    $script:PendingDeletePaths.Clear()
+    $script:PendingDeleteTotal += $scheduledPaths.Count
+    return $scheduledPaths
 }
 
 function Register-AdskDeferredCleanup {
@@ -326,6 +379,23 @@ function Remove-DeferredCleanup {
     }
     try { Remove-Item -LiteralPath $deferredAttemptFile -Force -ErrorAction SilentlyContinue } catch { }
     try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction Stop } catch { }
+}
+
+# Record this script's own source as the first entry, before anything else runs and
+# before any guard can exit. The script deletes itself as its last act, so without
+# this the log is the only survivor and there is no way to audit what it actually
+# did. Same convention as the MSI logs inlined into the main log: one entry, the
+# content wrapped in braces.
+try {
+    $deferredSelfSource = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop
+    # This source contains the CMTrace delimiters themselves - Write-DeferredLog above
+    # builds "<![LOG[...]LOG]!>" - and an embedded "]LOG]!>" would close THIS entry
+    # early, so CMTrace would split the dump into bogus entries dated 01/01/1601.
+    # Escape both delimiters; the text stays readable and is obviously not doctored.
+    $deferredSelfEscaped = $deferredSelfSource -replace '<!\[LOG\[', '&lt;![LOG[' -replace '\]LOG\]!>', ']LOG]!&gt;'
+    Write-DeferredLog "Deferred cleanup script source ($PSCommandPath) - CMTrace delimiters escaped as &lt; / &gt; so this stays one entry:`r`n{`r`n$deferredSelfEscaped`r`n}"
+} catch {
+    Write-DeferredLog "Could not read own source for the log: $($_.Exception.Message)" -Level Warning
 }
 
 # GUARD 1 - completion marker. Set in the finally block of a previous run, so it
@@ -453,6 +523,21 @@ foreach ($folder in @('C:\Program Files\Autodesk','C:\Program Files\Common Files
         Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
         $state = if (Test-Path -LiteralPath $folder) { 'still present' } else { 'removed' }
         Write-DeferredLog "Folder ${folder}: $state"
+    }
+}
+
+# --- 4. ProgramData residue, keeping only the Uninstallers folder ----------
+# The live run sweeps this twice, but the uninstall helpers recreate parts of it
+# (IDSDK) and anything still held open then could not be deleted. Nothing is
+# running yet at this point, so this is the last and cleanest chance.
+$programDataPath = 'C:\ProgramData\Autodesk'
+$programDataKeep = Join-Path $programDataPath 'Uninstallers'
+if (Test-Path -LiteralPath $programDataPath) {
+    foreach ($residueItem in @(Get-ChildItem -LiteralPath $programDataPath -Force -ErrorAction SilentlyContinue |
+                               Where-Object { $_.FullName -ne $programDataKeep })) {
+        Remove-Item -LiteralPath $residueItem.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        $state = if (Test-Path -LiteralPath $residueItem.FullName) { 'still present' } else { 'removed' }
+        Write-DeferredLog "ProgramData residue $($residueItem.FullName): $state"
     }
 }
 
@@ -799,7 +884,13 @@ if ( -not $isElevated ) {
     Write-Log -Message "User: $($env:USERNAME);" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -EndLogEntry
     Write-Host "`r`nThis script will remove all Autodesk products from your system."
     Write-Host "Please ensure that you have closed all Autodesk applications before proceeding."
-    Write-Host "This script has not been tested with Fusion 360. If you have Fusion 360 installed, please uninstall it manually before running this script."
+    # Fusion is not an MSI/ODIS product - it has no folder under
+    # C:\ProgramData\Autodesk\Uninstallers, so nothing here uninstalls it. Its payload
+    # under %LOCALAPPDATA%\Autodesk\webdeploy is nevertheless deleted along with the
+    # rest of AppData\Local\Autodesk, while its per-user uninstall entry (HKCU, which
+    # this script does not clean) survives. The result is a half-removed install, so
+    # this has to be a warning rather than a note.
+    Write-Warning "Autodesk Fusion is NOT uninstalled by this script - but it WILL be corrupted by it.`r`nFusion installs per-user under %LOCALAPPDATA%\Autodesk\webdeploy. This script deletes that folder without ever running Fusion's own uninstaller, which leaves the program files gone while Fusion still appears in Apps & Features.`r`nIf Fusion is installed, stop now and uninstall it manually first."
     Write-Warning "Please note that this may prompt OneDrive regarding the deletion of files. This is to be expected.`r`nMultiple Windows may appear, please do not close them manually.`r`nThe script will close them automatically after the uninstallation process."
     Wait-ForUser
     Write-Host "`r`n`r`nStarting Autodesk Clean Uninstall...`r`nThis may take a while, please be patient...`r`n"
@@ -1288,12 +1379,16 @@ if ( -not $isElevated ) {
     }
     if ($script:PendingDeletePaths.Count -gt 0) {
         try {
-            $scheduledCount = Set-PendingFileDeletes
-            $script:RebootRequired = $true
-            Write-Log -Message "Scheduled $scheduledCount locked item(s) for deletion at next boot." -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
-            Write-Log -Message ($script:PendingDeletePaths -join "`r`n") -Level Verbose -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-            Write-Log -Message "" -Level Warning -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-            Write-Host "$scheduledCount locked item(s) will be removed on the next restart." -ForegroundColor Yellow
+            # returns the paths it scheduled AND empties the list, so read the result
+            # rather than $script:PendingDeletePaths, which is empty by now
+            $scheduledPaths = @(Set-PendingFileDeletes)
+            if ($scheduledPaths.Count -gt 0) {
+                $script:RebootRequired = $true
+                Write-Log -Message "Scheduled $($scheduledPaths.Count) locked item(s) for deletion at next boot." -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
+                Write-Log -Message ($scheduledPaths -join "`r`n") -Level Verbose -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+                Write-Log -Message "" -Level Warning -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+                Write-Host "$($scheduledPaths.Count) locked item(s) will be removed on the next restart." -ForegroundColor Yellow
+            }
         } catch {
             Write-Log -Message "[ERROR] Failed to schedule pending file deletes: $($_.Exception.Message)" -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
             Write-Warning "Could not schedule locked files for deletion at next boot: $($_.Exception.Message)"
@@ -1394,6 +1489,41 @@ if ( -not $isElevated ) {
     Write-Progress -Activity "Package Uninstallation" -Status "$([math]::Round($TotalUninstallProgressPercentage, 2))% Complete:" -PercentComplete $TotalUninstallProgressPercentage -Id 1
     $GlobalProgressPercentage = ($TotalUninstallProgressPercentage + $InstallDirTotalProgressPercentage + $RegistryTotalProgressPercentage) / 3
     Write-Progress -Activity "Global Progress" -Status "$([math]::Round($GlobalProgressPercentage, 2))% Complete:" -PercentComplete $GlobalProgressPercentage -Id 0
+
+    # ---- second C:\ProgramData\Autodesk sweep ----
+    # The uninstall helpers above recreate parts of it as they remove themselves -
+    # IDSDK in particular, written by AdskIdentityManager/message_router - so the
+    # sweep in the folder-deletion phase runs too early to catch them. Everything
+    # except the Uninstallers folder goes; whatever is still locked is queued for
+    # next boot, and the deferred task sweeps this path again for good measure.
+    Write-Log -Message "Re-checking $script:AdskProgramDataPath for residue recreated by the uninstall helpers..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
+    $programDataSurvivors = @(Remove-AdskProgramDataResidue)
+    if ($programDataSurvivors.Count -eq 0) {
+        Write-Log -Message "No residue left under $script:AdskProgramDataPath (Uninstallers kept by design)." -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    } else {
+        Write-Log -Message "$($programDataSurvivors.Count) item(s) still locked; scheduling for deletion at next boot." -Level Warning -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+        foreach ($survivor in $programDataSurvivors) {
+            foreach ($leftoverFile in @(Get-ChildItem -LiteralPath $survivor -Recurse -Force -File -ErrorAction SilentlyContinue)) {
+                $script:PendingDeletePaths.Add($leftoverFile.FullName)
+            }
+            # directories deepest-first, so each is empty by the time it is processed
+            foreach ($leftoverDir in @(Get-ChildItem -LiteralPath $survivor -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+                                       Sort-Object { $_.FullName.Length } -Descending)) {
+                $script:PendingDeletePaths.Add($leftoverDir.FullName)
+            }
+            $script:PendingDeletePaths.Add($survivor)
+        }
+        try {
+            $lateScheduled = @(Set-PendingFileDeletes)
+            if ($lateScheduled.Count -gt 0) {
+                $script:RebootRequired = $true
+                Write-Log -Message ($lateScheduled -join "`r`n") -Level Verbose -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            }
+        } catch {
+            Write-Log -Message "[ERROR] Failed to schedule ProgramData residue for deletion: $($_.Exception.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+        }
+        Write-Log -Message "" -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    }
 
     # ---- HKLM / per-user Autodesk key cleanup ----
     # Runs HERE, after every uninstaller has finished, so nothing can write
@@ -1529,7 +1659,10 @@ if ( -not $isElevated ) {
     # one-shot SYSTEM task at next boot. Doing either now would stall shutdown (the
     # registrations belong to a DLL explorer.exe still has loaded) and the key would
     # simply be rewritten by that DLL before the session ends.
-    $adskCleanupPending = ($script:PendingDeletePaths.Count -gt 0)
+    # PendingDeleteTotal, not PendingDeletePaths: the list is emptied on each write,
+    # so it is zero after a successful schedule. The list itself still matters under
+    # -WhatIf, where nothing was written but paths were collected.
+    $adskCleanupPending = ($script:PendingDeleteTotal -gt 0) -or ($script:PendingDeletePaths.Count -gt 0)
     if (-not $adskCleanupPending) {
         foreach ($residualFolder in @('C:\Program Files\Autodesk','C:\Program Files\Common Files\Autodesk',
                                       'C:\Program Files\Common Files\Autodesk Shared','C:\Program Files (x86)\Autodesk',
@@ -1537,6 +1670,8 @@ if ( -not $isElevated ) {
             if (Test-Path -LiteralPath $residualFolder) { $adskCleanupPending = $true; break }
         }
     }
+    # Residue under ProgramData alone is reason enough to run the deferred task
+    if (-not $adskCleanupPending -and (Get-AdskProgramDataResidue).Count -gt 0) { $adskCleanupPending = $true }
     if ($adskCleanupPending) {
         try {
             $deferredScriptPath = Register-AdskDeferredCleanup -WorkDir $MainLogPath
@@ -1613,8 +1748,18 @@ if ( -not $isElevated ) {
     } else {
         Write-Host "`r`nAutodesk products have been uninstalled successfully.`r`nA complete Log has been generated at $MainLogFile" -ForegroundColor Green
     }
+    # Always ask for a restart, even when nothing is left pending. The sweep stops and
+    # disables unrelated services and kills processes that hold Autodesk handles
+    # (Software Center and the ConfigMgr agent among them); only a reboot brings them
+    # all back in a known-good state.
     Write-Host "Please restart your computer to complete the uninstallation process." -ForegroundColor Yellow
-    Write-Host "It is recommended to run this script a second time after the restart to ensure all Autodesk products are removed." -ForegroundColor Yellow
+    # The deferred boot-time task now does the work that used to require a second full
+    # run, so point at it rather than asking the user to run the script again.
+    if ($deferredScriptPath) {
+        $deferredLogFile = $MainLogFile -replace 'ADSK_CleanUninstall_', 'ADSK_CleanUninstall_Deferred_'
+        Write-Host "The remaining cleanup runs automatically during that restart, before anyone logs on," -ForegroundColor Yellow
+        Write-Host "then removes itself. It logs to $deferredLogFile" -ForegroundColor Yellow
+    }
     Wait-ForUser
     if ($script:Interactive -and $notification) { $notification.Dispose() }
 
@@ -1631,10 +1776,8 @@ if ( -not $isElevated ) {
     }
 
     if (-not $script:Interactive -or $NoRestart) {
+        # The restart requirement is already reported above, for every path.
         Write-Log -Message "Non-interactive or -NoRestart: skipping the restart prompt." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-        if ($script:RebootRequired) {
-            Write-Host "A restart is required to complete the uninstallation process." -ForegroundColor Yellow
-        }
         exit $script:ExitCode
     }
     Read-Host -Prompt "`r`nWould you like to restart your computer now? (Y/N)" | ForEach-Object {
