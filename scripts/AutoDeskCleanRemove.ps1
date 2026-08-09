@@ -112,8 +112,8 @@
 
 .NOTES
     Author:   Halatschek Wolfram
-    Date:     2025-05-20
-    Version:  2.0
+    Date:     2026-08-09
+    Version:  3.0
     Requires: Administrative privileges, Windows PowerShell 5.1 or later.
 
     A restart is required to complete removal - the deferred task does its work at
@@ -792,7 +792,7 @@ if ( -not $isElevated ) {
     exit 1
 } else {
     Write-Log -Message "Starting AutoDeskCleanRemove.ps1;" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
-    Write-Log -Message "Script Version: 2.0;" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -AddLogEntryData
+    Write-Log -Message "Script Version: 3.0;" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -AddLogEntryData
     Write-Log -Message "Author: Halatschek Wolfram;`r`nScript-Source: 'https://github.com/halatsWol/PowerShell-Tools/blob/main/scripts/AutoDeskCleanRemove.ps1';" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -EndLogEntry
     Write-Log -Message "Script started at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss');" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
     Write-Log -Message "Hostname: $($env:COMPUTERNAME);" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -AddLogEntryData
