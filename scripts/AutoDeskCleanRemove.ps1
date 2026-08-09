@@ -76,9 +76,267 @@ $MainLogPathFileName="ADSK_CleanUninstall_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-s
 $MainLogFile = Join-Path -Path $MainLogPath -ChildPath $MainLogPathFileName
 
 # Outcome tracking - drives the script's real exit code instead of a hardcoded 0
-$script:FailedPackages = New-Object System.Collections.Generic.List[string]
+# holds PSCustomObjects (ProductCode/ExitCode/Label) so failures can be re-verified
+# against the registry at the end - a List[string] would silently stringify them
+$script:FailedPackages = New-Object System.Collections.Generic.List[object]
 $script:RebootRequired = $false
 $script:ExitCode       = 0
+
+# Files that could not be deleted because something holds them open (in practice
+# shell-extension DLLs that explorer.exe has loaded). Collected here and scheduled
+# for deletion at next boot in a single registry write.
+$script:PendingDeletePaths = New-Object System.Collections.Generic.List[string]
+
+function Set-PendingFileDeletes {
+    <#
+        Queues $script:PendingDeletePaths into PendingFileRenameOperations so the
+        Session Manager removes them very early at next boot, before anything can
+        load them again. A "\??\<path>" entry followed by an empty string means
+        delete. Written once, preserving entries Windows already had pending.
+    #>
+    if ($script:PendingDeletePaths.Count -eq 0) { return 0 }
+    $sessionMgr = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+    $entries = New-Object System.Collections.Generic.List[string]
+    $existing = (Get-ItemProperty -Path $sessionMgr -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
+    foreach ($existingEntry in @($existing)) {
+        if ($null -ne $existingEntry) { $entries.Add([string]$existingEntry) }
+    }
+    foreach ($pendingPath in $script:PendingDeletePaths) {
+        $entries.Add("\??\$pendingPath")
+        $entries.Add("")
+    }
+    Set-ItemProperty -Path $sessionMgr -Name PendingFileRenameOperations `
+                     -Value ([string[]]$entries.ToArray()) -Type MultiString -ErrorAction Stop
+    return $script:PendingDeletePaths.Count
+}
+
+function Register-AdskDeferredCleanup {
+    <#
+        Registers a one-shot SYSTEM task that finishes the cleanup at next boot.
+
+        Why deferred rather than done here: AcSignCore16.dll is registered under
+        hundreds of CLSIDs as a shell extension, and explorer.exe keeps it loaded
+        for the life of the session. Removing those registrations from under a
+        running shell stalls shutdown, and any per-user Autodesk key deleted now
+        is simply rewritten by that still-loaded DLL.
+
+        At next boot, by the time this task runs:
+          - PendingFileRenameOperations has already deleted the DLLs
+          - no user has logged on, so nothing can reload them
+          - every user hive is UNLOADED and can be cleaned offline, which also
+            reaches users who never sign in - something the live run cannot do,
+            since Get-ChildItem HKU:\ only ever sees loaded hives.
+    #>
+    param([Parameter(Mandatory)][string]$WorkDir)
+
+    $deferredScript = Join-Path -Path $WorkDir -ChildPath 'ADSK-DeferredCleanup.ps1'
+    # Same naming convention and timestamp as the main log, so the two halves of one
+    # cleanup operation pair up: ADSK_CleanUninstall_<ts>.log / ..._Deferred_<ts>.log
+    $deferredLog    = $MainLogFile -replace 'ADSK_CleanUninstall_', 'ADSK_CleanUninstall_Deferred_'
+    # Marker proving this task already ran, so it can never fire twice
+    $deferredDone    = Join-Path -Path $WorkDir -ChildPath 'ADSK-DeferredCleanup.done'
+    # Attempt counter, written before any work, so a hung/killed run is still detected
+    $deferredAttempt = Join-Path -Path $WorkDir -ChildPath 'ADSK-DeferredCleanup.attempt'
+    # Scheduling time, used to count boots since registration
+    $deferredScheduledAt = (Get-Date).ToString('o')
+
+    # single-quoted here-string: nothing below is expanded by THIS script
+    $deferredBody = @'
+$deferredLogPath     = '__LOGPATH__'
+$deferredDoneFile    = '__SENTINEL__'
+$deferredAttemptFile = '__ATTEMPTFILE__'
+$deferredScheduledAt = [datetime]::Parse('__SCHEDULEDAT__')
+$deferredTaskName    = 'ADSK-DeferredCleanup'
+
+# CMTrace-format writer, matching the main log so both open in CMTrace.exe
+function Write-DeferredLog {
+    param([string]$Message, [ValidateSet('Info','Warning','Error')][string]$Level = 'Info')
+    $cmType = switch ($Level) { 'Error' { 3 } 'Warning' { 2 } default { 1 } }
+    $now = Get-Date
+    $tz  = (Get-TimeZone).BaseUtcOffset.TotalMinutes
+    $tzf = if ($tz -ge 0) { "+{0:000}" -f $tz } else { "-{0:000}" -f [math]::Abs($tz) }
+    $line = "<![LOG[$Message]LOG]!><time=""$($now.ToString('HH:mm:ss.fff'))$tzf"" date=""$($now.ToString('MM-dd-yyyy'))"" component=""AutoDeskCleanRemove-Deferred"" context="""" type=""$cmType"" thread=""$PID"" file=""ADSK-DeferredCleanup.ps1"">"
+    foreach ($attempt in 1..10) {
+        try { Add-Content -Path $deferredLogPath -Value $line -ErrorAction Stop; return } catch { Start-Sleep -Milliseconds 100 }
+    }
+}
+
+function Remove-DeferredCleanup {
+    # Belt and braces: mark done FIRST, then unregister, then self-delete. If any of
+    # these fail the marker still exists, so the next boot exits immediately.
+    try { New-Item -Path $deferredDoneFile -ItemType File -Force -ErrorAction Stop | Out-Null } catch { }
+    try { Unregister-ScheduledTask -TaskName $deferredTaskName -Confirm:$false -ErrorAction Stop } catch {
+        try { & schtasks.exe /delete /tn $deferredTaskName /f 2>&1 | Out-Null } catch { }
+    }
+    try { Remove-Item -LiteralPath $deferredAttemptFile -Force -ErrorAction SilentlyContinue } catch { }
+    try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction Stop } catch { }
+}
+
+# GUARD 1 - completion marker. Set in the finally block of a previous run, so it
+# means "already finished, cleanly or with a handled error".
+if (Test-Path -LiteralPath $deferredDoneFile) {
+    Write-DeferredLog "Deferred cleanup already completed previously; removing the task and exiting." -Level Warning
+    Remove-DeferredCleanup
+    exit 0
+}
+
+# GUARD 1a - attempt counter, written BEFORE any work is done. Covers the case the
+# finally block cannot: the script hanging or being killed mid-run, so it never
+# marked itself done. A second sighting means it already had its chance.
+$deferredAttempt = 1
+try {
+    if (Test-Path -LiteralPath $deferredAttemptFile) {
+        $previous = [int]((Get-Content -LiteralPath $deferredAttemptFile -Raw -ErrorAction Stop).Trim())
+        $deferredAttempt = $previous + 1
+    }
+} catch { $deferredAttempt = 2 }   # unreadable counter -> assume this is a retry
+try { Set-Content -LiteralPath $deferredAttemptFile -Value $deferredAttempt -Force -ErrorAction Stop } catch { }
+if ($deferredAttempt -gt 1) {
+    Write-DeferredLog "This is attempt $deferredAttempt; a previous run started but did not finish. Removing the task rather than retrying indefinitely." -Level Warning
+    Remove-DeferredCleanup
+    exit 0
+}
+
+# GUARD 1b - boots since the task was scheduled. Independent of any file we write,
+# so it still holds if the counter above could not be persisted. Event 6005 ("Event
+# log service was started") fires once per boot; the task is AtStartup, so on its
+# legitimate first run exactly ONE boot has occurred since scheduling.
+try {
+    $bootsSinceScheduled = @(Get-WinEvent -FilterHashtable @{
+        LogName = 'System'; Id = 6005; StartTime = $deferredScheduledAt
+    } -ErrorAction Stop).Count
+    if ($bootsSinceScheduled -gt 1) {
+        Write-DeferredLog "$bootsSinceScheduled boots have occurred since scheduling; this task should already have run. Removing it." -Level Warning
+        Remove-DeferredCleanup
+        exit 0
+    }
+    Write-DeferredLog "Boots since scheduling: $bootsSinceScheduled (expected 1)."
+} catch {
+    Write-DeferredLog "Could not count boots since scheduling: $($_.Exception.Message)" -Level Warning
+}
+
+# GUARD 2 - everything below runs inside try/finally, so the task and script are
+# removed even if the body throws. Without this, a failure part-way through would
+# leave the task registered and it would fire on EVERY subsequent boot.
+try {
+
+Write-DeferredLog "Deferred Autodesk cleanup started (running as $env:USERNAME)."
+
+# --- 1. unregister Autodesk COM / shell extensions -------------------------
+$clsidRemoved = 0
+foreach ($clsidRoot in @('HKLM\SOFTWARE\Classes\CLSID','HKLM\SOFTWARE\Classes\WOW6432Node\CLSID')) {
+    foreach ($regLine in (& reg.exe query $clsidRoot /s /f "Autodesk" /d 2>$null)) {
+        if ($regLine -match '^HKEY_LOCAL_MACHINE\\(SOFTWARE\\Classes\\(?:WOW6432Node\\)?CLSID\\\{[^}]+\})\\InprocServer32\s*$') {
+            $clsidKey = "HKLM:\$($Matches[1])"
+            $inprocDll = (Get-ItemProperty -Path (Join-Path $clsidKey 'InprocServer32') -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
+            if ($inprocDll -match '\\Autodesk|^Autodesk\.') {
+                Remove-Item -Path $clsidKey -Recurse -Force -ErrorAction SilentlyContinue
+                if (-not (Test-Path -Path $clsidKey)) { $clsidRemoved++ }
+            }
+        }
+    }
+}
+Write-DeferredLog "Unregistered $clsidRemoved Autodesk CLSID(s)."
+
+# --- 2. clean every user hive offline (loaded hives do not exist yet) -------
+$keysRemoved = 0
+foreach ($userDir in Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue) {
+    $ntUser = Join-Path $userDir.FullName 'NTUSER.DAT'
+    if (-not (Test-Path -LiteralPath $ntUser)) { continue }
+    $mount = "adskdef_$($userDir.Name)"
+    & reg.exe load "HKU\$mount" $ntUser 2>&1 | Out-Null
+    $hiveWasMounted = ($LASTEXITCODE -eq 0)
+    if ($hiveWasMounted) {
+        $hiveRoot = "Registry::HKEY_USERS\$mount"
+    } else {
+        # reg load fails when the hive is ALREADY loaded, i.e. the user was signed
+        # in before this task ran (auto-logon can beat an AtStartup trigger). Clean
+        # the live hive instead - by now the shell extension DLL is already deleted,
+        # so nothing can write the key back.
+        $userSid = $null
+        try {
+            $userSid = (New-Object System.Security.Principal.NTAccount($userDir.Name)).Translate(
+                           [System.Security.Principal.SecurityIdentifier]).Value
+        } catch { }
+        if ($userSid -and (Test-Path -Path "Registry::HKEY_USERS\$userSid")) {
+            $hiveRoot = "Registry::HKEY_USERS\$userSid"
+            Write-DeferredLog "Hive for $($userDir.Name) already loaded; cleaning it live at $userSid."
+        } else {
+            Write-DeferredLog "Could not access hive for $($userDir.Name); skipped."
+            continue
+        }
+    }
+    foreach ($suffix in 'SOFTWARE\Autodesk','SOFTWARE\WOW6432Node\Autodesk') {
+        $hivePath = "$hiveRoot\$suffix"
+        if (Test-Path -Path $hivePath) {
+            Remove-Item -Path $hivePath -Recurse -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -Path $hivePath)) {
+                $keysRemoved++
+                Write-DeferredLog "Removed $suffix for user $($userDir.Name)."
+            } else {
+                Write-DeferredLog "FAILED to remove $suffix for user $($userDir.Name)."
+            }
+        }
+    }
+    if ($hiveWasMounted) {
+        [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Milliseconds 500
+        foreach ($unloadTry in 1..5) {
+            & reg.exe unload "HKU\$mount" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { break }
+            [gc]::Collect(); Start-Sleep -Seconds 1
+        }
+    }
+}
+Write-DeferredLog "Removed $keysRemoved per-user Autodesk key(s)."
+
+# --- 3. remove folders that are now unlocked -------------------------------
+foreach ($folder in @('C:\Program Files\Autodesk','C:\Program Files\Common Files\Autodesk',
+                      'C:\Program Files\Common Files\Autodesk Shared','C:\Program Files (x86)\Autodesk',
+                      'C:\Program Files (x86)\Common Files\Autodesk Shared','C:\Autodesk')) {
+    if (Test-Path -LiteralPath $folder) {
+        Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+        $state = if (Test-Path -LiteralPath $folder) { 'still present' } else { 'removed' }
+        Write-DeferredLog "Folder ${folder}: $state"
+    }
+}
+
+Write-DeferredLog "Deferred Autodesk cleanup finished."
+
+} catch {
+    Write-DeferredLog "[ERROR] Deferred cleanup failed: $($_.Exception.Message)" -Level Error
+    Write-DeferredLog "[ERROR] $($_.InvocationInfo.PositionMessage)" -Level Error
+} finally {
+    # ALWAYS runs - success, failure, or a terminating error part-way through
+    Write-DeferredLog "Removing the deferred cleanup task and script."
+    Remove-DeferredCleanup
+}
+'@ -replace '__LOGPATH__', $deferredLog `
+   -replace '__SENTINEL__', $deferredDone `
+   -replace '__ATTEMPTFILE__', $deferredAttempt `
+   -replace '__SCHEDULEDAT__', $deferredScheduledAt
+
+    Set-Content -LiteralPath $deferredScript -Value $deferredBody -Encoding UTF8 -Force
+
+    # stale state from an earlier cleanup would make the new task exit immediately
+    Remove-Item -LiteralPath $deferredDone -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $deferredAttempt -Force -ErrorAction SilentlyContinue
+
+    $taskAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$deferredScript`""
+    $taskTrigger   = New-ScheduledTaskTrigger -AtStartup
+    $taskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    # GUARD 3 - bounded runtime, never retried, never concurrent. Even if the script
+    # somehow failed to remove itself, the task cannot pile up or run forever.
+    $taskSettings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
+                        -MultipleInstances IgnoreNew -RestartCount 0 `
+                        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable:$false
+    # -Force replaces any existing task of the same name, so repeated runs never stack
+    Register-ScheduledTask -TaskName 'ADSK-DeferredCleanup' -Action $taskAction -Trigger $taskTrigger `
+                           -Principal $taskPrincipal -Settings $taskSettings `
+                           -Description 'One-shot Autodesk cleanup; removes itself after running.' `
+                           -Force -ErrorAction Stop | Out-Null
+    return $deferredScript
+}
 
 # Verbosity ranks. A message is written when its rank <= the configured threshold.
 $script:LogLevelRank = @{ 'None' = 0; 'Error' = 1; 'Warning' = 2; 'Info' = 3; 'Verbose' = 4; 'Debug' = 5 }
@@ -226,6 +484,135 @@ function Write-Log {
 
 
 
+# Anchored so unrelated software is not force-killed (the old unanchored "Inventor"
+# matched e.g. InventoryAgent). ADP* included: ADPClientService holds cer.dll and was
+# never matched by the old ADSK-only pattern.
+$script:AdskProcNamePattern = '^(Autodesk|Adsk|ADP|AutoCAD|acad|cer_service|dwgviewr|message_router|AdODIS|senddmp)|^Inventor(Server)?$'
+
+function Get-AdskServices {
+    # Name is matched too: ADPSvc has no "Autodesk" in its DisplayName
+    @(Get-Service -ErrorAction SilentlyContinue | Where-Object {
+        $_.DisplayName -match 'Autodesk' -or $_.DisplayName -match 'ADSK' -or $_.Name -match '^(Autodesk|Adsk|ADP)'
+    })
+}
+
+function Get-AdskProcesses {
+    @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessName -match $script:AdskProcNamePattern -or $_.Description -match 'Autodesk'
+    })
+}
+
+function Stop-AdskServiceHard {
+    <#
+        Stop a service and PROVE it stopped.
+
+        Stop-Service blocks on the SCM and then gives up quietly when a service does
+        not answer SERVICE_CONTROL_STOP - that is what "Waiting for service ... to
+        stop" means. The hosting process survives, keeps its file handles, and the
+        folder deletion later fails. So: disable it (the SCM must not restart it),
+        request the stop without blocking, poll for the result, and if it is still
+        running terminate the hosting process by PID and confirm.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [int]$TimeoutSeconds = 30
+    )
+    $result = [ordered]@{ Name = $Name; Stopped = $false; Killed = $false; Message = '' }
+
+    # disable first so the SCM cannot bring it straight back
+    & sc.exe config $Name start= disabled 2>&1 | Out-Null
+
+    # capture the PID BEFORE stopping - it reads 0 once the service reports stopped
+    $servicePid = 0
+    try { $servicePid = [int](Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction Stop).ProcessId } catch { }
+
+    # non-blocking stop request; Stop-Service would hang on an unresponsive service
+    & sc.exe stop $Name 2>&1 | Out-Null
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        Start-Sleep -Milliseconds 500
+        $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if ($null -eq $svc -or $svc.Status -eq 'Stopped') { $result.Stopped = $true; break }
+    } while ((Get-Date) -lt $deadline)
+
+    if (-not $result.Stopped -and $servicePid -gt 0) {
+        try {
+            Stop-Process -Id $servicePid -Force -ErrorAction Stop
+            $result.Killed = $true
+            Start-Sleep -Seconds 2
+            $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+            if ($null -eq $svc -or $svc.Status -eq 'Stopped') { $result.Stopped = $true }
+            $result.Message = "did not answer SERVICE_CONTROL_STOP after ${TimeoutSeconds}s; terminated hosting process PID $servicePid"
+        } catch {
+            $result.Message = "stop timed out and PID $servicePid could not be terminated: $($_.Exception.Message)"
+        }
+    } elseif (-not $result.Stopped) {
+        $result.Message = "stop timed out after ${TimeoutSeconds}s and no hosting PID was available"
+    }
+    [pscustomobject]$result
+}
+
+function Invoke-AdskServiceAndProcessSweep {
+    <#
+        Stop every Autodesk service, then kill every Autodesk process, verifying both.
+
+        Called more than once. Uninstallers routinely start their own services again
+        on the way out, and anything still running at deletion time holds handles that
+        make the folder removal fail - so this runs again immediately before the
+        filesystem cleanup rather than only at the start.
+    #>
+    param([string]$Phase = 'initial')
+
+    Write-Log -Message "Autodesk service/process sweep ($Phase):" -StartLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+
+    $services = Get-AdskServices
+    if ($services.Count -eq 0) {
+        Write-Log -Message "  no Autodesk services present" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    } else {
+        Write-Log -Message "  found $($services.Count) service(s): $(($services | Select-Object -ExpandProperty Name) -join ', ')" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+        foreach ($svc in $services) {
+            $stopResult = Stop-AdskServiceHard -Name $svc.Name
+            if ($stopResult.Stopped -and -not $stopResult.Killed) {
+                Write-Log -Message "  stopped service $($svc.Name)" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            } elseif ($stopResult.Stopped -and $stopResult.Killed) {
+                Write-Log -Message "  service $($svc.Name): $($stopResult.Message)" -Level Warning -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+                Write-Warning "Service $($svc.Name) ignored the stop request; its process was terminated."
+            } else {
+                Write-Log -Message "  [ERROR] service $($svc.Name) still running: $($stopResult.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+                Write-Warning "Service $($svc.Name) could not be stopped: $($stopResult.Message)"
+            }
+        }
+    }
+
+    # processes AFTER services, so the SCM cannot respawn what we kill
+    $remaining = Get-AdskProcesses
+    if ($remaining.Count -gt 0) {
+        Write-Log -Message "  found $($remaining.Count) process(es): $(($remaining | Select-Object -ExpandProperty ProcessName -Unique) -join ', ')" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    }
+    foreach ($pass in 1..3) {
+        if ($remaining.Count -eq 0) { break }
+        foreach ($proc in $remaining) {
+            try { Stop-Process -InputObject $proc -Force -ErrorAction Stop }
+            catch {
+                Write-Log -Message "  [ERROR] could not stop $($proc.ProcessName) (PID $($proc.Id)) on pass ${pass}: $($_.Exception.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            }
+        }
+        Start-Sleep -Seconds 2
+        $remaining = Get-AdskProcesses
+    }
+    if ($remaining.Count -gt 0) {
+        $stillRunning = ($remaining | Select-Object -ExpandProperty ProcessName -Unique) -join ', '
+        Write-Log -Message "  [ERROR] still running after 3 passes: $stillRunning" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+        Write-Warning "Still running after 3 attempts: $stillRunning. These hold file handles; a reboot and second run will be required."
+    } else {
+        Write-Log -Message "  no Autodesk processes remain" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    }
+
+    Write-Log -Message "Sweep ($Phase) complete." -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    return $remaining.Count
+}
+
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $isElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ( -not $isElevated ) {
@@ -247,77 +634,10 @@ if ( -not $isElevated ) {
     Write-Warning "Please note that this may prompt OneDrive regarding the deletion of files. This is to be expected.`r`nMultiple Windows may appear, please do not close them manually.`r`nThe script will close them automatically after the uninstallation process."
     Wait-ForUser
     Write-Host "`r`n`r`nStarting Autodesk Clean Uninstall...`r`nThis may take a while, please be patient...`r`n"
-    # Stop all Autodesk SERVICES FIRST. Order matters: killing a service's process only
-    # makes the SCM restart it, which is why AdskAccessService, AdskLicensingService,
-    # ADPClientService et al survived three kill passes and kept holding the file
-    # handles that then broke the folder deletion further down.
-    Write-Log -Message "Stopping all Autodesk services:" -StartLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-    # Stop-Service emits nothing without -PassThru, so enumerate first and stop separately.
-    # Name is matched too: ADPClientService has no "Autodesk" in its DisplayName.
-    $AdskServices = @(Get-Service | Where-Object {
-        $_.DisplayName -match "Autodesk" -or $_.DisplayName -match "ADSK" -or $_.Name -match "^(Autodesk|Adsk|ADP)"
-    })
-    if (-not $AdskServices) {
-        Write-Log -Message "`r`nNo Autodesk services found." -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-    } else {
-        $ServiceInfo = $AdskServices | Select-Object DisplayName, Name, Status | ConvertTo-Json -Depth 2
-        Write-Log -Message "Found Autodesk services:`r`n{$ServiceInfo}" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-        foreach ($AdskService in $AdskServices) {
-            # disable before stopping, otherwise the SCM restarts it moments later
-            try { Set-Service -Name $AdskService.Name -StartupType Disabled -ErrorAction Stop } catch {
-                Write-Log -Message "[ERROR] Failed to disable service $($AdskService.Name): $($_.Exception.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-            }
-            try { Stop-Service -InputObject $AdskService -Force -ErrorAction Stop } catch {
-                Write-Log -Message "[ERROR] Failed to stop Autodesk service $($AdskService.Name): $($_.Exception.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-                Write-Warning "Failed to stop Autodesk service $($AdskService.Name). This may require a second run of the script, after a reboot."
-            }
-        }
-        Write-Log -Message "Autodesk services have been stopped." -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-    }
-
-    # Stop all Autodesk processes (AFTER the services, so nothing respawns them)
-    Write-Log -Message "Stopping all Autodesk processes:" -StartLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-    # Anchored to the start of ProcessName so unrelated software is not force-killed
-    # (the old unanchored "Inventor" would match e.g. InventoryAgent). ADP* added:
-    # ADPClientService holds cer.dll and was never matched by the old ADSK pattern.
-    $script:AdskProcNamePattern = '^(Autodesk|Adsk|ADP|AutoCAD|acad|cer_service|dwgviewr|message_router|AdODIS|senddmp)|^Inventor(Server)?$'
-    $AdskProcesses = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.ProcessName -match $script:AdskProcNamePattern -or $_.Description -match 'Autodesk'
-    })
-    if ($AdskProcesses.Count -eq 0) {
-        Write-Log -Message "`r`nNo Autodesk processes found." -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-    } else {
-        $ProcessInfo = $AdskProcesses | Select-Object Name, Id | ConvertTo-Json -Depth 2
-        Write-Log -Message "Found Autodesk processes:`r`n{$ProcessInfo}" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-
-        # Some Autodesk components respawn after being killed (AdskAccessService does),
-        # so verify and retry instead of assuming one pass is enough. Per-process, NOT
-        # a pipeline: with -ErrorAction Stop one un-killable process would abort the
-        # pipeline and leave the rest running, holding handles that break deletion later.
-        $AdskRemaining = $AdskProcesses
-        foreach ($AdskKillPass in 1..3) {
-            foreach ($AdskProcess in $AdskRemaining) {
-                try {
-                    Stop-Process -InputObject $AdskProcess -Force -ErrorAction Stop
-                } catch {
-                    Write-Log -Message "[ERROR] Failed to stop process $($AdskProcess.ProcessName) (PID $($AdskProcess.Id)) on pass ${AdskKillPass}: $($_.Exception.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-                }
-            }
-            Start-Sleep -Seconds 2
-            $AdskRemaining = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-                $_.ProcessName -match $script:AdskProcNamePattern -or $_.Description -match 'Autodesk'
-            })
-            if ($AdskRemaining.Count -eq 0) { break }
-            Write-Log -Message "$($AdskRemaining.Count) Autodesk process(es) still running after pass $AdskKillPass; retrying." -Level Warning -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-        }
-        if ($AdskRemaining.Count -gt 0) {
-            $StillRunning = ($AdskRemaining | Select-Object -ExpandProperty ProcessName -Unique) -join ', '
-            Write-Log -Message "[ERROR] Autodesk process(es) still running after 3 passes: $StillRunning" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-            Write-Warning "Still running after 3 attempts: $StillRunning. These hold file handles; a reboot and second run will be required."
-        }
-        Write-Log -Message "Autodesk processes have been stopped." -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-    }
-    # (the Autodesk service shutdown now runs BEFORE the process kill, above)
+    # Services first, then processes - killing a service's process only makes the SCM
+    # restart it. Each stop is verified, and a service that ignores SERVICE_CONTROL_STOP
+    # has its hosting process terminated (see Stop-AdskServiceHard).
+    $null = Invoke-AdskServiceAndProcessSweep -Phase 'initial'
     # Stop all Autodesk Tasks
     Write-Log -Message "Stopping all Autodesk tasks:" -StartLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
     # Get-CimInstance, not Get-WmiObject: the latter is removed in PowerShell 6+
@@ -561,7 +881,7 @@ if ( -not $isElevated ) {
                                                Write-Log -Message "Uninstalled $productCode; reboot suppressed (exit 1641)." -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile }
                                         default {
                                                $msiFailed = $true
-                                               $script:FailedPackages.Add("$productCode (msiexec exit $msiExit)")
+                                               $script:FailedPackages.Add([pscustomobject]@{ ProductCode = $productCode; ExitCode = $msiExit; Label = '' })
                                                Write-Log -Message "[ERROR] msiexec returned $msiExit for $productCode" -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
                                                Write-Warning "Failed to uninstall $productCode (msiexec exit $msiExit)."
                                         }
@@ -703,6 +1023,15 @@ if ( -not $isElevated ) {
     Write-Progress -Activity "Global Progress" -Status "$([math]::Round($GlobalProgressPercentage, 2))% Complete:" -PercentComplete $GlobalProgressPercentage -Id 0
 
 
+    # Second sweep, immediately before the destructive filesystem phase. The
+    # uninstallers above routinely start their own services again on the way out
+    # (Autodesk Access and the licensing agent both do), and anything running here
+    # holds file handles that make the deletion below fail silently.
+    $AdskStillRunning = Invoke-AdskServiceAndProcessSweep -Phase 'pre-deletion'
+    if ($AdskStillRunning -gt 0) {
+        Write-Log -Message "[ERROR] $AdskStillRunning Autodesk process(es) still running going into folder deletion; expect locked files." -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    }
+
     Write-Log -Message "Deleting Autodesk folders..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
     $autodeskFoldersGlobal = @(
         "C:\Program Files\Autodesk",
@@ -772,6 +1101,34 @@ if ( -not $isElevated ) {
         $GlobalProgressPercentage = ($TotalUninstallProgressPercentage + $InstallDirTotalProgressPercentage + $RegistryTotalProgressPercentage) / 3
         Write-Progress -Activity "Global Progress" -Status "$([math]::Round($GlobalProgressPercentage, 2))% Complete:" -PercentComplete $GlobalProgressPercentage -Id 0
     }
+    # Anything that survived the deletion above is held open by a running process.
+    # Schedule it for removal at next boot, before anything can reload it.
+    foreach ($folder in $autodeskFoldersAll) {
+        if (-not (Test-Path -Path $folder)) { continue }
+        foreach ($leftoverFile in @(Get-ChildItem -LiteralPath $folder -Recurse -Force -File -ErrorAction SilentlyContinue)) {
+            $script:PendingDeletePaths.Add($leftoverFile.FullName)
+        }
+        # directories deepest-first, so each is empty by the time it is processed
+        foreach ($leftoverDir in @(Get-ChildItem -LiteralPath $folder -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+                                   Sort-Object { $_.FullName.Length } -Descending)) {
+            $script:PendingDeletePaths.Add($leftoverDir.FullName)
+        }
+        $script:PendingDeletePaths.Add($folder)
+    }
+    if ($script:PendingDeletePaths.Count -gt 0) {
+        try {
+            $scheduledCount = Set-PendingFileDeletes
+            $script:RebootRequired = $true
+            Write-Log -Message "Scheduled $scheduledCount locked item(s) for deletion at next boot." -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
+            Write-Log -Message ($script:PendingDeletePaths -join "`r`n") -Level Verbose -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            Write-Log -Message "" -Level Warning -EndLogEntry -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            Write-Host "$scheduledCount locked item(s) will be removed on the next restart." -ForegroundColor Yellow
+        } catch {
+            Write-Log -Message "[ERROR] Failed to schedule pending file deletes: $($_.Exception.Message)" -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            Write-Warning "Could not schedule locked files for deletion at next boot: $($_.Exception.Message)"
+        }
+    }
+
     # NOTE: the HKLM/HKU Autodesk key cleanup runs after the Genuine Service and
     # uninstall-helper block below, so no uninstaller can write keys back afterwards.
 
@@ -799,7 +1156,7 @@ if ( -not $isElevated ) {
             3010 { $script:RebootRequired = $true
                    Write-Log -Message "Uninstalled Autodesk Genuine Service; reboot required (exit 3010)." -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile }
             default {
-                   $script:FailedPackages.Add("Autodesk Genuine Service $adskGenuineServiceGUID (msiexec exit $gsExit)")
+                   $script:FailedPackages.Add([pscustomobject]@{ ProductCode = $adskGenuineServiceGUID; ExitCode = $gsExit; Label = 'Autodesk Genuine Service' })
                    Write-Log -Message "[ERROR] msiexec returned $gsExit for Autodesk Genuine Service $adskGenuineServiceGUID" -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
                    Write-Warning "Failed to uninstall Autodesk Genuine Service (msiexec exit $gsExit)."
             }
@@ -997,18 +1354,62 @@ if ( -not $isElevated ) {
             Write-Progress -Activity "Global Progress" -Status "$([math]::Round($GlobalProgressPercentage, 2))% Complete:" -PercentComplete $GlobalProgressPercentage -Id 0
         }
     }
+    # Defer the COM/shell-extension removal and the final per-user key cleanup to a
+    # one-shot SYSTEM task at next boot. Doing either now would stall shutdown (the
+    # registrations belong to a DLL explorer.exe still has loaded) and the key would
+    # simply be rewritten by that DLL before the session ends.
+    $adskCleanupPending = ($script:PendingDeletePaths.Count -gt 0)
+    if (-not $adskCleanupPending) {
+        foreach ($residualFolder in @('C:\Program Files\Autodesk','C:\Program Files\Common Files\Autodesk',
+                                      'C:\Program Files\Common Files\Autodesk Shared','C:\Program Files (x86)\Autodesk',
+                                      'C:\Program Files (x86)\Common Files\Autodesk Shared','C:\Autodesk')) {
+            if (Test-Path -LiteralPath $residualFolder) { $adskCleanupPending = $true; break }
+        }
+    }
+    if ($adskCleanupPending) {
+        try {
+            $deferredScriptPath = Register-AdskDeferredCleanup -WorkDir $MainLogPath
+            $script:RebootRequired = $true
+            Write-Log -Message "Registered one-shot deferred cleanup task 'ADSK-DeferredCleanup' -> $deferredScriptPath" -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            Write-Host "Remaining Autodesk COM registrations and per-user keys will be removed on the next restart." -ForegroundColor Yellow
+        } catch {
+            Write-Log -Message "[ERROR] Failed to register the deferred cleanup task: $($_.Exception.Message)" -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+            Write-Warning "Could not register the deferred cleanup task: $($_.Exception.Message)"
+        }
+    }
+
     # only remove the MSI log directory if it is a real directory, not a redirect
     $MsiLogDirItem = Get-Item -LiteralPath $MsiLogPath -Force -ErrorAction SilentlyContinue
     if ($MsiLogDirItem -and -not ($MsiLogDirItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         Remove-Item -Path $MsiLogPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    if ($script:FailedPackages.Count -gt 0) {
+    # A package can report a failure and still be gone by the end. Autodesk's Genuine
+    # Service returns 1604 from its own checkUninstall custom action while other
+    # products are still installed, and the dedicated step above then removes it
+    # successfully. Re-check every recorded failure against the registry so the exit
+    # code reflects the final state, not a transient refusal - otherwise a deployment
+    # tool marks a clean uninstall as failed.
+    $script:UnresolvedFailures = New-Object System.Collections.Generic.List[string]
+    $resolvedFailures = New-Object System.Collections.Generic.List[string]
+    foreach ($failedPackage in $script:FailedPackages) {
+        $failureText = (("$($failedPackage.Label) $($failedPackage.ProductCode)").Trim() + " (msiexec exit $($failedPackage.ExitCode))")
+        $stillRegistered = $true
+        try { $stillRegistered = Test-MsiProductInstalled -ProductCode $failedPackage.ProductCode } catch { $stillRegistered = $true }
+        if ($stillRegistered) { $script:UnresolvedFailures.Add($failureText) } else { $resolvedFailures.Add($failureText) }
+    }
+    if ($resolvedFailures.Count -gt 0) {
+        Write-Log -Message "$($resolvedFailures.Count) package(s) reported a failure but are no longer registered; treating as resolved:" -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
+        Write-Log -Message ($resolvedFailures -join "`r`n") -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -AddLogEntryData
+        Write-Log -Message "" -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -EndLogEntry
+    }
+
+    if ($script:UnresolvedFailures.Count -gt 0) {
         $script:ExitCode = 1
-        Write-Log -Message "Autodesk products uninstallation completed with $($script:FailedPackages.Count) failure(s)." -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
-        Write-Log -Message ($script:FailedPackages -join "`r`n") -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -AddLogEntryData
+        Write-Log -Message "Autodesk products uninstallation completed with $($script:UnresolvedFailures.Count) unresolved failure(s)." -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -StartLogEntry
+        Write-Log -Message ($script:UnresolvedFailures -join "`r`n") -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -AddLogEntryData
         Write-Log -Message "" -Level Error -Component "AutoDeskCleanRemove" -LogFile $MainLogFile -EndLogEntry
-        Write-Warning "$($script:FailedPackages.Count) package(s) failed to uninstall. See $MainLogFile"
+        Write-Warning "$($script:UnresolvedFailures.Count) package(s) failed to uninstall and are still registered. See $MainLogFile"
     } elseif ($script:RebootRequired) {
         $script:ExitCode = 3010
         Write-Log -Message "Autodesk products uninstallation completed; reboot required (Exit Code 3010)." -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
@@ -1034,9 +1435,9 @@ if ( -not $isElevated ) {
         try { [Microsoft.VisualBasic.Interaction]::AppActivate($PID) } catch { }
     }
 
-    if ($script:FailedPackages.Count -gt 0) {
-        Write-Host "`r`nAutodesk removal finished with $($script:FailedPackages.Count) failure(s):" -ForegroundColor Red
-        $script:FailedPackages | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+    if ($script:UnresolvedFailures.Count -gt 0) {
+        Write-Host "`r`nAutodesk removal finished with $($script:UnresolvedFailures.Count) unresolved failure(s):" -ForegroundColor Red
+        $script:UnresolvedFailures | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
         Write-Host "A complete Log has been generated at $MainLogFile" -ForegroundColor Red
     } else {
         Write-Host "`r`nAutodesk products have been uninstalled successfully.`r`nA complete Log has been generated at $MainLogFile" -ForegroundColor Green
