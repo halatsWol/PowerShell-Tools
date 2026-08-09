@@ -1,31 +1,148 @@
-#####################################################################################
-# Script Name:  AutoDeskCleanRemove.ps1
-# Description:  This script is used to cleanly uninstall all Autodesk products
-#               from a system.
-#
-# Author:       Halatschek Wolfram
-# Date:         2025-05-20
-# Version:      2.0
-# Notes:        This script requires administrative privileges to run.
-#
-# Usage:        Run this script in an elevated PowerShell session.
-#               PS> cd <path to script>
-#               PS> .\AutoDeskCleanRemove.ps1
-#
-#               Please restart your computer after running this Script and run it
-#               again to ensure all Autodesk residuals are removed.
-#
-#
-# Warning:      This script is provided "as is" without any warranty of any kind.
-#
-#       !!      The Author of this script is not responsible for any data loss or
-#               system damage caused by the use of this script. Use at your own risk.
-#
-#               If any Errors occur you wish to report to the Author, please open an
-#               issue on https://github.com/halatsWol/PowerShell-Tools
-#####################################################################################
+<#
+.SYNOPSIS
+    Cleanly uninstalls all Autodesk products from a system, including the residue
+    that Autodesk's own uninstallers leave behind.
 
-[CmdletBinding()]
+.DESCRIPTION
+    Removes Autodesk software in stages, and finishes the work that cannot be done
+    while Windows is running by scheduling a one-shot task for the next boot.
+
+    What it does, in order:
+
+      1. Stops Autodesk services, then Autodesk processes. Services are disabled
+         first so the Service Control Manager cannot restart them; a service that
+         ignores SERVICE_CONTROL_STOP has its hosting process terminated by PID.
+      2. Walks C:\ProgramData\Autodesk\Uninstallers, ordering Object Enablers
+         first, then updates/service packs, then base products, and uninstalls each
+         MSI package via msiexec.
+      3. Runs the shared-component removers (ODIS, Access, Licensing, Identity
+         Manager) and their uninstall helpers.
+      4. Sweeps services and processes a SECOND time - uninstallers routinely
+         restart their own services, and anything running holds file handles that
+         would make the deletion below fail.
+      5. Deletes Autodesk folders under Program Files, ProgramData and every user
+         profile, and removes Autodesk registry keys from HKLM and every loaded
+         user hive.
+      6. Removes Autodesk entries from the Uninstall and Installer\Products hives.
+      7. Queues anything still locked into PendingFileRenameOperations and
+         registers a one-shot SYSTEM task that, at next boot, unregisters the
+         Autodesk COM/shell extensions and cleans the per-user registry keys -
+         including for users who never sign in.
+
+    Step 7 exists because AcSignCore16.dll (Autodesk Signature Core) is registered
+    as a shell extension under hundreds of CLSIDs. explorer.exe loads it at every
+    logon and it recreates HKCU\SOFTWARE\Autodesk, and because Explorer holds the
+    file open it can never be deleted while Windows is running. Doing that work at
+    boot, before any logon, is the only way to break the cycle.
+
+    Logging is CMTrace-compatible. The live run and the deferred boot-time phase
+    write paired files that share a timestamp:
+        ADSK_CleanUninstall_<timestamp>.log
+        ADSK_CleanUninstall_Deferred_<timestamp>.log
+
+.PARAMETER LogPath
+    Directory for all logs. MSI logs are written to <LogPath>\MSILogs.
+    Defaults to C:\_ADSK_CleanUninstall. The script aborts if it cannot be created.
+
+.PARAMETER LogLevel
+    Verbosity threshold. Defaults to Verbose, which reproduces the historical
+    output in full, including the complete MSI logs inlined into the main log.
+
+        None    - no file logging
+        Error   - errors only
+        Warning - warnings and errors
+        Info    - normal flow; MSI logs inlined only on failure
+        Verbose - everything, including full MSI logs   (default)
+        Debug   - everything plus extra diagnostic detail
+
+    The level also drives the CMTrace severity column, so errors show in red.
+
+.PARAMETER Unattended
+    Suppresses every prompt and the completion toast. Required for Intune, SCCM or
+    any headless execution - without it the script waits at Pause/Read-Host.
+
+.PARAMETER NoRestart
+    Never offers to restart, even in an interactive session. Takes precedence over
+    -ForceRestart if both are supplied.
+
+.PARAMETER ForceRestart
+    Restarts the computer as soon as the run completes, without asking. Useful in
+    unattended deployment so the deferred boot-time cleanup finishes immediately
+    rather than waiting for the user's next restart.
+
+.EXAMPLE
+    PS> .\AutoDeskCleanRemove.ps1
+
+    Interactive run with default logging to C:\_ADSK_CleanUninstall.
+
+.EXAMPLE
+    PS> .\AutoDeskCleanRemove.ps1 -WhatIf
+
+    Dry run. Reports every uninstall, deletion, registry removal and the deferred
+    task it would create, and changes nothing.
+
+.EXAMPLE
+    PS> .\AutoDeskCleanRemove.ps1 -Unattended -ForceRestart
+
+    Unattended removal for a deployment tool, restarting immediately so the
+    boot-time cleanup completes without waiting for the user.
+
+.EXAMPLE
+    PS> .\AutoDeskCleanRemove.ps1 -LogPath 'D:\Logs\ADSK' -LogLevel Info
+
+    Logs to a custom directory and omits the inlined MSI logs except on failure,
+    producing a much smaller main log.
+
+.INPUTS
+    None. This script does not accept pipeline input.
+
+.OUTPUTS
+    None. Progress is written to the host, detail to the CMTrace logs under
+    -LogPath, and the outcome is reported through the exit code:
+
+        0     Completed with no unresolved failures
+        1     Not elevated, the log directory could not be created, or one or
+              more packages failed to uninstall AND are still registered
+        3010  Completed successfully; a restart is required to finish
+
+    Packages that report a failure but are no longer registered by the end of the
+    run are logged as resolved and do not affect the exit code. Autodesk Genuine
+    Service, for instance, returns 1604 from its own checkUninstall action while
+    other products are still installed, and is removed successfully afterwards.
+
+.NOTES
+    Author:   Halatschek Wolfram
+    Date:     2025-05-20
+    Version:  2.0
+    Requires: Administrative privileges, Windows PowerShell 5.1 or later.
+
+    A restart is required to complete removal - the deferred task does its work at
+    the next boot. One run plus one restart is normally sufficient; running the
+    script a second time afterwards remains a safe way to confirm nothing is left.
+
+    Warning:  This script is provided "as is" without any warranty of any kind.
+
+        !!    The Author of this script is not responsible for any data loss or
+              system damage caused by the use of this script. Use at your own risk.
+
+              This removes per-user Autodesk data for EVERY profile on the machine,
+              including customisations under AppData\Roaming\Autodesk. Use -WhatIf
+              first if you are unsure what will be removed.
+
+              If any errors occur that you wish to report to the Author, please
+              open an issue on https://github.com/halatsWol/PowerShell-Tools
+
+.LINK
+    https://github.com/halatsWol/PowerShell-Tools
+
+.LINK
+    https://github.com/halatsWol/PowerShell-Tools/blob/main/scripts/AutoDeskCleanRemove.ps1
+#>
+
+# SupportsShouldProcess gives -WhatIf and -Confirm. ConfirmImpact is deliberately
+# left at the default: 'High' would prompt for every one of the hundreds of
+# destructive operations below, which would make a normal run unusable.
+[CmdletBinding(SupportsShouldProcess)]
 param(
     # Root directory for logs. MSI logs are written to <LogPath>\MSILogs.
     [ValidateNotNullOrEmpty()]
@@ -47,26 +164,62 @@ param(
     [switch]$Unattended,
 
     # Never offer to restart at the end, even interactively.
-    [switch]$NoRestart
+    [switch]$NoRestart,
+
+    # Restart automatically when the run finishes, without asking. Intended for
+    # unattended deployment, where the deferred boot-time cleanup should complete
+    # immediately rather than waiting for the user's next restart.
+    [switch]$ForceRestart
 )
 
 # $PSSenderInfo alone does not detect a headless local session (e.g. a service or
 # remote-exec context), which is why AppActivate could throw at the very end.
 $script:Interactive = (-not $Unattended) -and (-not $PSSenderInfo) -and [Environment]::UserInteractive
 
+# Conflicting intents: prefer the safer one rather than guessing.
+if ($ForceRestart -and $NoRestart) {
+    Write-Warning "-ForceRestart and -NoRestart were both specified; -NoRestart wins and the computer will not be restarted."
+    $ForceRestart = $false
+}
+
+# $PSCmdlet is only bound at script scope, so capture it for use inside functions.
+$script:Cmdlet = $PSCmdlet
+
+function Test-ShouldProcess {
+    <#
+        Wrapper so nested functions can take part in -WhatIf / -Confirm. Returns
+        $true when the action should actually be performed; under -WhatIf it
+        returns $false and PowerShell prints the "What if:" line automatically.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Target,
+        [Parameter(Mandatory)][string]$Action
+    )
+    if ($null -eq $script:Cmdlet) { return $true }
+    return $script:Cmdlet.ShouldProcess($Target, $Action)
+}
+
 function Wait-ForUser {
     if ($script:Interactive) { Pause }
 }
+
+# Pre-load CimCmdlets. Otherwise it autoloads mid-run and its alias registrations
+# emit a dozen spurious "What if: Set Alias" lines. Import-Module does not support
+# -WhatIf, so the preference is suppressed around the call instead.
+$previousWhatIfPreference = $WhatIfPreference
+$WhatIfPreference = $false
+Import-Module CimCmdlets -ErrorAction SilentlyContinue
+$WhatIfPreference = $previousWhatIfPreference
 
 $script:LogLevel = $LogLevel
 $MainLogPath = $LogPath
 $MsiLogPath  = Join-Path -Path $LogPath -ChildPath 'MSILogs'
 try {
     if (-not (Test-Path -LiteralPath $MainLogPath)) {
-        New-Item -ItemType Directory -Path $MainLogPath -Force -ErrorAction Stop | Out-Null
+        New-Item -ItemType Directory -Path $MainLogPath -Force -ErrorAction Stop -WhatIf:$false | Out-Null
     }
     if (-not (Test-Path -LiteralPath $MsiLogPath)) {
-        New-Item -ItemType Directory -Path $MsiLogPath -Force -ErrorAction Stop | Out-Null
+        New-Item -ItemType Directory -Path $MsiLogPath -Force -ErrorAction Stop -WhatIf:$false | Out-Null
     }
 } catch {
     Write-Warning "Cannot create log directory '$MainLogPath': $($_.Exception.Message)"
@@ -95,6 +248,7 @@ function Set-PendingFileDeletes {
         delete. Written once, preserving entries Windows already had pending.
     #>
     if ($script:PendingDeletePaths.Count -eq 0) { return 0 }
+    if (-not (Test-ShouldProcess -Target "$($script:PendingDeletePaths.Count) locked item(s)" -Action 'Schedule deletion at next boot (PendingFileRenameOperations)')) { return 0 }
     $sessionMgr = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
     $entries = New-Object System.Collections.Generic.List[string]
     $existing = (Get-ItemProperty -Path $sessionMgr -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
@@ -128,6 +282,8 @@ function Register-AdskDeferredCleanup {
             since Get-ChildItem HKU:\ only ever sees loaded hives.
     #>
     param([Parameter(Mandatory)][string]$WorkDir)
+
+    if (-not (Test-ShouldProcess -Target 'ADSK-DeferredCleanup (SYSTEM task at startup)' -Action 'Register one-shot deferred cleanup')) { return $null }
 
     $deferredScript = Join-Path -Path $WorkDir -ChildPath 'ADSK-DeferredCleanup.ps1'
     # Same naming convention and timestamp as the main log, so the two halves of one
@@ -402,7 +558,7 @@ function Write-Log {
     $statePath = "$LogFile.state"
     $logDir = [System.IO.Path]::GetDirectoryName($LogFile)
     if (-not (Test-Path $logDir)) {
-        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $logDir -Force -WhatIf:$false | Out-Null
     }
 
     # Add-Content has no retry of its own; under contention it throws and the
@@ -410,7 +566,7 @@ function Write-Log {
     function Add-LogLine {
         param([string]$Path, [string]$Value)
         foreach ($attempt in 1..10) {
-            try { Add-Content -Path $Path -Value $Value -ErrorAction Stop; return }
+            try { Add-Content -Path $Path -Value $Value -ErrorAction Stop -WhatIf:$false; return }
             catch { Start-Sleep -Milliseconds 100 }
         }
         Write-Warning "Log line lost (file locked after 10 attempts): $Value"
@@ -447,7 +603,7 @@ function Write-Log {
                 Suppressed = $suppress
                 Type       = $cmType
             }
-            $state | ConvertTo-Json -Compress | Out-File -FilePath $statePath -Encoding UTF8 -Force
+            $state | ConvertTo-Json -Compress | Out-File -FilePath $statePath -Encoding UTF8 -Force -WhatIf:$false
         }
 
         'Add' {
@@ -519,6 +675,11 @@ function Stop-AdskServiceHard {
     )
     $result = [ordered]@{ Name = $Name; Stopped = $false; Killed = $false; Message = '' }
 
+    if (-not (Test-ShouldProcess -Target "service $Name" -Action 'Disable and stop')) {
+        $result.Message = 'skipped (WhatIf)'
+        return [pscustomobject]$result
+    }
+
     # disable first so the SCM cannot bring it straight back
     & sc.exe config $Name start= disabled 2>&1 | Out-Null
 
@@ -578,6 +739,9 @@ function Invoke-AdskServiceAndProcessSweep {
             } elseif ($stopResult.Stopped -and $stopResult.Killed) {
                 Write-Log -Message "  service $($svc.Name): $($stopResult.Message)" -Level Warning -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
                 Write-Warning "Service $($svc.Name) ignored the stop request; its process was terminated."
+            } elseif ($WhatIfPreference) {
+                # nothing was attempted, so this is not a failure worth reporting
+                Write-Log -Message "  (WhatIf) would disable and stop service $($svc.Name)" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
             } else {
                 Write-Log -Message "  [ERROR] service $($svc.Name) still running: $($stopResult.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
                 Write-Warning "Service $($svc.Name) could not be stopped: $($stopResult.Message)"
@@ -593,15 +757,20 @@ function Invoke-AdskServiceAndProcessSweep {
     foreach ($pass in 1..3) {
         if ($remaining.Count -eq 0) { break }
         foreach ($proc in $remaining) {
+            if (-not (Test-ShouldProcess -Target "$($proc.ProcessName) (PID $($proc.Id))" -Action 'Terminate process')) { continue }
             try { Stop-Process -InputObject $proc -Force -ErrorAction Stop }
             catch {
                 Write-Log -Message "  [ERROR] could not stop $($proc.ProcessName) (PID $($proc.Id)) on pass ${pass}: $($_.Exception.Message)" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
             }
         }
+        if ($WhatIfPreference) { break }
         Start-Sleep -Seconds 2
         $remaining = Get-AdskProcesses
     }
-    if ($remaining.Count -gt 0) {
+    if ($remaining.Count -gt 0 -and $WhatIfPreference) {
+        # -WhatIf killed nothing, so "still running" is expected and not a finding
+        Write-Log -Message "  (WhatIf) would terminate $($remaining.Count) process(es)" -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+    } elseif ($remaining.Count -gt 0) {
         $stillRunning = ($remaining | Select-Object -ExpandProperty ProcessName -Unique) -join ', '
         Write-Log -Message "  [ERROR] still running after 3 passes: $stillRunning" -Level Error -AddLogEntryData -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Write-Warning "Still running after 3 attempts: $stillRunning. These hold file handles; a reboot and second run will be required."
@@ -858,7 +1027,9 @@ if ( -not $isElevated ) {
                             $productCode = $package.productCode
                             if ($productCode) {
                                 Write-Log -Message "Processing package: $($package.bundleName) - Product Code: $productCode" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-                                if (Test-MsiProductInstalled -ProductCode $productCode) {
+                                if (-not (Test-ShouldProcess -Target "MSI product $productCode" -Action 'Uninstall')) {
+                                    # -WhatIf: report and move on
+                                } elseif (Test-MsiProductInstalled -ProductCode $productCode) {
                                     # informational only - a missing cached package must not skip the uninstall
                                     $localPackagePath = Get-MsiLocalPackagePath -ProductCode $productCode
                                     if ($null -ne $localPackagePath) {
@@ -941,7 +1112,7 @@ if ( -not $isElevated ) {
     }
 
     $AdODISPath = "C:\Program Files\Autodesk\AdODIS\V1\RemoveODIS.exe"
-    if (Test-Path -Path $AdODISPath) {
+    if ((Test-Path -Path $AdODISPath) -and (Test-ShouldProcess -Target $AdODISPath -Action 'Remove Autodesk ODIS')) {
         Write-Log -Message "Removing Autodesk ODIS..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $AdODISPath -ArgumentList "--mode unattended" -Wait
     } else {
@@ -954,7 +1125,7 @@ if ( -not $isElevated ) {
 
     # Remove Autodesk Access
     $AdskAccessPath = "C:\Program Files\Autodesk\AdODIS\V1\Access\RemoveAccess.exe"
-    if (Test-Path -Path $AdskAccessPath) {
+    if ((Test-Path -Path $AdskAccessPath) -and (Test-ShouldProcess -Target $AdskAccessPath -Action 'Remove Autodesk Access')) {
         Write-Log -Message "Removing Autodesk Access..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $AdskAccessPath -ArgumentList "--mode unattended" -Wait
     } else {
@@ -967,7 +1138,7 @@ if ( -not $isElevated ) {
 
     # run Autodesk Access uninstall helper
     $AdskAccessUninstHelper = "C:\ProgramData\Autodesk\Uninstallers\Autodesk Access\AdskUninstallHelper.exe"
-    if ( Test-Path -Path $AdskAccessUninstHelper ) {
+    if (( Test-Path -Path $AdskAccessUninstHelper ) -and (Test-ShouldProcess -Target $AdskAccessUninstHelper -Action 'Run Autodesk Access uninstall helper')) {
         Write-Log -Message "Running Autodesk Access uninstall helper..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $AdskAccessUninstHelper -Wait
     } else {
@@ -980,7 +1151,7 @@ if ( -not $isElevated ) {
 
     # Remove Autodesk Licensing
     $AdskLicensingPath = "C:\Program Files (x86)\Common Files\Autodesk Shared\AdskLicensing\uninstall.exe"
-    if (Test-Path -Path $AdskLicensingPath) {
+    if ((Test-Path -Path $AdskLicensingPath) -and (Test-ShouldProcess -Target $AdskLicensingPath -Action 'Remove Autodesk Licensing')) {
         Write-Log -Message "Removing Autodesk Licensing..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $AdskLicensingPath -ArgumentList "--mode unattended" -Wait
     } else {
@@ -993,7 +1164,7 @@ if ( -not $isElevated ) {
 
     # Remove Autodesk Identity Manager
     $AdskIdentityManagerPath = "C:\Program Files\Autodesk\AdskIdentityManager\uninstall.exe"
-    if (Test-Path -Path $AdskIdentityManagerPath) {
+    if ((Test-Path -Path $AdskIdentityManagerPath) -and (Test-ShouldProcess -Target $AdskIdentityManagerPath -Action 'Remove Autodesk Identity Manager')) {
         Write-Log -Message "Removing Autodesk Identity Manager..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $AdskIdentityManagerPath -ArgumentList "--mode unattended" -Wait
     } else {
@@ -1081,7 +1252,7 @@ if ( -not $isElevated ) {
         $InstallDirPercentage = 100 / $autodeskFoldersAll.Count
     }
     foreach ($folder in $autodeskFoldersAll) {
-        if (Test-Path -Path $folder) {
+        if ((Test-Path -Path $folder) -and (Test-ShouldProcess -Target $folder -Action 'Delete folder recursively')) {
             Write-Log -Message "Deleting folder $folder" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
             # Deliberately NOT -ErrorAction Stop: that aborts the recursive delete at
             # the first locked/ACL-protected file and leaves the rest behind. Collect
@@ -1184,7 +1355,7 @@ if ( -not $isElevated ) {
 
     # Running Uninstall Helper for Genuine Service
     $adskGenuineServicePath = "C:\ProgramData\Autodesk\Uninstallers\Autodesk Genuine Service\AdskUninstallHelper.exe"
-    if (Test-Path -Path $adskGenuineServicePath) {
+    if ((Test-Path -Path $adskGenuineServicePath) -and (Test-ShouldProcess -Target $adskGenuineServicePath -Action 'Run Genuine Service uninstall helper')) {
         Write-Log -Message "Running Uninstall Helper for Autodesk Genuine Service..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $adskGenuineServicePath -Wait -NoNewWindow -ea SilentlyContinue
         Get-Process -Name "message_router" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -1198,7 +1369,7 @@ if ( -not $isElevated ) {
 
     # Running Uninstall Helper for Autodesk Identity Manager Component
     $adskIdentityManagerComponentPath = "C:\ProgramData\Autodesk\Uninstallers\Autodesk Identity Manager Component\AdskUninstallHelper.exe"
-    if (Test-Path -Path $adskIdentityManagerComponentPath) {
+    if ((Test-Path -Path $adskIdentityManagerComponentPath) -and (Test-ShouldProcess -Target $adskIdentityManagerComponentPath -Action 'Run Identity Manager Component helper')) {
         Write-Log -Message "Running Uninstall Helper for Autodesk Identity Manager Component..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $adskIdentityManagerComponentPath -Wait -NoNewWindow -ea SilentlyContinue
         Get-Process -Name "message_router" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -1212,7 +1383,7 @@ if ( -not $isElevated ) {
 
     # Running Uninstall Helper for Autodesk Installer
     $adskInstallerPath = "C:\ProgramData\Autodesk\Uninstallers\Autodesk Installer\AdskUninstallHelper.exe"
-    if (Test-Path -Path $adskInstallerPath) {
+    if ((Test-Path -Path $adskInstallerPath) -and (Test-ShouldProcess -Target $adskInstallerPath -Action 'Run Autodesk Installer helper')) {
         Write-Log -Message "Running Uninstall Helper for Autodesk Installer..." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         Start-Process -FilePath $adskInstallerPath -Wait -NoNewWindow -ea SilentlyContinue
         Get-Process -Name "message_router" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -1240,7 +1411,7 @@ if ( -not $isElevated ) {
     $RegistryHklmHkuPercentage = 25/3 / ($autodeskRegistryKeys.Count + ($userProfiles.Count * $userRegSuffixes.Count))
     Write-Progress -Activity "Post Uninstall: Registry Cleanup" -Status "$([math]::Round($RegistryTotalProgressPercentage, 2))% Complete:" -PercentComplete $RegistryTotalProgressPercentage -Id 3
     foreach ($key in $autodeskRegistryKeys) {
-        if (Test-Path -Path $key) {
+        if ((Test-Path -Path $key) -and (Test-ShouldProcess -Target $key -Action 'Delete registry key')) {
             Write-Log -Message "Deleting registry key $key" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
             Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1255,7 +1426,7 @@ if ( -not $isElevated ) {
             # PSChildName is the bare SID - without the "HKU:\" prefix Test-Path
             # resolves against the current (filesystem) location and never matches
             $autodeskKey = "HKU:\$($userProfile.PSChildName)\$userRegSuffix"
-            if (Test-Path -Path $autodeskKey) {
+            if ((Test-Path -Path $autodeskKey) -and (Test-ShouldProcess -Target $autodeskKey -Action 'Delete registry key')) {
                 Write-Log -Message "Deleting registry key $autodeskKey" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
                 Remove-Item -Path $autodeskKey -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -1338,7 +1509,7 @@ if ( -not $isElevated ) {
                         }
                     }
                 }
-                if ($shouldRemove) {
+                if ($shouldRemove -and (Test-ShouldProcess -Target $subkeyPath -Action 'Delete registry key')) {
                     Remove-Item -Path $subkeyPath -Recurse -Force -ErrorAction SilentlyContinue
                     Write-Log -Message "Removed registry key $subkeyPath" -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
                 }
@@ -1446,6 +1617,19 @@ if ( -not $isElevated ) {
     Write-Host "It is recommended to run this script a second time after the restart to ensure all Autodesk products are removed." -ForegroundColor Yellow
     Wait-ForUser
     if ($script:Interactive -and $notification) { $notification.Dispose() }
+
+    # -ForceRestart: restart without asking, whether interactive or not. Checked
+    # before the interactive branch so it works in unattended deployments, where
+    # the deferred boot-time cleanup should complete straight away.
+    if ($ForceRestart) {
+        Write-Log -Message "-ForceRestart specified: restarting the computer now." -Level Warning -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
+        Write-Host "`r`nRestarting now (-ForceRestart)..." -ForegroundColor Yellow
+        if (Test-ShouldProcess -Target $env:COMPUTERNAME -Action 'Restart computer') {
+            Restart-Computer -Force
+        }
+        exit $script:ExitCode
+    }
+
     if (-not $script:Interactive -or $NoRestart) {
         Write-Log -Message "Non-interactive or -NoRestart: skipping the restart prompt." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
         if ($script:RebootRequired) {
@@ -1456,7 +1640,9 @@ if ( -not $isElevated ) {
     Read-Host -Prompt "`r`nWould you like to restart your computer now? (Y/N)" | ForEach-Object {
         if ($_ -eq "y") {
             Write-Log -Message "Restarting the computer as per user request." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
-            Restart-Computer -Force
+            if (Test-ShouldProcess -Target $env:COMPUTERNAME -Action 'Restart computer') {
+                Restart-Computer -Force
+            }
         } elseif($_ -eq "n") {
             Write-Log -Message "User chose not to restart the computer." -Component "AutoDeskCleanRemove" -LogFile $MainLogFile
             Write-Host "Please restart your computer manually to complete the uninstallation process."
