@@ -12,7 +12,7 @@
 RootModule = '.\RepairSystem.psm1'
 
 # Version number of this module.
-ModuleVersion = '3.1'
+ModuleVersion = '1.7'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()

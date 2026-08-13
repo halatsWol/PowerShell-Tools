@@ -1,20 +1,19 @@
-Easy installer for PowerShell-Tools v1.5
+Easy installer for PowerShell-Tools v1.5.1
 
 This .exe-installer will install the following Modules:
 
-- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/Repair-System) (v1.6)
-- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/TempDataCleanup) (v1.6)
-- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/Shortcuts) (v1.0)
-- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5/modules/CredentialHandler) (v1.0)
+- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5.1/modules/Repair-System) (v1.7)
+- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5.1/modules/TempDataCleanup) (v1.6)
+- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5.1/modules/Shortcuts) (v1.0)
+- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.5.1/modules/CredentialHandler) (v1.0)
 
 # Change Log:
 
 
-- `Repair System`: added structured Exit Code system (`$LASTEXITCODE` 0/1/2 + detailed per-step exit code) and `-AnalyzeExitCode` to decode it
-- `Repair System`: result object with `ExitCode`, `DetailedExitCode`, `ComputerName`, `LogPath`, `Actions`, `Analysis` — suppressed from default display, accessible via `$RepairSystemResult` global or property access
-- `Repair System`: safer, more thorough service handling and CCM Repair logic
-- `TempDataCleanup`: parallelized folder cleanup with background jobs to reduce total cleanup time
-
+- `Repair System`: fixed fast, successful DISM/SFC steps (notably `AnalyzeComponentStore`) being mislabelled as "terminated externally", which silently skipped Component Store cleanup while still reporting success
+- `Repair System`: steps that were requested but legitimately did not run now report `Skipped (not needed)` instead of `Success`
+- `Repair System`: detailed exit-code step positions reordered to match execution order (DISM before SFC)
+- `Repair System`: out-of-band exit values now shown as `-2`/`-3`/`-4` instead of their unsigned 32-bit form
 
 
 
@@ -24,33 +23,12 @@ This .exe-installer will install the following Modules:
 
 
 
-#### New Features:
-
-- a consolidated master repair log (`SystemRepair_<PC>_<date>.log`) in CMTrace-compatible format is now created; individual step logs are embedded into it and deleted after embedding (unless `-KeepLogs`)
-- added a structured Exit Code system: `$LASTEXITCODE` is now a conventional `0`/`1`/`2` result suitable for scripting/CI, while the full per-step detail is printed to console as `Detailed Exit Code: <code>`
-- **`-AnalyzeExitCode`:** decodes a previously produced (detailed) exit code into a human-readable, per-step breakdown. Cannot be combined with any other parameter and never performs any repair actions. Value `0` for non-Startup steps is noted as ambiguous — success, not requested, or skipped cannot be distinguished without the original run context.
-- **Result object:** `Repair-System` now returns a `RepairSystem.Result` object, suppressed from default display. Properties: `ExitCode`, `DetailedExitCode`, `ComputerName`, `LogPath`, `Actions` (which steps were requested), `Analysis` (per-step `Position`/`Label`/`Value`/`Status`). Access via `$r = Repair-System`, `(Repair-System).Property`, or `$RepairSystemResult` after any run.
-- **`$global:RepairSystemResult`:** stores the last result object for post-run access without assignment.
-
 #### Fixes:
 
-- SCCM Client Action triggering in `Repair-CCM` now has per-action error handling; a single failed trigger no longer aborts the remaining actions
-- step log writes (e.g. timeout/kill messages) now retry with a short back-off when the log file is locked, preventing lost entries when DISM/SFC still holds the file handle at termination time
-- safer service stop/restart handling (`Stop-ServiceSafely`): services are stopped gracefully first, with a forced fallback (including killing the underlying process) only if they don't stop in time, reducing the risk of issues or hanging tasks due to processes not stopping when stopping Windows Update/BITS/CCM services during cleanup
+- **Fast, successful DISM/SFC steps are no longer mislabelled as terminated.** A process that exits cleanly (code `0`) is now trusted no matter how quickly it finishes. Previously *any* completion in under 30 seconds — which `DISM /Online /Cleanup-Image /AnalyzeComponentStore` routinely does — was recorded as `-3` ("terminated externally"). That false result made the `StartComponentCleanup` gate fail, so Component Store cleanup was silently skipped even when it was recommended, yet the step still reported `Success`. The sub-30-second suspicion now applies only to *non-zero* exits.
+- **"Requested but not executed" is no longer reported as success.** Conditional DISM steps that a run requests but legitimately skips — `RestoreHealth` when `ScanHealth` finds no corruption, `StartComponentCleanup` when `AnalyzeComponentStore` recommends none — now report `Skipped (not needed)` (a dedicated `-4` value) instead of `Success`. It is not counted as a failure, so a healthy run still exits `0`.
 
 #### Changes:
 
-
-- CBS/DISM log zip now runs as a background job starting immediately after the last SFC/DISM step, overlapping with optional SCCM/WU/CCM steps
-- `Repair-CCM`: now also clears the SCCM cache and triggers the standard SCCM Client Action schedules (Hardware/Software Inventory, Discovery Data, Machine Policy, Software Updates Scan/Deployment Evaluation, etc.) after the repair, and logs each step to a dedicated CCM repair log
-- remote step execution (SFC/DISM/SCCM/Windows Update/CCM) now shares a single connection-loss handling path (`Invoke-RemoteStep` / `New-RemoteFunctionScriptBlock`), so a lost remote connection is reported consistently for whichever step it occurs in
-
-### TempDataCleanup
-
-#### Changes:
-
-- folder cleanup (user/system temp folders, reporting directories, CCM cache) now runs as parallel background jobs instead of sequentially, and the user/system cleanup phases run concurrently, reducing total cleanup time on profiles/systems with many target folders
-
-
-
-
+- **Detailed exit-code positions now follow execution order.** Steps are numbered in the order they actually run: DISM ScanHealth / RestoreHealth / AnalyzeComponentStore / StartComponentCleanup = positions 1–4, SFC = position 5 (previously SFC was position 1 and the DISM steps were 2–5). Heads-up: this changes the meaning of the packed `DetailedExitCode` string, so a code saved from an earlier version decodes to different steps under 1.7 (`-AnalyzeExitCode` on an old code will mis-attribute them). `ModuleVersion` 1.6 → 1.7.
+- **Out-of-band exit values are shown as small signed numbers.** The special values now display as `-2` (timed out), `-3` (terminated externally) and `-4` (skipped / not needed) in the result object's `Analysis` and in `-AnalyzeExitCode` output, instead of their unsigned 32-bit form (`4294967294`/`4294967293`/`4294967292`). The packed `DetailedExitCode` string itself is unchanged (still two's-complement hex).
