@@ -161,14 +161,14 @@ OUTPUT
         $r.ComputerName         # target device
         $r.LogPath              # full path to master log ($null for pre-log early exits)
         $r.Actions              # PSCustomObject — which steps were requested (bool per step):
-                                #   SFC, DISMScanHealth, DISMRestoreHealth,
-                                #   DISMAnalyzeComponentStore, DISMComponentCleanup,
+                                #   DISMScanHealth, DISMRestoreHealth,
+                                #   DISMAnalyzeComponentStore, DISMComponentCleanup, SFC,
                                 #   SCCMCleanup, WindowsUpdateCleanup, RepairCCM
         $r.Analysis             # array of per-step objects:
                                 #   Position, Label, Value, Status
-                                #   Status: Success | Not requested | Skipped (connection lost) |
-                                #           Success (restart required) | Timed out |
-                                #           Terminated externally | <known-code description>
+                                #   Status: Success | Not requested | Skipped (not needed) |
+                                #           Skipped (connection lost) | Success (restart required) |
+                                #           Timed out | Terminated externally | <known-code description>
 
     The last result is also stored in $global:RepairSystemResult after every run.
 
@@ -193,14 +193,14 @@ EXIT CODES
     real return value (DISM/SFC's own exit code, or the step's own small result code). A fully
     successful run collapses to "0000000000" (ten '0' characters).
 
-    Step positions:
+    Step positions follow the order the steps actually run in (DISM before SFC):
         0 = Startup / Pre-Flight Checks (parameter/network/WinRM/elevation/config errors, or
             connection-lost mid-run)
-        1 = SFC /scannow
-        2 = DISM ScanHealth
-        3 = DISM RestoreHealth
-        4 = DISM AnalyzeComponentStore
-        5 = DISM StartComponentCleanup
+        1 = DISM ScanHealth
+        2 = DISM RestoreHealth
+        3 = DISM AnalyzeComponentStore
+        4 = DISM StartComponentCleanup
+        5 = SFC /scannow
         6 = SCCM Cleanup
         7 = Windows Update Cleanup
         8 = Repair CCM
@@ -208,13 +208,23 @@ EXIT CODES
 
     If a step was not requested, or was skipped because the remote connection was already lost, its
     field is 0. A field value of 5 means the step was requested but skipped because the remote
-    connection was lost while/after the previous step ran.
+    connection was lost while/after the previous step ran. A field value of -4 means the step was
+    requested but deliberately did not run because it was not necessary (RestoreHealth when
+    ScanHealth finds no corruption; StartComponentCleanup when AnalyzeComponentStore recommends none)
+    or because a prerequisite step did not complete - reported as "Skipped (not needed)" and not
+    counted as a failure.
 
-    For the SFC and DISM steps (positions 1-5), a raw process exit code is only trusted if the
-    process actually had a fair chance to run: if Repair-System itself killed it for exceeding its
-    time budget, that field reads 4294967294 ("timed out"); if it disappeared in well under 30
-    seconds without Repair-System killing it, that field reads 4294967293 ("likely terminated
-    externally, e.g. via Task Manager; its own exit code could not be trusted").
+    For the DISM and SFC steps (positions 1-5), a raw process exit code is only trusted if it is a
+    clean success or the process had a fair chance to run. A clean exit (code 0) is always trusted,
+    however quickly it arrives - some steps (e.g. AnalyzeComponentStore) legitimately finish in
+    seconds. If Repair-System itself killed it for exceeding its time budget, that field reads -2
+    ("timed out"); if it exited on its own with a NON-ZERO code in well under 30 seconds, that field
+    reads -3 ("likely terminated externally, e.g. via Task Manager; its own exit code could not be
+    trusted").
+
+    The out-of-band values -2, -3 and -4 are shown as these small signed numbers in the result
+    object and in -AnalyzeExitCode output; inside the packed detailed code string they appear as the
+    32-bit two's-complement hex fields FFFFFFFE, FFFFFFFD and FFFFFFFC.
 
     Run `Repair-System -AnalyzeExitCode <code>` to get a readable explanation of any code produced
     by a previous run.

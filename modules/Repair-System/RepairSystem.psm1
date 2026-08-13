@@ -181,11 +181,11 @@ Used both when building the composite code and when decoding it via -AnalyzeExit
 #>
 $script:RepairSystemSteps = [ordered]@{
     0 = @{ Key = 'Startup';                   Label = 'Startup / Pre-Flight Checks' }
-    1 = @{ Key = 'SFC';                       Label = 'SFC /scannow' }
-    2 = @{ Key = 'DISMScanHealth';            Label = 'DISM /Online /Cleanup-Image /ScanHealth' }
-    3 = @{ Key = 'DISMRestoreHealth';         Label = 'DISM /Online /Cleanup-Image /RestoreHealth' }
-    4 = @{ Key = 'DISMAnalyzeComponentStore'; Label = 'DISM /Online /Cleanup-Image /AnalyzeComponentStore' }
-    5 = @{ Key = 'DISMComponentCleanup';      Label = 'DISM /Online /Cleanup-Image /StartComponentCleanup' }
+    1 = @{ Key = 'DISMScanHealth';            Label = 'DISM /Online /Cleanup-Image /ScanHealth' }
+    2 = @{ Key = 'DISMRestoreHealth';         Label = 'DISM /Online /Cleanup-Image /RestoreHealth' }
+    3 = @{ Key = 'DISMAnalyzeComponentStore'; Label = 'DISM /Online /Cleanup-Image /AnalyzeComponentStore' }
+    4 = @{ Key = 'DISMComponentCleanup';      Label = 'DISM /Online /Cleanup-Image /StartComponentCleanup' }
+    5 = @{ Key = 'SFC';                       Label = 'SFC /scannow' }
     6 = @{ Key = 'SCCMCleanup';               Label = 'SCCM Cache / SoftwareDistribution Cleanup' }
     7 = @{ Key = 'WindowsUpdateCleanup';      Label = 'Windows Update Cleanup' }
     8 = @{ Key = 'RepairCCM';                 Label = 'CCM Client Repair' }
@@ -204,8 +204,9 @@ $script:RepairSystemKnownCodes = @{
         '87'         = 'DISM: The parameter is incorrect (ERROR_INVALID_PARAMETER).'
         '1726'       = 'DISM: The remote procedure call failed.'
         '3010'       = 'DISM/SFC: Success, but a restart is required to finish applying changes.'
-        '4294967294' = 'Repair-System terminated the process because it exceeded its maximum allowed run time (timeout). Restarting the device and running the step again is recommended.'
-        '4294967293' = 'The process ended almost immediately, well before Repair-System killed it for a timeout. It was most likely closed by something else (e.g. Task Manager, a crash, a forced shutdown) before it could finish, so its own exit code could not be trusted and was not used.'
+        '-2' = 'Repair-System terminated the process because it exceeded its maximum allowed run time (timeout). Restarting the device and running the step again is recommended.'
+        '-3' = 'The process ended almost immediately, well before Repair-System killed it for a timeout. It was most likely closed by something else (e.g. Task Manager, a crash, a forced shutdown) before it could finish, so its own exit code could not be trusted and was not used.'
+        '-4' = 'The step was requested but did not run because it was not necessary (for DISM RestoreHealth, ScanHealth reported no corruption; for DISM StartComponentCleanup, AnalyzeComponentStore did not recommend a cleanup) or because a required prior step did not complete. No changes were made, and this is not an error.'
     }
     Startup = @{
         '0' = 'Startup completed successfully.'
@@ -233,9 +234,20 @@ $script:RepairSystemProcessSentinel = @{
 }
 
 # Below this, a finished process is assumed to have had a real chance to do its job; below it,
-# an unforced exit is treated as suspicious. DISM/SFC scans realistically take much longer than
-# this, so a legitimate sub-30-second completion is not expected in normal use.
+# an unforced NON-ZERO exit is treated as suspicious (a clean exit code 0 is always trusted -
+# see Get-RepairSystemProcessResult). DISM/SFC repairs realistically take much longer than this,
+# but read-only steps such as AnalyzeComponentStore can legitimately finish in seconds, which is
+# exactly why a fast SUCCESS must never be mistaken for an external termination.
 $script:RepairSystemMinPlausibleDurationSeconds = 30
+
+# Out-of-band value recorded for a step that WAS requested but deliberately did not run because
+# a precondition was not met (DISM RestoreHealth when ScanHealth finds no corruption, DISM
+# StartComponentCleanup when AnalyzeComponentStore recommends none, or a conditional step whose
+# prerequisite step failed). Distinct from 0 - which for a requested step would read as a genuine
+# success - so "requested but not executed" is never misreported as "ran and succeeded". Sits in
+# the same reserved top-of-uint32 band as the process sentinels and is treated as a non-problem
+# by Get-RepairSystemExitCodeSeverity.
+$script:RepairSystemNotExecutedCode = -4 # 0xFFFFFFFC / 4294967292 as uint32
 
 function Get-RepairSystemProcessResult {
     <#
@@ -262,6 +274,16 @@ function Get-RepairSystemProcessResult {
     # session via New-RemoteFunctionScriptBlock (script-scope variables don't cross the wire).
     if ($KilledByTimeout) { return -2 }   # $script:RepairSystemProcessSentinel.TimedOut
 
+    # A process ended by something other than Repair-System (Task Manager, taskkill /F, a crash,
+    # a forced shutdown) is torn down via TerminateProcess and cannot report a clean result -
+    # DISM and SFC only return exit code 0 when they actually finished their work. So a 0 exit is
+    # trustworthy no matter how quickly it arrived, and must be believed here: some steps (notably
+    # AnalyzeComponentStore) legitimately complete in well under the plausibility window below, and
+    # treating that fast success as an external termination is precisely the bug this guards against.
+    if ($Process.ExitCode -eq 0) { return 0 }
+
+    # Only a NON-ZERO exit that arrived implausibly fast is suspicious: too quick for a real
+    # scan/repair to have run and failed on its own, so its exit code can't be trusted.
     $minDur = if ($null -ne $script:RepairSystemMinPlausibleDurationSeconds) { $script:RepairSystemMinPlausibleDurationSeconds } else { 30 }
     if (((Get-Date) - $StartTime).TotalSeconds -lt $minDur) {
         return -3   # $script:RepairSystemProcessSentinel.TerminatedExternally
@@ -305,7 +327,10 @@ function ConvertFrom-RepairSystemExitCode {
     )
     $Code = $Code.Trim()
     $stepCount = $script:RepairSystemSteps.Count
-    $values = [System.Collections.Generic.List[uint32]]::new()
+    # Signed Int32 so the out-of-band sentinels round-trip back to the small negatives they were
+    # stored as (-2/-3/-4) instead of surfacing as their unwieldy uint32 form (4294967294/93/92).
+    # This makes ConvertFrom the true inverse of ConvertTo, which takes a signed [int[]].
+    $values = [System.Collections.Generic.List[int]]::new()
     $pos = 0
 
     for ($i = 0; $i -lt $stepCount; $i++) {
@@ -329,7 +354,7 @@ function ConvertFrom-RepairSystemExitCode {
         $pos++
 
         if ($len -eq 0) {
-            $values.Add([uint32]0)
+            $values.Add(0)
             continue
         }
 
@@ -350,7 +375,9 @@ function ConvertFrom-RepairSystemExitCode {
             }
         }
 
-        $values.Add([Convert]::ToUInt32($hexChunk, 16))
+        # ToInt32 (not ToUInt32) so an 8-hex-digit field with the high bit set decodes to its
+        # signed value (e.g. FFFFFFFC -> -4), the inverse of how ConvertTo encoded it.
+        $values.Add([Convert]::ToInt32($hexChunk, 16))
         $pos += $len
     }
 
@@ -374,13 +401,14 @@ function Get-RepairSystemExitCodeSeverity {
     Boils the detailed per-step codes down to a single conventional process exit code:
     0 = full success, 2 = startup/fatal error (nothing ran), 1 = anything else that
     reported a problem (including a mid-run connection loss, which is degraded/partial
-    rather than a complete failure to start).
+    rather than a complete failure to start). The "requested but not executed" sentinel
+    (-4) is a non-problem outcome (the step simply was not necessary) and does not count.
     #>
     param(
         [Parameter(Mandatory=$true)]
         [int[]]$Codes
     )
-    if (($Codes | Where-Object { $_ -ne 0 }).Count -eq 0) { return 0 }
+    if (($Codes | Where-Object { $_ -ne 0 -and $_ -ne -4 }).Count -eq 0) { return 0 }
     if ($Codes[0] -in 1,2,3,5,6,7) { return 2 }
     return 1
 }
@@ -439,11 +467,11 @@ function Set-RepairSystemExitCode {
     $analysis = Get-RepairSystemStepAnalysis -Code $detailedCode
     if ($null -ne $RequestedSteps -and $RequestedSteps.Count -ge 9) {
         $actions = [PSCustomObject]@{
-            SFC                       = $RequestedSteps[1]
-            DISMScanHealth            = $RequestedSteps[2]
-            DISMRestoreHealth         = $RequestedSteps[3]
-            DISMAnalyzeComponentStore = $RequestedSteps[4]
-            DISMComponentCleanup      = $RequestedSteps[5]
+            DISMScanHealth            = $RequestedSteps[1]
+            DISMRestoreHealth         = $RequestedSteps[2]
+            DISMAnalyzeComponentStore = $RequestedSteps[3]
+            DISMComponentCleanup      = $RequestedSteps[4]
+            SFC                       = $RequestedSteps[5]
             SCCMCleanup               = $RequestedSteps[6]
             WindowsUpdateCleanup      = $RequestedSteps[7]
             RepairCCM                 = $RequestedSteps[8]
@@ -458,11 +486,13 @@ function Set-RepairSystemExitCode {
                     'Success'
                 } elseif ($val -eq 3010) {
                     'Success (restart required)'
+                } elseif ($val -eq -4) {
+                    'Skipped (not needed)'
                 } elseif ($val -eq 5) {
                     'Skipped (connection lost)'
-                } elseif ($val -eq [uint32]4294967294) {
+                } elseif ($val -eq -2) {
                     'Timed out'
-                } elseif ($val -eq [uint32]4294967293) {
+                } elseif ($val -eq -3) {
                     'Terminated externally'
                 } else {
                     $step.Description
@@ -503,7 +533,7 @@ function Write-RepairSystemExitCodeAnalysis {
     }
     $global:LASTEXITCODE = 0
 
-    $isFullSuccess = ($parsed.Values | Where-Object { $_ -ne 0 }).Count -eq 0
+    $isFullSuccess = ($parsed.Values | Where-Object { $_ -ne 0 -and $_ -ne -4 }).Count -eq 0
     Write-Host "Repair-System Exit Code Analysis for: $Code"
     Write-Host $(if ($isFullSuccess) { "Overall: SUCCESS - no errors reported by any step.`r`n" } else { "Overall: One or more steps reported an error or warning.`r`n" })
 
@@ -1550,13 +1580,14 @@ function Repair-System {
         DetailedExitCode [string] Full per-step lossless hex string (e.g. "0000000000").
         ComputerName     [string] Target device the repair ran on.
         LogPath          [string] Full path to the master repair log. $null for early-exit (pre-log) failures.
-        Actions          [PSCustomObject] Which steps were requested: SFC, DISMScanHealth, DISMRestoreHealth,
-                                          DISMAnalyzeComponentStore, DISMComponentCleanup, SCCMCleanup,
+        Actions          [PSCustomObject] Which steps were requested: DISMScanHealth, DISMRestoreHealth,
+                                          DISMAnalyzeComponentStore, DISMComponentCleanup, SFC, SCCMCleanup,
                                           WindowsUpdateCleanup, RepairCCM — each a [bool].
         Analysis         [PSCustomObject[]] Per-step breakdown: Position, Label, Value, Status.
-                                            Status is one of: Success, Not requested, Skipped (connection lost),
-                                            Success (restart required), Timed out, Terminated externally, or the
-                                            step's known-code description for other failures.
+                                            Status is one of: Success, Not requested, Skipped (not needed),
+                                            Skipped (connection lost), Success (restart required), Timed out,
+                                            Terminated externally, or the step's known-code description for
+                                            other failures.
 
     Not emitted by -AnalyzeExitCode (that mode writes to the host and returns nothing).
 
@@ -1662,30 +1693,40 @@ function Repair-System {
     produced detailed code; this mode never performs any repair actions and cannot be combined
     with any other parameter.
 
-    The step positions are as follows:
+    The step positions follow the order the steps actually run in (DISM before SFC):
     Position 0: Startup (parameter/network/WinRM/elevation/config errors), or a connection-lost code if the remote connection was lost mid-execution
-    Position 1: SFC /scannow
-    Position 2: DISM ScanHealth
-    Position 3: DISM RestoreHealth
-    Position 4: DISM AnalyzeComponentStore
-    Position 5: DISM StartComponentCleanup
+    Position 1: DISM ScanHealth
+    Position 2: DISM RestoreHealth
+    Position 3: DISM AnalyzeComponentStore
+    Position 4: DISM StartComponentCleanup
+    Position 5: SFC /scannow
     Position 6: SCCM Cleanup
     Position 7: Windows Update Cleanup
     Position 8: Repair CCM
     Position 9: Zip CBS/DISM Logs
 
-    For the SFC and DISM steps (Positions 1-5) specifically, a raw process exit code is only
-    trusted if the process actually had a fair chance to run. If Repair-System itself killed
-    the process for exceeding its time budget, that field instead reads 4294967294 (a
-    dedicated out-of-band "timed out" value, distinct from any real SFC/DISM exit code). If the
-    process disappeared in well under 30 seconds without Repair-System killing it - implausibly
-    fast for a real scan/repair - that field instead reads 4294967293 ("likely terminated
-    externally, e.g. via Task Manager - its own exit code could not be trusted").
+    For the DISM and SFC steps (Positions 1-5) specifically, a raw process exit code is only
+    trusted if it is either a clean success or the process had a fair chance to run. A clean exit
+    (code 0) is always trusted, however quickly it arrives - some steps (e.g. AnalyzeComponentStore)
+    legitimately finish in seconds. If Repair-System itself killed the process for exceeding its
+    time budget, that field instead reads -2 (a dedicated out-of-band "timed out" value, distinct
+    from any real DISM/SFC exit code). If the process exited on its own with a NON-ZERO code in
+    well under 30 seconds - implausibly fast for a real scan/repair to have failed legitimately -
+    that field instead reads -3 ("likely terminated externally, e.g. via Task Manager - its own
+    exit code could not be trusted").
 
     Except for Position 0, the detailed exit code field is the return value of the corresponding
-    command. If the command was not executed (skipped, or not reached because the remote
-    connection was lost), the field is 0. Only a startup failure causes an immediate exit;
-    all other step failures are recorded but do not interrupt the remaining steps.
+    command. If a step was requested but deliberately did not run because it was not necessary
+    (RestoreHealth when ScanHealth finds no corruption; StartComponentCleanup when
+    AnalyzeComponentStore recommends none) or because a prerequisite step did not complete, the
+    field reads -4 ("requested but not executed" - reported as "Skipped (not needed)", not counted
+    as a failure). If a step was not requested at all, or was not reached because the remote
+    connection was lost, the field is 0. Only a startup failure causes an immediate exit; all
+    other step failures are recorded but do not interrupt the remaining steps.
+
+    These three out-of-band values (-2, -3, -4) are shown as their small signed numbers in the
+    result object's Analysis and in -AnalyzeExitCode output; inside the packed DetailedExitCode
+    string they are the 32-bit two's-complement hex fields FFFFFFFE, FFFFFFFD and FFFFFFFC.
 
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
@@ -1744,17 +1785,17 @@ function Repair-System {
         return
     }
 
-    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0 #Startup, SFC, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SCCM Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
+    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0 #Startup, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SFC, SCCM Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
 
     $ComputerName = $ComputerName.Trim()
     $targetDevice   = $env:COMPUTERNAME
     $requestedSteps = @(
         $true,                                        # [0] Startup - always
-        (-not $noSfc),                                # [1] SFC
-        (-not $noDism),                               # [2] DISM ScanHealth
-        (-not $noDism),                               # [3] DISM RestoreHealth
-        (-not $noDism),                               # [4] DISM AnalyzeComponentStore
-        (-not $noDism -and $IncludeComponentCleanup), # [5] DISM ComponentCleanup
+        (-not $noDism),                               # [1] DISM ScanHealth
+        (-not $noDism),                               # [2] DISM RestoreHealth
+        (-not $noDism),                               # [3] DISM AnalyzeComponentStore
+        (-not $noDism -and $IncludeComponentCleanup), # [4] DISM ComponentCleanup
+        (-not $noSfc),                                # [5] SFC
         $sccmCleanup.IsPresent,                       # [6] SCCM Cleanup
         $WindowsUpdateCleanup.IsPresent,              # [7] WU Cleanup
         $RepairCCM.IsPresent,                         # [8] CCM Repair
@@ -1942,10 +1983,10 @@ function Repair-System {
 
         if (-not $remoteConnectionLost) {
             $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
-            $ExitCode[2]=$dismScanResult
+            $ExitCode[1]=$dismScanResult
             $dismScanResultString = $dismScanResult.ToString()
-        } else { $ExitCode[2]=5 }
-        Write-RepairLog -Message "DISM ScanHealth completed; ExitCode=$($ExitCode[2]);" -Component "DISM-ScanHealth" -LogPath $masterLogPath
+        } else { $ExitCode[1]=5 }
+        Write-RepairLog -Message "DISM ScanHealth completed; ExitCode=$($ExitCode[1]);" -Component "DISM-ScanHealth" -LogPath $masterLogPath
         Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismScanLog -Leaf)" } else { $dismScanLog }) -MasterLogPath $masterLogPath -StepName "DISM-ScanHealth" -Component "DISM-ScanHealth" -Sync
 
         if (-not $remoteConnectionLost) {
@@ -1964,11 +2005,19 @@ function Repair-System {
                         $dismRestoreBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMRestore') -EntryPoint 'Invoke-DISMRestore'
                         $dismRestoreExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $dismRestoreBlock -ArgumentList @($dismRestoreLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM RestoreHealth' -ConnectionLost ([ref]$remoteConnectionLost)
                     } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $ChangeTimeout $Quiet $VerboseOption }
-                    if (-not $remoteConnectionLost) { $ExitCode[3]=$dismRestoreExit } else { $ExitCode[3]=5 }
-                    Write-RepairLog -Message "DISM RestoreHealth completed; ExitCode=$($ExitCode[3]);" -Component "DISM-RestoreHealth" -LogPath $masterLogPath
+                    if (-not $remoteConnectionLost) { $ExitCode[2]=$dismRestoreExit } else { $ExitCode[2]=5 }
+                    Write-RepairLog -Message "DISM RestoreHealth completed; ExitCode=$($ExitCode[2]);" -Component "DISM-RestoreHealth" -LogPath $masterLogPath
                     Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismRestoreLog -Leaf)" } else { $dismRestoreLog }) -MasterLogPath $masterLogPath -StepName "DISM-RestoreHealth" -Component "DISM-RestoreHealth" -Sync
+                } elseif (-not $remoteConnectionLost) {
+                    # ScanHealth reported a healthy store, so RestoreHealth was not necessary. Record
+                    # the requested-but-not-executed sentinel so a step that never ran is not
+                    # misreported as a successful repair.
+                    $ExitCode[2]=$script:RepairSystemNotExecutedCode
+                    Write-RepairLog -Message "DISM RestoreHealth not required (no corruption detected); marked as not executed." -Component "DISM-RestoreHealth" -LogPath $masterLogPath
                 }
             } else {
+                # ScanHealth itself returned an unexpected exit code, so RestoreHealth was not run.
+                if (-not $remoteConnectionLost) { $ExitCode[2]=$script:RepairSystemNotExecutedCode }
                 $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
                 Write-Verbose $message
                 if ($remote) {
@@ -1992,12 +2041,12 @@ function Repair-System {
                     $analyzeExit = Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $analyzeBlock -ArgumentList @($analyzeComponentLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM AnalyzeComponentStore' -ConnectionLost ([ref]$remoteConnectionLost)
                 } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $ChangeTimeout $Quiet $VerboseOption }
 
-                if ($remoteConnectionLost) { $ExitCode[4]=5 }
+                if ($remoteConnectionLost) { $ExitCode[3]=5 }
 
                 if (-not $remoteConnectionLost) {
                     $analyzeExit  = [int]($analyzeExit | Select-Object -Last 1)
-                    $ExitCode[4]  = $analyzeExit
-                    Write-RepairLog -Message "DISM AnalyzeComponentStore completed; ExitCode=$($ExitCode[4]);" -Component "DISM-Analyze" -LogPath $masterLogPath
+                    $ExitCode[3]  = $analyzeExit
+                    Write-RepairLog -Message "DISM AnalyzeComponentStore completed; ExitCode=$($ExitCode[3]);" -Component "DISM-Analyze" -LogPath $masterLogPath
                     Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $analyzeComponentLog -Leaf)" } else { $analyzeComponentLog }) -MasterLogPath $masterLogPath -StepName "DISM-AnalyzeComponentStore" -Component "DISM-Analyze" -Sync
 
                     # Check the output and perform cleanup if recommended
@@ -2017,6 +2066,9 @@ function Repair-System {
                                 $componentCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $componentCleanupBlock -ArgumentList @($componentCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM Component Store Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
                             } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $ChangeTimeout $Quiet $VerboseOption }
                         } elseif (-not $remoteConnectionLost) {
+                            # AnalyzeComponentStore recommended no cleanup, so the step did not run.
+                            # Flag it as requested-but-not-executed rather than leaving 0 (success).
+                            $componentCleanupExit=$script:RepairSystemNotExecutedCode
                             $message = "No component store cleanup was needed on $ComputerName."
                             if($remote) {
                                 Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock {
@@ -2029,14 +2081,16 @@ function Repair-System {
                             }
                         }
 
-                        if (-not $remoteConnectionLost) { $ExitCode[5]=$componentCleanupExit } else { $ExitCode[5]=5 }
+                        if (-not $remoteConnectionLost) { $ExitCode[4]=$componentCleanupExit } else { $ExitCode[4]=5 }
                         if ($analyzeResult) {
-                            Write-RepairLog -Message "DISM ComponentStoreCleanup completed; ExitCode=$($ExitCode[5]);" -Component "DISM-ComponentCleanup" -LogPath $masterLogPath
+                            Write-RepairLog -Message "DISM ComponentStoreCleanup completed; ExitCode=$($ExitCode[4]);" -Component "DISM-ComponentCleanup" -LogPath $masterLogPath
                             Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $componentCleanupLog -Leaf)" } else { $componentCleanupLog }) -MasterLogPath $masterLogPath -StepName "DISM-ComponentStoreCleanup" -Component "DISM-ComponentCleanup" -Sync
                         }
                     } else {
-                        $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeResult) on $ComputerName. Please review the logs."
-                        if ($analyzeResult) { Write-Output $message }
+                        # AnalyzeComponentStore did not complete cleanly, so cleanup could not run.
+                        if (-not $remoteConnectionLost) { $ExitCode[4]=$script:RepairSystemNotExecutedCode }
+                        $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeExit) on $ComputerName. Please review the logs."
+                        Write-Verbose $message
                         Add-Content -Path $componentCleanupLog -Value $message
                     }
                     & $removeStepLog $analyzeComponentLog;  $stepLogPaths.Add($analyzeComponentLog)
@@ -2054,8 +2108,8 @@ function Repair-System {
             $sfcBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-SFC') -EntryPoint 'Invoke-SFC'
             $sfcExitCode= Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $sfcBlock -ArgumentList @($sfcLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'SFC /scannow' -ConnectionLost ([ref]$remoteConnectionLost)
         } else {$sfcExitCode=Invoke-SFC $sfcLog $ChangeTimeout $Quiet $VerboseOption}
-        if (-not $remoteConnectionLost) { $ExitCode[1]=[int]($sfcExitCode | Select-Object -Last 1) } else { $ExitCode[1]=5 }
-        Write-RepairLog -Message "SFC /scannow completed; ExitCode=$($ExitCode[1]);" -Component "SFC" -LogPath $masterLogPath
+        if (-not $remoteConnectionLost) { $ExitCode[5]=[int]($sfcExitCode | Select-Object -Last 1) } else { $ExitCode[5]=5 }
+        Write-RepairLog -Message "SFC /scannow completed; ExitCode=$($ExitCode[5]);" -Component "SFC" -LogPath $masterLogPath
         Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $sfcLog -Leaf)" } else { $sfcLog }) -MasterLogPath $masterLogPath -StepName "SFC" -Component "SFC" -Sync
         & $removeStepLog $sfcLog; $stepLogPaths.Add($sfcLog)
     }

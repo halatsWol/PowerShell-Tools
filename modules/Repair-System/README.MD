@@ -80,24 +80,28 @@ The full, lossless detail behind that digit is printed to the console as `Repair
 
 The detailed code is made up of one field per step, concatenated in a fixed position order (no reordering, no delimiters). Each field starts with a single hex digit (`0`-`8`) giving how many hex digits follow (`0` alone means the step's value is `0`), then those digits (if any) are the step's real return value (DISM/SFC's own exit code, or the step's own small result code), so no detail is lost. Because the length prefix marks where each field ends, no separators are needed, and a fully successful run collapses to `0000000000` (ten `0` characters) instead of a long fixed-width string.
 
+Positions follow the order the steps actually run in (DISM before SFC):
+
 | Position | Step |
 |---|---|
 | 0 | Startup / Pre-Flight Checks (parameter/network/WinRM/elevation/config errors, or connection-lost mid-run) |
-| 1 | SFC /scannow |
-| 2 | DISM ScanHealth |
-| 3 | DISM RestoreHealth |
-| 4 | DISM AnalyzeComponentStore |
-| 5 | DISM StartComponentCleanup |
+| 1 | DISM ScanHealth |
+| 2 | DISM RestoreHealth |
+| 3 | DISM AnalyzeComponentStore |
+| 4 | DISM StartComponentCleanup |
+| 5 | SFC /scannow |
 | 6 | SCCM Cleanup |
 | 7 | Windows Update Cleanup |
 | 8 | Repair CCM |
 | 9 | Zip CBS/DISM Logs |
 
-If a step was not requested, or was skipped because the remote connection was already lost, its field is `0`. A field value of `5` means the step was requested but skipped because the remote connection was lost while/after the previous step ran. Run `Repair-System -AnalyzeExitCode <code>` to get a readable explanation of any code produced by a previous run.
+If a step was not requested, or was skipped because the remote connection was already lost, its field is `0`. A field value of `5` means the step was requested but skipped because the remote connection was lost while/after the previous step ran. A field value of `-4` means the step was requested but deliberately did not run because it was not necessary (RestoreHealth when ScanHealth finds no corruption; StartComponentCleanup when AnalyzeComponentStore recommends none) or because a prerequisite step did not complete - reported as "Skipped (not needed)" and not counted as a failure. Run `Repair-System -AnalyzeExitCode <code>` to get a readable explanation of any code produced by a previous run.
 
-For the SFC and DISM steps (positions 1-5), a raw process exit code is only trusted if the process actually had a fair chance to run: if Repair-System itself killed it for exceeding its time budget, that field reads `4294967294` ("timed out"); if it disappeared in well under 30 seconds without Repair-System killing it - implausibly fast for a real scan/repair - that field reads `4294967293` ("likely terminated externally, e.g. via Task Manager; its own exit code could not be trusted").
+For the DISM and SFC steps (positions 1-5), a raw process exit code is only trusted if it is a clean success or the process had a fair chance to run. A clean exit (code `0`) is always trusted, however quickly it arrives - some steps (e.g. AnalyzeComponentStore) legitimately finish in seconds. If Repair-System itself killed it for exceeding its time budget, that field reads `-2` ("timed out"); if it exited on its own with a NON-ZERO code in well under 30 seconds - implausibly fast for a real scan/repair to have failed legitimately - that field reads `-3` ("likely terminated externally, e.g. via Task Manager; its own exit code could not be trusted").
 
-Example: `0000000000` means every step succeeded; `171100000000` means Startup reported code `7` (conflicting parameters) and SFC reported code `1` (failed), with every other step at `0`.
+The out-of-band values `-2`, `-3` and `-4` are shown as these small signed numbers in the result object and in `-AnalyzeExitCode` output; inside the packed `DetailedExitCode` string they appear as the 32-bit two's-complement hex fields `FFFFFFFE`, `FFFFFFFD` and `FFFFFFFC`.
+
+Example: `0000000000` means every step succeeded; `171100000000` means Startup reported code `7` (conflicting parameters) and DISM ScanHealth (position 1) reported code `1` (failed), with every other step at `0`.
 
 
 ## Notes
