@@ -122,7 +122,7 @@ Example: `0000000000` means every step succeeded; `171100000000` means Startup r
 
 - **Author**: Wolfram Halatschek
 - **Contact**: dev@kMarflow.com
-- **Date**: 2026-06-17
+- **Date**: 2026-08-13
 
 ## Warnings
 
