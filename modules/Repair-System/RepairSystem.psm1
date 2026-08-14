@@ -1029,10 +1029,14 @@ function Invoke-SCCMCleanup {
 
     Write-Host "executing SCCM Cleanup"
     $returnVal=0
-    if (Test-Path -Path "C:\Windows\ccmcache") {
+    # The ConfigMgr client cache is relocatable; read its real location from WMI rather than
+    # assuming C:\Windows\ccmcache (falls back to the default under %windir%).
+    $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
+    if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $env:windir 'ccmcache' }
+    if (Test-Path -Path $ccmCachePath) {
         try{
-            Remove-Item -Path "\\?\C:\Windows\ccmcache\*" -Recurse -Force
-            Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tC:\Windows\ccmcache\ cleaned`r`n"
+            Remove-Item -Path "\\?\$ccmCachePath\*" -Recurse -Force
+            Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$ccmCachePath\ cleaned`r`n"
             $returnVal = 0
         } catch {
             $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
@@ -1379,7 +1383,10 @@ function Repair-CCM {
         # Clear SCCM Cache
         Write-Host "Clearing SCCM Cache..."
         Write-RepairCCMLog "Clearing SCCM Cache..."
-        $CachePath = "C:\Windows\ccmcache\*"
+        # The ConfigMgr client cache is relocatable; read its real location (fall back to %windir%).
+        $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
+        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $env:windir 'ccmcache' }
+        $CachePath = Join-Path $ccmCachePath '*'
         if (Test-Path $CachePath) {
             Remove-Item $CachePath -Recurse -Force -ErrorAction SilentlyContinue
             Write-RepairCCMLog "SCCM Cache cleared."
@@ -1873,7 +1880,7 @@ function Repair-System {
         Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
         $ExitCode[0]=7
         Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-        break
+        return
     }
 
     # Set up paths and file names for logging
@@ -1906,7 +1913,7 @@ function Repair-System {
             Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
             $ExitCode[0]=2
             Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-            break
+            return
         }
 
         if($remoteShareDrive -ne ""){
@@ -1939,7 +1946,7 @@ function Repair-System {
             Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
             $ExitCode[0]=3
             Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-            break
+            return
         }
     }
 
