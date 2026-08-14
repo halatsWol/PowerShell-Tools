@@ -1029,44 +1029,54 @@ function Invoke-SCCMCleanup {
 
     Write-Host "executing SCCM Cleanup"
     $returnVal=0
-    # The ConfigMgr client cache is relocatable; read its real location from WMI rather than
-    # assuming C:\Windows\ccmcache (falls back to the default under %windir%).
-    $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
-    if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $env:windir 'ccmcache' }
-    if (Test-Path -Path $ccmCachePath) {
-        try{
-            Remove-Item -Path "\\?\$ccmCachePath\*" -Recurse -Force
-            Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$ccmCachePath\ cleaned`r`n"
-            $returnVal = 0
-        } catch {
-            $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $sccmCleanupLog -Value $errorMessage
-            $returnVal = 1
+
+    # Resolve the Windows directory from the OS itself - $env:windir can be empty in a stripped
+    # environment, and an empty base is exactly how a cleanup can end up deleting from a drive root.
+    # The result is validated, paths are only built from a validated base, and every deletion target
+    # is re-checked below, so an empty/garbage value can never reach a Remove-Item.
+    $winDir = [Environment]::GetFolderPath('Windows')
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
+    $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
+
+    # Clears a folder's contents child-by-child (\\?\ + -LiteralPath: long-path safe, and no '?'
+    # wildcard footgun). Only ever called on a validated target below.
+    $clearFolder = {
+        param($folder)
+        Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-Item -LiteralPath "\\?\$($_.FullName)" -Recurse -Force -ErrorAction SilentlyContinue
         }
-    } else {
-        $msg = "CCM Cache folder does not exist. No need to delete."
-        Write-Verbose $msg
-        Add-Content -Path $sccmCleanupLog -Value $msg
-        $returnVal = 0
     }
 
-    if (Test-Path -Path "C:\Windows\SoftwareDistribution\Download") {
-        try{
-            Remove-Item -Path "\\?\C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force
-            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tC:\Windows\SoftwareDistribution\Download\ cleaned`r`n"
-            $returnVal = 0
-        } catch {
-            $errorMessage = "An error occurred while Cleaning SoftwareDistribution\Download: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $sccmCleanupLog -Value $errorMessage
-            $returnVal = 1
-        }
+    # ConfigMgr client cache (relocatable): read the real path from WMI, and only act on an absolute
+    # path whose leaf is literally 'ccmcache' and that exists - so an empty/garbage value is skipped,
+    # never turned into a root-level delete.
+    $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
+    if ([string]::IsNullOrWhiteSpace($ccmCachePath) -and $winDirValid) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
+    if ((-not [string]::IsNullOrWhiteSpace($ccmCachePath)) -and ($ccmCachePath -match '^[A-Za-z]:\\[^\\]') -and ((Split-Path $ccmCachePath -Leaf) -ieq 'ccmcache') -and (Test-Path -LiteralPath $ccmCachePath -PathType Container)) {
+        & $clearFolder $ccmCachePath
+        Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$ccmCachePath cleaned`r`n"
     } else {
-        $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
+        $msg = "CCM Cache folder not found or its path could not be trusted ('$ccmCachePath'). Skipping."
         Write-Verbose $msg
         Add-Content -Path $sccmCleanupLog -Value $msg
-        $returnVal = 0
+    }
+
+    # Windows Update download cache - built only from the validated Windows directory.
+    if ($winDirValid) {
+        $sdDownload = Join-Path $winDir 'SoftwareDistribution\Download'
+        if (Test-Path -LiteralPath $sdDownload -PathType Container) {
+            & $clearFolder $sdDownload
+            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$sdDownload cleaned`r`n"
+        } else {
+            $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
+            Write-Verbose $msg
+            Add-Content -Path $sccmCleanupLog -Value $msg
+        }
+    } else {
+        $msg = "Windows directory could not be resolved; skipping SoftwareDistribution\Download cleanup."
+        Write-Warning $msg
+        Add-Content -Path $sccmCleanupLog -Value $msg
     }
     return $returnVal
 }
@@ -1317,7 +1327,14 @@ function Repair-CCM {
         Add-Content -Path $RepairCCMLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$Message"
     }
 
-    $ccmrepairexe="C:\Windows\CCM\ccmrepair.exe"
+    # Resolve the Windows directory from the OS (robust against an empty $env:windir), with a
+    # last-resort default; used only to LOCATE the CCM client and its logs (no deletions here).
+    $winDir = [Environment]::GetFolderPath('Windows')
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
+    if ([string]::IsNullOrWhiteSpace($winDir) -or -not (Test-Path -LiteralPath $winDir -PathType Container)) { $winDir = 'C:\Windows' }
+
+    $ccmrepairexe = Join-Path $winDir 'CCM\ccmrepair.exe'
     $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
 
     if (-not (Test-Path $ccmrepairexe)) {
@@ -1348,11 +1365,24 @@ function Repair-CCM {
         # Run SCCM Client Repair
         Write-Host "Starting CCMRepair... This may take a while (~30min)."
         Write-RepairCCMLog "Starting CCMRepair..."
-        Start-Process -FilePath $ccmrepairexe -Wait -ErrorAction Stop -NoNewWindow
+        # Run with an enforced ceiling so a hung ccmrepair can't block the whole repair run.
+        $ccmRepairMaxMinutes = 45
+        $ccmProc  = Start-Process -FilePath $ccmrepairexe -PassThru -NoNewWindow -ErrorAction Stop
+        $ccmStart = Get-Date
+        while (-not $ccmProc.HasExited) {
+            Start-Sleep -Seconds 15
+            if (((Get-Date) - $ccmStart).TotalMinutes -gt $ccmRepairMaxMinutes) {
+                Write-Warning "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
+                Write-RepairCCMLog "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
+                try { $ccmProc.Kill(); $ccmProc.WaitForExit(30000) } catch {}
+                break
+            }
+        }
+        $ccmProc.WaitForExit()
         Write-RepairCCMLog "CCMRepair process finished."
 
         # Print Repair Result
-        $ccmSetupLogFolder = "C:\Windows\ccmsetup\Logs"
+        $ccmSetupLogFolder = Join-Path $winDir 'ccmsetup\Logs'
         $ccmsetupLogFile="ccmsetup.log"
         if (Test-Path "$ccmSetupLogFolder\$ccmsetupLogFile") {
             $logLines = Get-Content -Path "$ccmSetupLogFolder\$ccmsetupLogFile" -Tail 3
@@ -1383,15 +1413,18 @@ function Repair-CCM {
         # Clear SCCM Cache
         Write-Host "Clearing SCCM Cache..."
         Write-RepairCCMLog "Clearing SCCM Cache..."
-        # The ConfigMgr client cache is relocatable; read its real location (fall back to %windir%).
+        # The ConfigMgr client cache is relocatable; read its real location. Only clear an absolute
+        # path whose leaf is literally 'ccmcache' and that exists - so an empty/garbage value can
+        # never turn into a root-level delete.
         $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
-        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $env:windir 'ccmcache' }
-        $CachePath = Join-Path $ccmCachePath '*'
-        if (Test-Path $CachePath) {
-            Remove-Item $CachePath -Recurse -Force -ErrorAction SilentlyContinue
-            Write-RepairCCMLog "SCCM Cache cleared."
+        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
+        if ((-not [string]::IsNullOrWhiteSpace($ccmCachePath)) -and ($ccmCachePath -match '^[A-Za-z]:\\[^\\]') -and ((Split-Path $ccmCachePath -Leaf) -ieq 'ccmcache') -and (Test-Path -LiteralPath $ccmCachePath -PathType Container)) {
+            Get-ChildItem -LiteralPath $ccmCachePath -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                Remove-Item -LiteralPath "\\?\$($_.FullName)" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            Write-RepairCCMLog "SCCM Cache cleared ($ccmCachePath)."
         } else {
-            Write-RepairCCMLog "SCCM Cache folder does not exist. No need to clear."
+            Write-RepairCCMLog "SCCM Cache folder not found or its path could not be trusted ('$ccmCachePath'). No need to clear."
         }
 
         # Trigger SCCM Cycles
@@ -1447,8 +1480,10 @@ function Start-ZipFileCreation {
     )
 
     try {
-        $cbsLog = "C:\Windows\Logs\CBS\CBS.log"
-        $dismLog = "C:\Windows\Logs\dism\dism.log"
+        $winDir = [Environment]::GetFolderPath('Windows')
+        if ([string]::IsNullOrWhiteSpace($winDir) -or -not (Test-Path -LiteralPath $winDir -PathType Container)) { $winDir = if ($env:windir) { $env:windir } else { 'C:\Windows' } }
+        $cbsLog = Join-Path $winDir 'Logs\CBS\CBS.log'
+        $dismLog = Join-Path $winDir 'Logs\dism\dism.log'
         $filesToZip = @()
 
         # Copy CBS.log to the temporary directory if it exists
