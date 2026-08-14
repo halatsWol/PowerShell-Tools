@@ -1048,12 +1048,28 @@ function Invoke-SCCMCleanup {
         }
     }
 
-    # ConfigMgr client cache (relocatable): read the real path from WMI, and only act on an absolute
-    # path whose leaf is literally 'ccmcache' and that exists - so an empty/garbage value is skipped,
-    # never turned into a root-level delete.
+    # A cache path is only safe to clear if it is absolute, below a drive root, not the Windows
+    # directory or System32, and exists. No folder-name requirement - a relocated cache can be
+    # custom-named (e.g. D:\SCCMCache). An empty/garbage value fails the first checks, so it can
+    # never become a root-level delete.
+    $isSafeCache = {
+        param($p, $win)
+        if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+        $n = $p.TrimEnd('\')
+        if ($n -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
+        if (-not [string]::IsNullOrWhiteSpace($win)) {
+            $w = $win.TrimEnd('\')
+            if (($n -ieq $w) -or ($n -ieq ((Join-Path $w 'System32').TrimEnd('\')))) { return $false }
+        }
+        return (Test-Path -LiteralPath $n -PathType Container)
+    }
+
+    # ConfigMgr client cache (relocatable): WMI is the only reliable source. If it is unavailable
+    # (e.g. a broken client), fall back to the default under the Windows directory - a relocated
+    # cache simply won't be found in that case, which is logged rather than guessed at.
     $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
     if ([string]::IsNullOrWhiteSpace($ccmCachePath) -and $winDirValid) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
-    if ((-not [string]::IsNullOrWhiteSpace($ccmCachePath)) -and ($ccmCachePath -match '^[A-Za-z]:\\[^\\]') -and ((Split-Path $ccmCachePath -Leaf) -ieq 'ccmcache') -and (Test-Path -LiteralPath $ccmCachePath -PathType Container)) {
+    if (& $isSafeCache $ccmCachePath $winDir) {
         & $clearFolder $ccmCachePath
         Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$ccmCachePath cleaned`r`n"
     } else {
@@ -1337,6 +1353,19 @@ function Repair-CCM {
     $ccmrepairexe = Join-Path $winDir 'CCM\ccmrepair.exe'
     $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
 
+    # A cache path is only safe to clear if it is absolute, below a drive root, not the Windows
+    # directory or System32, and exists (no folder-name requirement - a relocated cache can be
+    # custom-named). Guards against an empty/garbage value becoming a root-level delete.
+    $isSafeCache = {
+        param($p, $win)
+        if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+        $n = $p.TrimEnd('\')
+        if ($n -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
+        $w = $win.TrimEnd('\')
+        if (($n -ieq $w) -or ($n -ieq ((Join-Path $w 'System32').TrimEnd('\')))) { return $false }
+        return (Test-Path -LiteralPath $n -PathType Container)
+    }
+
     if (-not (Test-Path $ccmrepairexe)) {
         Write-Host "CCMRepair executable not found."
         Write-RepairCCMLog "CCMRepair executable not found at $ccmrepairexe."
@@ -1352,6 +1381,28 @@ function Repair-CCM {
         Stop-Process -Name SCClient,CcmExec -Force -ErrorAction SilentlyContinue -ErrorVariable stopProcessErrors
         foreach ($stopProcessError in $stopProcessErrors) {
             Write-RepairCCMLog "ERROR: Failed to stop process: $stopProcessError"
+        }
+
+        # If the client is not registered in WMI (root\ccm unreachable), re-register its WMI classes
+        # by recompiling the client MOFs - a broken WMI store otherwise blocks detection and repair.
+        # Done here with CcmExec stopped, before the service is restarted.
+        $ccmDir   = Split-Path $ccmrepairexe -Parent
+        $ccmWmiOk = try { [bool](Get-CimInstance -Namespace 'root\ccm' -ClassName SMS_Client -ErrorAction Stop) } catch { $false }
+        if (-not $ccmWmiOk) {
+            Write-Host "CCM is not registered in WMI; re-registering client MOFs..."
+            Write-RepairCCMLog "CCM not registered in WMI (root\ccm unreachable). Re-registering WMI classes via mofcomp from '$ccmDir'..."
+            if (Test-Path -LiteralPath $ccmDir -PathType Container) {
+                $mofcomp = Join-Path $winDir 'System32\wbem\mofcomp.exe'
+                Get-ChildItem -LiteralPath $ccmDir -Filter '*.mof' -File -ErrorAction SilentlyContinue | ForEach-Object {
+                    & $mofcomp $_.FullName 2>&1 | Out-Null
+                }
+                $ccmWmiOk = try { [bool](Get-CimInstance -Namespace 'root\ccm' -ClassName SMS_Client -ErrorAction Stop) } catch { $false }
+                Write-RepairCCMLog "WMI re-registration attempted; root\ccm accessible now: $ccmWmiOk."
+            } else {
+                Write-RepairCCMLog "CCM directory '$ccmDir' not found; cannot re-register WMI classes."
+            }
+        } else {
+            Write-RepairCCMLog "CCM is registered in WMI (root\ccm accessible)."
         }
 
         $restartServiceErrors = $null
@@ -1413,12 +1464,11 @@ function Repair-CCM {
         # Clear SCCM Cache
         Write-Host "Clearing SCCM Cache..."
         Write-RepairCCMLog "Clearing SCCM Cache..."
-        # The ConfigMgr client cache is relocatable; read its real location. Only clear an absolute
-        # path whose leaf is literally 'ccmcache' and that exists - so an empty/garbage value can
-        # never turn into a root-level delete.
+        # ConfigMgr client cache (relocatable): WMI is the only reliable source; fall back to the
+        # default under the Windows directory. Cleared only if the path passes the safety guard.
         $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
         if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
-        if ((-not [string]::IsNullOrWhiteSpace($ccmCachePath)) -and ($ccmCachePath -match '^[A-Za-z]:\\[^\\]') -and ((Split-Path $ccmCachePath -Leaf) -ieq 'ccmcache') -and (Test-Path -LiteralPath $ccmCachePath -PathType Container)) {
+        if (& $isSafeCache $ccmCachePath $winDir) {
             Get-ChildItem -LiteralPath $ccmCachePath -Force -ErrorAction SilentlyContinue | ForEach-Object {
                 Remove-Item -LiteralPath "\\?\$($_.FullName)" -Recurse -Force -ErrorAction SilentlyContinue
             }
