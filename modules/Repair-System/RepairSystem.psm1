@@ -1127,6 +1127,21 @@ function Remove-PathReliable {
         return $result
     }
 
+    # 0) Safety guard: refuse anything that isn't at least two levels below a drive root (e.g.
+    #    C:\Windows\SoftwareDistribution). This is the last line of defence against an empty/garbage
+    #    caller value - it stops both the immediate delete AND the reboot-time
+    #    PendingFileRenameOperations from ever targeting a drive root or a top-level system folder.
+    $checkPath  = if ($Path -like '\\?\*') { $Path.Substring(4) } else { $Path }
+    $checkPath  = $checkPath.TrimEnd('\')
+    $winDirNorm = ([Environment]::GetFolderPath('Windows')).TrimEnd('\')
+    $sys32Norm  = ([Environment]::GetFolderPath('System')).TrimEnd('\')
+    if (($checkPath -notmatch '^[A-Za-z]:\\[^\\]+\\[^\\]') -or
+        ($winDirNorm -and ($checkPath -ieq $winDirNorm)) -or
+        ($sys32Norm  -and ($checkPath -ieq $sys32Norm))) {
+        $result.Error = "Refused: '$Path' is not a safe deletion target (drive root, Windows directory, or System32)."
+        return $result
+    }
+
     # 1) Best-effort immediate delete - removes everything not locked. The \\?\ prefix covers
     #    >260-char paths, and -LiteralPath avoids the '?' in the prefix being treated as a wildcard.
     $prefixed = if ($Path -like '\\?\*') { $Path } else { "\\?\$Path" }
@@ -1173,12 +1188,17 @@ function Test-DataStoreHealth {
     #>
     param(
         [Parameter(Mandatory=$true)]
-        [string]$LogPath
+        [string]$LogPath,
+        [Parameter(Mandatory=$true)]
+        [string]$WinDir
     )
-    $dataStoreDir = Join-Path $env:windir 'SoftwareDistribution\DataStore'
+    $log  = { param($m) Add-Content -Path $LogPath -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - DataStore: $m" -ErrorAction SilentlyContinue }
+    if ([string]::IsNullOrWhiteSpace($WinDir) -or -not (Test-Path -LiteralPath $WinDir -PathType Container)) {
+        & $log 'Windows directory not provided or invalid - cannot assess DataStore.'; return 'Wipe'
+    }
+    $dataStoreDir = Join-Path $WinDir 'SoftwareDistribution\DataStore'
     $edb  = Join-Path $dataStoreDir 'DataStore.edb'
     $logs = Join-Path $dataStoreDir 'Logs'
-    $log  = { param($m) Add-Content -Path $LogPath -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - DataStore: $m" -ErrorAction SilentlyContinue }
 
     if (-not (Test-Path -LiteralPath $edb)) { & $log 'DataStore.edb not present - nothing to preserve.'; return 'Wipe' }
 
@@ -1287,17 +1307,29 @@ function Invoke-WindowsUpdateCleanup {
     if ($Null -ne (Get-Process CcmExec  -ea SilentlyContinue)) { Get-Process CcmExec  | Stop-Process -Force -ErrorAction SilentlyContinue }
     if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) { Get-Process TSManager | Stop-Process -Force -ErrorAction SilentlyContinue }
 
-    $sdPath   = Join-Path $env:windir 'SoftwareDistribution'
-    $dsPath   = Join-Path $sdPath 'DataStore'
-    $catroot2 = Join-Path $env:windir 'System32\catroot2'
+    # Resolve the Windows directory from the OS (robust against an empty $env:windir) and validate it
+    # before ANY path is built from it - an empty base is how a cleanup ends up deleting from a drive
+    # root. Remove-PathReliable adds a second guard, but paths are only built here when valid.
+    $winDir = [Environment]::GetFolderPath('Windows')
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
+    $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
+    if (-not $winDirValid) {
+        Write-Warning "Windows directory could not be resolved; skipping SoftwareDistribution and catroot2 reset."
+        & $log 'CRITICAL: Windows directory could not be resolved; skipping SoftwareDistribution and catroot2 reset.'
+        $failed = $true
+    }
+    $sdPath   = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution' } else { $null }
+    $dsPath   = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution\DataStore' } else { $null }
+    $catroot2 = if ($winDirValid) { Join-Path $winDir 'System32\catroot2' } else { $null }
 
     # --- SoftwareDistribution: keep update history when the DataStore is healthy, else full wipe ---
-    if (Test-Path -LiteralPath $sdPath) {
+    if ($sdPath -and (Test-Path -LiteralPath $sdPath)) {
         $keepDataStore = $false
         if ($ResetUpdateHistory) {
             & $log 'SoftwareDistribution: -ResetUpdateHistory set - wiping the DataStore as well.'
         } else {
-            $verdict = Test-DataStoreHealth -LogPath $updateCleanupLog
+            $verdict = Test-DataStoreHealth -LogPath $updateCleanupLog -WinDir $winDir
             $keepDataStore = ($verdict -eq 'Keep') -and (Test-Path -LiteralPath $dsPath)
             & $log "SoftwareDistribution: DataStore verdict = $verdict (keep history: $keepDataStore)."
         }
@@ -1325,7 +1357,7 @@ function Invoke-WindowsUpdateCleanup {
     if (Test-Path -Path $doJobs) { Remove-Item -Path $doJobs -Recurse -Force -ErrorAction SilentlyContinue }
 
     # --- catroot2: reset outright (cryptsvc rebuilds it; no history to preserve) -------------------
-    if (Test-Path -LiteralPath $catroot2) {
+    if ($catroot2 -and (Test-Path -LiteralPath $catroot2)) {
         Write-Host "Resetting catroot2..."
         $r = Remove-PathReliable -Path $catroot2
         if ($r.Scheduled) { $deferred = $true }
@@ -1333,8 +1365,10 @@ function Invoke-WindowsUpdateCleanup {
     }
 
     # --- BITS transfer queue: drop stuck transfers by clearing qmgr* ------------------------------
-    $bitsQueue = Join-Path $env:ALLUSERSPROFILE 'Microsoft\Network\Downloader'
-    if (Test-Path -LiteralPath $bitsQueue) {
+    $programData = [Environment]::GetFolderPath('CommonApplicationData')
+    if ([string]::IsNullOrWhiteSpace($programData)) { $programData = $env:ALLUSERSPROFILE }
+    $bitsQueue = if (-not [string]::IsNullOrWhiteSpace($programData)) { Join-Path $programData 'Microsoft\Network\Downloader' } else { $null }
+    if ($bitsQueue -and (Test-Path -LiteralPath $bitsQueue)) {
         Write-Host "Clearing BITS transfer queue..."
         foreach ($q in (Get-ChildItem -LiteralPath $bitsQueue -Filter 'qmgr*' -Force -ErrorAction SilentlyContinue)) {
             $r = Remove-PathReliable -Path $q.FullName
@@ -1344,14 +1378,18 @@ function Invoke-WindowsUpdateCleanup {
     }
 
     # --- sweep any leftover *.bak folders from older versions of this tool -------------------------
-    foreach ($stale in (Get-ChildItem -LiteralPath $env:windir -Filter 'SoftwareDistribution.bak*' -Directory -Force -ErrorAction SilentlyContinue)) {
-        $r = Remove-PathReliable -Path $stale.FullName
-        if ($r.Scheduled) { $deferred = $true }
-    }
-    foreach ($stale in @("$catroot2.bak")) {
-        if (Test-Path -LiteralPath $stale) {
-            $r = Remove-PathReliable -Path $stale
+    if ($winDirValid) {
+        foreach ($stale in (Get-ChildItem -LiteralPath $winDir -Filter 'SoftwareDistribution.bak*' -Directory -Force -ErrorAction SilentlyContinue)) {
+            $r = Remove-PathReliable -Path $stale.FullName
             if ($r.Scheduled) { $deferred = $true }
+        }
+    }
+    if ($catroot2) {
+        foreach ($stale in @("$catroot2.bak")) {
+            if (Test-Path -LiteralPath $stale) {
+                $r = Remove-PathReliable -Path $stale
+                if ($r.Scheduled) { $deferred = $true }
+            }
         }
     }
 
