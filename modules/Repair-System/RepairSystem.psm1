@@ -652,7 +652,7 @@ function Invoke-SFC {
     $sfcLogDir = Split-Path -Path $sfcLog -Parent
     $sfcErrorLog = Join-Path -Path $sfcLogDir -ChildPath "SFC_Error.log"
     $SfcMaxDurationVal = 20 * $ChangeTimeout
-    Write-Host "executing SFC (up to $SfcMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing SFC (up to $SfcMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
         try{
             $SfcMaxDuration = New-TimeSpan -Minutes $SfcMaxDurationVal
             $process = Start-Process -FilePath "sfc" -ArgumentList "/scannow" -RedirectStandardOutput $sfcLog -RedirectStandardError $sfcErrorLog -NoNewWindow -PassThru
@@ -725,7 +725,7 @@ function Invoke-DISMScan {
     $dismScanLogDir = Split-Path -Path $dismScanLog -Parent
     $dismErrorLog = Join-Path -Path $dismScanLogDir -ChildPath "DISM_Error.log"
     $DismMaxDurationVal = 15 * $ChangeTimeout
-    Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/Scanhealth" -RedirectStandardOutput $dismScanLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
@@ -812,7 +812,7 @@ function Invoke-DISMRestore {
     $dismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
 
     $DismMaxDurationVal = 40 * $ChangeTimeout
-    Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/RestoreHealth" -RedirectStandardOutput $dismRestoreLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
@@ -881,7 +881,7 @@ function Invoke-DISMAnalyzeComponentStore {
     $DismErrorLog = Join-Path -Path $DismLogDir -ChildPath "DISM_Error.log"
 
     $DismMaxDurationVal = 5 * $ChangeTimeout
-    Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/AnalyzeComponentStore" -RedirectStandardOutput $analyzeComponentLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
@@ -966,7 +966,7 @@ function Invoke-DISMComponentStoreCleanup {
     $dismLogDir = Split-Path -Path $componentCleanupLog -Parent
     $DismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
     $DismMaxDurationVal = 20 * $ChangeTimeout
-    Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/StartComponentCleanup" -RedirectStandardOutput $componentCleanupLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
@@ -1027,42 +1027,72 @@ function Invoke-SCCMCleanup {
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
 
-    Write-Host "executing SCCM Cleanup"
+    if (-not $Quiet) { Write-Host "executing SCCM Cleanup" }
     $returnVal=0
-    if (Test-Path -Path "C:\Windows\ccmcache") {
-        try{
-            Remove-Item -Path "\\?\C:\Windows\ccmcache\*" -Recurse -Force
-            Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tC:\Windows\ccmcache\ cleaned`r`n"
-            $returnVal = 0
-        } catch {
-            $errorMessage = "An error occurred while performing SCCM Cleanup: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $sccmCleanupLog -Value $errorMessage
-            $returnVal = 1
+
+    # Resolve the Windows directory from the OS itself - $env:windir can be empty in a stripped
+    # environment, and an empty base is exactly how a cleanup can end up deleting from a drive root.
+    # The result is validated, paths are only built from a validated base, and every deletion target
+    # is re-checked below, so an empty/garbage value can never reach a Remove-Item.
+    $winDir = [Environment]::GetFolderPath('Windows')
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
+    $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
+
+    # Clears a folder's contents child-by-child (\\?\ + -LiteralPath: long-path safe, and no '?'
+    # wildcard footgun). Only ever called on a validated target below.
+    $clearFolder = {
+        param($folder)
+        Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-Item -LiteralPath "\\?\$($_.FullName)" -Recurse -Force -ErrorAction SilentlyContinue
         }
-    } else {
-        $msg = "CCM Cache folder does not exist. No need to delete."
-        Write-Verbose $msg
-        Add-Content -Path $sccmCleanupLog -Value $msg
-        $returnVal = 0
     }
 
-    if (Test-Path -Path "C:\Windows\SoftwareDistribution\Download") {
-        try{
-            Remove-Item -Path "\\?\C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force
-            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tC:\Windows\SoftwareDistribution\Download\ cleaned`r`n"
-            $returnVal = 0
-        } catch {
-            $errorMessage = "An error occurred while Cleaning SoftwareDistribution\Download: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $sccmCleanupLog -Value $errorMessage
-            $returnVal = 1
+    # A cache path is only safe to clear if it is absolute, below a drive root, not the Windows
+    # directory or System32, and exists. No folder-name requirement - a relocated cache can be
+    # custom-named (e.g. D:\SCCMCache). An empty/garbage value fails the first checks, so it can
+    # never become a root-level delete.
+    $isSafeCache = {
+        param($p, $win)
+        if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+        $n = $p.TrimEnd('\')
+        if ($n -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
+        if (-not [string]::IsNullOrWhiteSpace($win)) {
+            $w = $win.TrimEnd('\')
+            if (($n -ieq $w) -or ($n -ieq ((Join-Path $w 'System32').TrimEnd('\')))) { return $false }
         }
+        return (Test-Path -LiteralPath $n -PathType Container)
+    }
+
+    # ConfigMgr client cache (relocatable): WMI is the only reliable source. If it is unavailable
+    # (e.g. a broken client), fall back to the default under the Windows directory - a relocated
+    # cache simply won't be found in that case, which is logged rather than guessed at.
+    $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
+    if ([string]::IsNullOrWhiteSpace($ccmCachePath) -and $winDirValid) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
+    if (& $isSafeCache $ccmCachePath $winDir) {
+        & $clearFolder $ccmCachePath
+        Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$ccmCachePath cleaned`r`n"
     } else {
-        $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
+        $msg = "CCM Cache folder not found or its path could not be trusted ('$ccmCachePath'). Skipping."
         Write-Verbose $msg
         Add-Content -Path $sccmCleanupLog -Value $msg
-        $returnVal = 0
+    }
+
+    # Windows Update download cache - built only from the validated Windows directory.
+    if ($winDirValid) {
+        $sdDownload = Join-Path $winDir 'SoftwareDistribution\Download'
+        if (Test-Path -LiteralPath $sdDownload -PathType Container) {
+            & $clearFolder $sdDownload
+            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$sdDownload cleaned`r`n"
+        } else {
+            $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
+            Write-Verbose $msg
+            Add-Content -Path $sccmCleanupLog -Value $msg
+        }
+    } else {
+        $msg = "Windows directory could not be resolved; skipping SoftwareDistribution\Download cleanup."
+        Write-Warning $msg
+        Add-Content -Path $sccmCleanupLog -Value $msg
     }
     return $returnVal
 }
@@ -1313,8 +1343,28 @@ function Repair-CCM {
         Add-Content -Path $RepairCCMLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$Message"
     }
 
-    $ccmrepairexe="C:\Windows\CCM\ccmrepair.exe"
+    # Resolve the Windows directory from the OS (robust against an empty $env:windir), with a
+    # last-resort default; used only to LOCATE the CCM client and its logs (no deletions here).
+    $winDir = [Environment]::GetFolderPath('Windows')
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
+    if ([string]::IsNullOrWhiteSpace($winDir) -or -not (Test-Path -LiteralPath $winDir -PathType Container)) { $winDir = 'C:\Windows' }
+
+    $ccmrepairexe = Join-Path $winDir 'CCM\ccmrepair.exe'
     $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
+
+    # A cache path is only safe to clear if it is absolute, below a drive root, not the Windows
+    # directory or System32, and exists (no folder-name requirement - a relocated cache can be
+    # custom-named). Guards against an empty/garbage value becoming a root-level delete.
+    $isSafeCache = {
+        param($p, $win)
+        if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+        $n = $p.TrimEnd('\')
+        if ($n -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
+        $w = $win.TrimEnd('\')
+        if (($n -ieq $w) -or ($n -ieq ((Join-Path $w 'System32').TrimEnd('\')))) { return $false }
+        return (Test-Path -LiteralPath $n -PathType Container)
+    }
 
     if (-not (Test-Path $ccmrepairexe)) {
         Write-Host "CCMRepair executable not found."
@@ -1324,13 +1374,35 @@ function Repair-CCM {
 
     try {
         # Restart SCCM Client Service
-        Write-Host "Restarting SCCM Service..."
+        if (-not $Quiet) { Write-Host "Restarting SCCM Service..." }
         Write-RepairCCMLog "Restarting SCCM Service..."
 
         $stopProcessErrors = $null
         Stop-Process -Name SCClient,CcmExec -Force -ErrorAction SilentlyContinue -ErrorVariable stopProcessErrors
         foreach ($stopProcessError in $stopProcessErrors) {
             Write-RepairCCMLog "ERROR: Failed to stop process: $stopProcessError"
+        }
+
+        # If the client is not registered in WMI (root\ccm unreachable), re-register its WMI classes
+        # by recompiling the client MOFs - a broken WMI store otherwise blocks detection and repair.
+        # Done here with CcmExec stopped, before the service is restarted.
+        $ccmDir   = Split-Path $ccmrepairexe -Parent
+        $ccmWmiOk = try { [bool](Get-CimInstance -Namespace 'root\ccm' -ClassName SMS_Client -ErrorAction Stop) } catch { $false }
+        if (-not $ccmWmiOk) {
+            if (-not $Quiet) { Write-Host "CCM is not registered in WMI; re-registering client MOFs..." }
+            Write-RepairCCMLog "CCM not registered in WMI (root\ccm unreachable). Re-registering WMI classes via mofcomp from '$ccmDir'..."
+            if (Test-Path -LiteralPath $ccmDir -PathType Container) {
+                $mofcomp = Join-Path $winDir 'System32\wbem\mofcomp.exe'
+                Get-ChildItem -LiteralPath $ccmDir -Filter '*.mof' -File -ErrorAction SilentlyContinue | ForEach-Object {
+                    & $mofcomp $_.FullName 2>&1 | Out-Null
+                }
+                $ccmWmiOk = try { [bool](Get-CimInstance -Namespace 'root\ccm' -ClassName SMS_Client -ErrorAction Stop) } catch { $false }
+                Write-RepairCCMLog "WMI re-registration attempted; root\ccm accessible now: $ccmWmiOk."
+            } else {
+                Write-RepairCCMLog "CCM directory '$ccmDir' not found; cannot re-register WMI classes."
+            }
+        } else {
+            Write-RepairCCMLog "CCM is registered in WMI (root\ccm accessible)."
         }
 
         $restartServiceErrors = $null
@@ -1342,13 +1414,26 @@ function Repair-CCM {
         Start-Sleep -Seconds 10
 
         # Run SCCM Client Repair
-        Write-Host "Starting CCMRepair... This may take a while (~30min)."
+        if (-not $Quiet) { Write-Host "Starting CCMRepair... This may take a while (~30min)." }
         Write-RepairCCMLog "Starting CCMRepair..."
-        Start-Process -FilePath $ccmrepairexe -Wait -ErrorAction Stop -NoNewWindow
+        # Run with an enforced ceiling so a hung ccmrepair can't block the whole repair run.
+        $ccmRepairMaxMinutes = 45
+        $ccmProc  = Start-Process -FilePath $ccmrepairexe -PassThru -NoNewWindow -ErrorAction Stop
+        $ccmStart = Get-Date
+        while (-not $ccmProc.HasExited) {
+            Start-Sleep -Seconds 15
+            if (((Get-Date) - $ccmStart).TotalMinutes -gt $ccmRepairMaxMinutes) {
+                Write-Warning "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
+                Write-RepairCCMLog "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
+                try { $ccmProc.Kill(); $ccmProc.WaitForExit(30000) } catch {}
+                break
+            }
+        }
+        $ccmProc.WaitForExit()
         Write-RepairCCMLog "CCMRepair process finished."
 
         # Print Repair Result
-        $ccmSetupLogFolder = "C:\Windows\ccmsetup\Logs"
+        $ccmSetupLogFolder = Join-Path $winDir 'ccmsetup\Logs'
         $ccmsetupLogFile="ccmsetup.log"
         if (Test-Path "$ccmSetupLogFolder\$ccmsetupLogFile") {
             $logLines = Get-Content -Path "$ccmSetupLogFolder\$ccmsetupLogFile" -Tail 3
@@ -1377,18 +1462,23 @@ function Repair-CCM {
         }
 
         # Clear SCCM Cache
-        Write-Host "Clearing SCCM Cache..."
+        if (-not $Quiet) { Write-Host "Clearing SCCM Cache..." }
         Write-RepairCCMLog "Clearing SCCM Cache..."
-        $CachePath = "C:\Windows\ccmcache\*"
-        if (Test-Path $CachePath) {
-            Remove-Item $CachePath -Recurse -Force -ErrorAction SilentlyContinue
-            Write-RepairCCMLog "SCCM Cache cleared."
+        # ConfigMgr client cache (relocatable): WMI is the only reliable source; fall back to the
+        # default under the Windows directory. Cleared only if the path passes the safety guard.
+        $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
+        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
+        if (& $isSafeCache $ccmCachePath $winDir) {
+            Get-ChildItem -LiteralPath $ccmCachePath -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                Remove-Item -LiteralPath "\\?\$($_.FullName)" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            Write-RepairCCMLog "SCCM Cache cleared ($ccmCachePath)."
         } else {
-            Write-RepairCCMLog "SCCM Cache folder does not exist. No need to clear."
+            Write-RepairCCMLog "SCCM Cache folder not found or its path could not be trusted ('$ccmCachePath'). No need to clear."
         }
 
         # Trigger SCCM Cycles
-        Write-Host "Triggering SCCM Client Actions..."
+        if (-not $Quiet) { Write-Host "Triggering SCCM Client Actions..." }
         Write-RepairCCMLog "Triggering SCCM Client Actions..."
         $SCCMActions = @{
             "Hardware Inventory Cycle"                     = "{00000000-0000-0000-0000-000000000001}"
@@ -1440,8 +1530,10 @@ function Start-ZipFileCreation {
     )
 
     try {
-        $cbsLog = "C:\Windows\Logs\CBS\CBS.log"
-        $dismLog = "C:\Windows\Logs\dism\dism.log"
+        $winDir = [Environment]::GetFolderPath('Windows')
+        if ([string]::IsNullOrWhiteSpace($winDir) -or -not (Test-Path -LiteralPath $winDir -PathType Container)) { $winDir = if ($env:windir) { $env:windir } else { 'C:\Windows' } }
+        $cbsLog = Join-Path $winDir 'Logs\CBS\CBS.log'
+        $dismLog = Join-Path $winDir 'Logs\dism\dism.log'
         $filesToZip = @()
 
         # Copy CBS.log to the temporary directory if it exists
@@ -1873,7 +1965,7 @@ function Repair-System {
         Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
         $ExitCode[0]=7
         Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-        break
+        return
     }
 
     # Set up paths and file names for logging
@@ -1899,14 +1991,20 @@ function Repair-System {
     }
 
     if($remote){
-        # Ping the remote computer to check availability
-        $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
+        # Ping the remote computer to check availability. -Quiet returns $true/$false for a normal
+        # unreachable host, but name-resolution failures still throw with -ErrorAction Stop - catch
+        # those and treat them as unreachable rather than letting the exception escape.
+        try {
+            $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
+        } catch {
+            $pingResult = $false
+        }
 
         if (-not $pingResult) {
             Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
             $ExitCode[0]=2
             Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-            break
+            return
         }
 
         if($remoteShareDrive -ne ""){
@@ -1939,7 +2037,7 @@ function Repair-System {
             Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
             $ExitCode[0]=3
             Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-            break
+            return
         }
     }
 
@@ -2284,7 +2382,7 @@ function Repair-System {
     Write-RepairLog -Message "Log: $masterLogPath;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
 
     Start-Sleep -Seconds 1
-    Write-Host $extmsg
+    if (-not $Quiet) { Write-Host $extmsg }
     Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -LogPath $masterLogPath -RequestedSteps $requestedSteps
 }
 Export-ModuleMember -Function Repair-System, Repair-LocalSystem, Repair-RemoteSystem
