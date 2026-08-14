@@ -652,7 +652,7 @@ function Invoke-SFC {
     $sfcLogDir = Split-Path -Path $sfcLog -Parent
     $sfcErrorLog = Join-Path -Path $sfcLogDir -ChildPath "SFC_Error.log"
     $SfcMaxDurationVal = 20 * $ChangeTimeout
-    Write-Host "executing SFC (up to $SfcMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing SFC (up to $SfcMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
         try{
             $SfcMaxDuration = New-TimeSpan -Minutes $SfcMaxDurationVal
             $process = Start-Process -FilePath "sfc" -ArgumentList "/scannow" -RedirectStandardOutput $sfcLog -RedirectStandardError $sfcErrorLog -NoNewWindow -PassThru
@@ -725,7 +725,7 @@ function Invoke-DISMScan {
     $dismScanLogDir = Split-Path -Path $dismScanLog -Parent
     $dismErrorLog = Join-Path -Path $dismScanLogDir -ChildPath "DISM_Error.log"
     $DismMaxDurationVal = 15 * $ChangeTimeout
-    Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/Scanhealth" -RedirectStandardOutput $dismScanLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
@@ -812,7 +812,7 @@ function Invoke-DISMRestore {
     $dismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
 
     $DismMaxDurationVal = 40 * $ChangeTimeout
-    Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/RestoreHealth" -RedirectStandardOutput $dismRestoreLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
@@ -881,7 +881,7 @@ function Invoke-DISMAnalyzeComponentStore {
     $DismErrorLog = Join-Path -Path $DismLogDir -ChildPath "DISM_Error.log"
 
     $DismMaxDurationVal = 5 * $ChangeTimeout
-    Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/AnalyzeComponentStore" -RedirectStandardOutput $analyzeComponentLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
@@ -966,7 +966,7 @@ function Invoke-DISMComponentStoreCleanup {
     $dismLogDir = Split-Path -Path $componentCleanupLog -Parent
     $DismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
     $DismMaxDurationVal = 20 * $ChangeTimeout
-    Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))"
+    if (-not $Quiet) { Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
     try{
         $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
         $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/StartComponentCleanup" -RedirectStandardOutput $componentCleanupLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
@@ -1027,7 +1027,7 @@ function Invoke-SCCMCleanup {
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
 
-    Write-Host "executing SCCM Cleanup"
+    if (-not $Quiet) { Write-Host "executing SCCM Cleanup" }
     $returnVal=0
 
     # Resolve the Windows directory from the OS itself - $env:windir can be empty in a stripped
@@ -1374,7 +1374,7 @@ function Repair-CCM {
 
     try {
         # Restart SCCM Client Service
-        Write-Host "Restarting SCCM Service..."
+        if (-not $Quiet) { Write-Host "Restarting SCCM Service..." }
         Write-RepairCCMLog "Restarting SCCM Service..."
 
         $stopProcessErrors = $null
@@ -1389,7 +1389,7 @@ function Repair-CCM {
         $ccmDir   = Split-Path $ccmrepairexe -Parent
         $ccmWmiOk = try { [bool](Get-CimInstance -Namespace 'root\ccm' -ClassName SMS_Client -ErrorAction Stop) } catch { $false }
         if (-not $ccmWmiOk) {
-            Write-Host "CCM is not registered in WMI; re-registering client MOFs..."
+            if (-not $Quiet) { Write-Host "CCM is not registered in WMI; re-registering client MOFs..." }
             Write-RepairCCMLog "CCM not registered in WMI (root\ccm unreachable). Re-registering WMI classes via mofcomp from '$ccmDir'..."
             if (Test-Path -LiteralPath $ccmDir -PathType Container) {
                 $mofcomp = Join-Path $winDir 'System32\wbem\mofcomp.exe'
@@ -1414,7 +1414,7 @@ function Repair-CCM {
         Start-Sleep -Seconds 10
 
         # Run SCCM Client Repair
-        Write-Host "Starting CCMRepair... This may take a while (~30min)."
+        if (-not $Quiet) { Write-Host "Starting CCMRepair... This may take a while (~30min)." }
         Write-RepairCCMLog "Starting CCMRepair..."
         # Run with an enforced ceiling so a hung ccmrepair can't block the whole repair run.
         $ccmRepairMaxMinutes = 45
@@ -1462,7 +1462,7 @@ function Repair-CCM {
         }
 
         # Clear SCCM Cache
-        Write-Host "Clearing SCCM Cache..."
+        if (-not $Quiet) { Write-Host "Clearing SCCM Cache..." }
         Write-RepairCCMLog "Clearing SCCM Cache..."
         # ConfigMgr client cache (relocatable): WMI is the only reliable source; fall back to the
         # default under the Windows directory. Cleared only if the path passes the safety guard.
@@ -1478,7 +1478,7 @@ function Repair-CCM {
         }
 
         # Trigger SCCM Cycles
-        Write-Host "Triggering SCCM Client Actions..."
+        if (-not $Quiet) { Write-Host "Triggering SCCM Client Actions..." }
         Write-RepairCCMLog "Triggering SCCM Client Actions..."
         $SCCMActions = @{
             "Hardware Inventory Cycle"                     = "{00000000-0000-0000-0000-000000000001}"
@@ -1991,8 +1991,14 @@ function Repair-System {
     }
 
     if($remote){
-        # Ping the remote computer to check availability
-        $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
+        # Ping the remote computer to check availability. -Quiet returns $true/$false for a normal
+        # unreachable host, but name-resolution failures still throw with -ErrorAction Stop - catch
+        # those and treat them as unreachable rather than letting the exception escape.
+        try {
+            $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
+        } catch {
+            $pingResult = $false
+        }
 
         if (-not $pingResult) {
             Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
@@ -2376,7 +2382,7 @@ function Repair-System {
     Write-RepairLog -Message "Log: $masterLogPath;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
 
     Start-Sleep -Seconds 1
-    Write-Host $extmsg
+    if (-not $Quiet) { Write-Host $extmsg }
     Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -LogPath $masterLogPath -RequestedSteps $requestedSteps
 }
 Export-ModuleMember -Function Repair-System, Repair-LocalSystem, Repair-RemoteSystem
