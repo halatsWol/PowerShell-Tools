@@ -1139,6 +1139,163 @@ function Stop-ServiceSafely {
     }
 }
 
+function Remove-PathReliable {
+    <#
+    Deletes a file or directory as completely as possible right now (native, no external binary,
+    long-path safe via the \\?\ prefix), then schedules whatever is still locked for deletion at the
+    next reboot through the Session Manager's PendingFileRenameOperations - which are processed
+    before any service starts, so a handle held right now no longer matters. Returns an object with
+    Deleted / Scheduled / Error. Self-contained so it survives being shipped to a remote session.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+    $result = [PSCustomObject]@{ Path = $Path; Deleted = $false; Scheduled = $false; Error = $null }
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        $result.Deleted = $true
+        return $result
+    }
+
+    # 0) Safety guard: refuse anything that isn't at least two levels below a drive root (e.g.
+    #    C:\Windows\SoftwareDistribution). This is the last line of defence against an empty/garbage
+    #    caller value - it stops both the immediate delete AND the reboot-time
+    #    PendingFileRenameOperations from ever targeting a drive root or a top-level system folder.
+    $checkPath  = if ($Path -like '\\?\*') { $Path.Substring(4) } else { $Path }
+    $checkPath  = $checkPath.TrimEnd('\')
+    $winDirNorm = ([Environment]::GetFolderPath('Windows')).TrimEnd('\')
+    $sys32Norm  = ([Environment]::GetFolderPath('System')).TrimEnd('\')
+    if (($checkPath -notmatch '^[A-Za-z]:\\[^\\]+\\[^\\]') -or
+        ($winDirNorm -and ($checkPath -ieq $winDirNorm)) -or
+        ($sys32Norm  -and ($checkPath -ieq $sys32Norm))) {
+        $result.Error = "Refused: '$Path' is not a safe deletion target (drive root, Windows directory, or System32)."
+        return $result
+    }
+
+    # 1) Best-effort immediate delete - removes everything not locked. The \\?\ prefix covers
+    #    >260-char paths, and -LiteralPath avoids the '?' in the prefix being treated as a wildcard.
+    $prefixed = if ($Path -like '\\?\*') { $Path } else { "\\?\$Path" }
+    Remove-Item -LiteralPath $prefixed -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $result.Deleted = $true
+        return $result
+    }
+
+    # 2) Whatever survived is locked - schedule the remainder for deletion at next boot. Enumeration
+    #    works on a locked tree (only deletion is blocked); order deepest-first so each directory is
+    #    empty by the time its own entry is processed.
+    try {
+        $targets = New-Object System.Collections.Generic.List[string]
+        @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue) |
+            Sort-Object { $_.FullName.Length } -Descending |
+            ForEach-Object { $targets.Add($_.FullName) }
+        $targets.Add($Path)
+
+        $smKey   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+        $pending = New-Object System.Collections.Generic.List[string]
+        $current = (Get-ItemProperty -Path $smKey -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
+        if ($current) { $pending.AddRange([string[]]$current) }
+        foreach ($t in $targets) {
+            $pending.Add('\??\' + $t)   # NT-namespace source path to remove
+            $pending.Add('')            # empty destination => delete on boot
+        }
+        Set-ItemProperty -Path $smKey -Name PendingFileRenameOperations -Value $pending.ToArray() -Type MultiString
+        $result.Scheduled = $true
+    } catch {
+        $result.Error = $_.Exception.Message
+    }
+    return $result
+}
+
+function Test-DataStoreHealth {
+    <#
+    Health gate for the Windows Update DataStore (an ESE/JET database). Returns 'Keep' when
+    DataStore.edb is - or can be made - consistent, or 'Wipe' when it can't be trusted. Sequence:
+    esentutl /mh (shutdown state) -> /r soft recovery -> /p hard repair -> then a /g integrity pass
+    with a /p retry. All repairs run without prompting: a DataStore this damaged has already lost its
+    history, so there is nothing left to protect. Requires the update services to be stopped first.
+    Self-contained for remote execution.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$LogPath,
+        [Parameter(Mandatory=$true)]
+        [string]$WinDir
+    )
+    $log  = { param($m) Add-Content -Path $LogPath -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - DataStore: $m" -ErrorAction SilentlyContinue }
+    if ([string]::IsNullOrWhiteSpace($WinDir) -or -not (Test-Path -LiteralPath $WinDir -PathType Container)) {
+        & $log 'Windows directory not provided or invalid - cannot assess DataStore.'; return 'Wipe'
+    }
+    $dataStoreDir = Join-Path $WinDir 'SoftwareDistribution\DataStore'
+    $edb  = Join-Path $dataStoreDir 'DataStore.edb'
+    $logs = Join-Path $dataStoreDir 'Logs'
+
+    if (-not (Test-Path -LiteralPath $edb)) { & $log 'DataStore.edb not present - nothing to preserve.'; return 'Wipe' }
+
+    $isClean  = { (( & esentutl.exe /mh "$edb" 2>&1 | Out-String) -match 'State:\s*Clean Shutdown') }
+    $isIntact = { & esentutl.exe /g "$edb" 2>&1 | Out-Null; ($LASTEXITCODE -eq 0) }
+
+    # --- shutdown state + logical recovery --------------------------------------------------------
+    if (& $isClean) {
+        & $log '/mh: Clean Shutdown.'
+    } else {
+        & $log '/mh: Dirty Shutdown - attempting soft recovery (/r).'
+        & esentutl.exe /r edb /l"$logs" /s"$logs" /d"$dataStoreDir" 2>&1 | Out-Null
+        if (& $isClean) {
+            & $log 'Soft recovery (/r) succeeded.'
+        } else {
+            & $log 'Still dirty - attempting hard repair (/p).'
+            & esentutl.exe /p "$edb" 2>&1 | Out-Null
+            if (& $isClean) {
+                & $log 'Hard repair (/p) succeeded.'
+            } else {
+                & $log 'Recovery failed - DataStore will be wiped (skipping /g).'
+                return 'Wipe'
+            }
+        }
+    }
+
+    # --- deep integrity ---------------------------------------------------------------------------
+    & $log 'Running deep integrity check (/g)...'
+    if (& $isIntact) { & $log '/g: integrity OK - keeping DataStore.'; return 'Keep' }
+    & $log '/g: integrity failed - attempting hard repair (/p).'
+    & esentutl.exe /p "$edb" 2>&1 | Out-Null
+    if (& $isIntact) { & $log '/g: OK after repair - keeping DataStore.'; return 'Keep' }
+    & $log '/g: still failing after repair - DataStore will be wiped.'
+    return 'Wipe'
+}
+
+function Invoke-WULegacyRepair {
+    <#
+    Legacy, invasive Windows Update repair actions kept out of the default path: re-registers the
+    update-related COM DLLs, resets the Winsock catalog, and rewrites the security descriptors on the
+    wuauserv/bits services. Only reached after an explicit, already-confirmed -IncludeLegacyRepair
+    opt-in. The Winsock reset requires a reboot to take effect. Self-contained for remote execution.
+    #>
+    param([Parameter(Mandatory=$true)][string]$LogPath)
+    $log = { param($m) Add-Content -Path $LogPath -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - Legacy: $m" -ErrorAction SilentlyContinue }
+
+    $dlls = @(
+        'atl.dll','urlmon.dll','mshtml.dll','shdocvw.dll','browseui.dll','jscript.dll','vbscript.dll',
+        'scrrun.dll','msxml.dll','msxml3.dll','msxml6.dll','actxprxy.dll','softpub.dll','wintrust.dll',
+        'dssenh.dll','rsaenh.dll','gpkcsp.dll','sccbase.dll','slbcsp.dll','cryptdlg.dll','oleaut32.dll',
+        'ole32.dll','shell32.dll','initpki.dll','wuapi.dll','wuaueng.dll','wups.dll','wups2.dll',
+        'wuwebv.dll','wucltux.dll','muweb.dll','qmgr.dll','qmgrprxy.dll'
+    ) | Select-Object -Unique
+    foreach ($d in $dlls) {
+        Start-Process -FilePath 'regsvr32.exe' -ArgumentList '/s', $d -Wait -NoNewWindow -ErrorAction SilentlyContinue
+    }
+    & $log "Re-registered update DLLs (missing ones skipped): $($dlls -join ', ')."
+
+    & netsh winsock reset 2>&1 | Out-Null
+    & $log 'Reset Winsock catalog (effective after reboot).'
+
+    # Well-known default service security descriptors.
+    $sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)'
+    foreach ($svc in @('wuauserv','bits')) { & sc.exe sdset $svc $sddl 2>&1 | Out-Null }
+    & $log 'Reset security descriptors on wuauserv and bits.'
+}
+
 function Invoke-WindowsUpdateCleanup {
     [CmdletBinding()]
     param(
@@ -1153,166 +1310,137 @@ function Invoke-WindowsUpdateCleanup {
         [switch]$Quiet,
 
         [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg
+        [switch]$VerboseArg,
 
+        # Force-wipe the DataStore even when it is healthy (loses update history).
+        [Parameter(Mandatory=$false, Position=4)]
+        [bool]$ResetUpdateHistory = $false,
+
+        # Already-confirmed decision to run the legacy repair (confirmation happens in the caller).
+        [Parameter(Mandatory=$false, Position=5)]
+        [bool]$DoLegacyRepair = $false
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+    $log = { param($m) Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - $m" -ErrorAction SilentlyContinue }
+    $deferred = $false   # any deletion scheduled for reboot
+    $failed   = $false
 
     Write-Host "Starting Windows Update Cleanup..."
-    $servicesStart=@("bits","wuauserv","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
-    $servicesStop=@("wuauserv","bits","appidsvc","cryptsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
-    $softwareDistributionPath = "C:\Windows\SoftwareDistribution"
-    $catroot2Path = "C:\Windows\system32\catroot2"
-    $softwareDistributionBackupPath = "$softwareDistributionPath.bak"
-    $catroot2BackupPath = "$catroot2Path.bak"
-    $softDist = $false
-    $softDistErr=""
-    $cat2= $false
-    $cat2Err=""
-    Stop-ServiceSafely -ServiceName $servicesStop
-    if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
-    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
-    if (Test-Path -Path $softwareDistributionBackupPath) {
-        Write-Verbose "Backup directory exists. Deleting $softwareDistributionBackupPath..."
-        try{
-            Remove-Item -Path "\\?\$softwareDistributionBackupPath" -Recurse -Force -ErrorAction SilentlyContinue
-        } catch {
-            $softDistErr= "Error deleting SoftwareDistribution backup folder: `r`n$_"
-            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
-            Write-Error $softDistErr
-            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
-            return 2
-        }
-    } else {
-        Write-Verbose "Backup directory does not exist. No need to delete."
-    }
+
+    # Update Medic + Update Orchestrator + Delivery Optimization are stopped FIRST so they can't
+    # resurrect the update services we stop next. They are trigger-started, so they are left out of
+    # the restart list - Windows starts them again on demand.
+    $servicesStop  = @("waasmedicsvc","usosvc","dosvc","wuauserv","bits","cryptsvc","appidsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
+    $servicesStart = @("bits","wuauserv","cryptsvc","appidsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
+
     Stop-ServiceSafely -ServiceName $servicesStop -Force
-    if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
-    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
-    if (Test-Path -Path $softwareDistributionPath) {
-        try{
-            Rename-Item -Force -Path $softwareDistributionPath -NewName SoftwareDistribution.bak -ErrorAction Continue
-            $softDist = $true
-        } catch {
-            $softDistErr= "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tError renaming SoftwareDistribution folder: `r`n$_"
-            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$softDistErr"
-            Write-Error $softDistErr
-            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
-            return 1
-        }
+    if ($Null -ne (Get-Process CcmExec  -ea SilentlyContinue)) { Get-Process CcmExec  | Stop-Process -Force -ErrorAction SilentlyContinue }
+    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) { Get-Process TSManager | Stop-Process -Force -ErrorAction SilentlyContinue }
+
+    # Resolve the Windows directory from the OS (robust against an empty $env:windir) and validate it
+    # before ANY path is built from it - an empty base is how a cleanup ends up deleting from a drive
+    # root. Remove-PathReliable adds a second guard, but paths are only built here when valid.
+    $winDir = [Environment]::GetFolderPath('Windows')
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
+    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
+    $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
+    if (-not $winDirValid) {
+        Write-Warning "Windows directory could not be resolved; skipping SoftwareDistribution and catroot2 reset."
+        & $log 'CRITICAL: Windows directory could not be resolved; skipping SoftwareDistribution and catroot2 reset.'
+        $failed = $true
     }
-    if (Test-Path -Path $catroot2BackupPath) {
-        Write-Verbose "Backup directory exists. Deleting $catroot2BackupPath..."
-        try{
-            Remove-Item -Path "\\?\$catroot2BackupPath" -Recurse -Force -ErrorAction SilentlyContinue
-        } catch {
-            $cat2Err= "Error deleting catroot2 backup folder: `r`n$_"
-            Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`t$cat2Err"
-            Write-Error $cat2Err
-            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
-            return 2
+    $sdPath   = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution' } else { $null }
+    $dsPath   = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution\DataStore' } else { $null }
+    $catroot2 = if ($winDirValid) { Join-Path $winDir 'System32\catroot2' } else { $null }
+
+    # --- SoftwareDistribution: keep update history when the DataStore is healthy, else full wipe ---
+    if ($sdPath -and (Test-Path -LiteralPath $sdPath)) {
+        $keepDataStore = $false
+        if ($ResetUpdateHistory) {
+            & $log 'SoftwareDistribution: -ResetUpdateHistory set - wiping the DataStore as well.'
+        } else {
+            $verdict = Test-DataStoreHealth -LogPath $updateCleanupLog -WinDir $winDir
+            $keepDataStore = ($verdict -eq 'Keep') -and (Test-Path -LiteralPath $dsPath)
+            & $log "SoftwareDistribution: DataStore verdict = $verdict (keep history: $keepDataStore)."
+        }
+
+        if ($keepDataStore) {
+            Write-Host "Clearing SoftwareDistribution (keeping update history)..."
+            foreach ($child in (Get-ChildItem -LiteralPath $sdPath -Force -ErrorAction SilentlyContinue)) {
+                if ($child.Name -ieq 'DataStore') { continue }
+                $r = Remove-PathReliable -Path $child.FullName
+                if ($r.Scheduled) { $deferred = $true }
+                if ($r.Error)     { & $log "SoftwareDistribution\$($child.Name): $($r.Error)" }
+            }
+        } else {
+            Write-Host "Resetting SoftwareDistribution..."
+            $r = Remove-PathReliable -Path $sdPath
+            if ($r.Scheduled) { $deferred = $true }
+            if ($r.Error)     { & $log "SoftwareDistribution: $($r.Error)"; $failed = $true }
         }
     } else {
-        Write-Verbose "Backup directory does not exist. No need to delete."
+        & $log 'SoftwareDistribution not present - nothing to reset.'
     }
-    Stop-ServiceSafely -ServiceName $servicesStop -Force
-    if ($Null -ne (Get-Process CcmExec -ea SilentlyContinue)) {Get-Process CcmExec | Stop-Process -Force}
-    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) {Get-Process TSManager| Stop-Process -Force}
-    if (Test-Path -Path $catroot2Path) {
-        try{
-            Rename-Item -Force -Path $catroot2Path -NewName catroot2.bak -ErrorAction Continue
-            $cat2 = $true
-        } catch {
-            $cat2Err= "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n`tError renaming catroot2 folder: `r`n$_"
-            Add-Content -Path $updateCleanupLog -Value "$cat2Err"
-            Write-Error $cat2Err
-            Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
-            return 1
-        }
-    } else {
-        Write-Verbose "catroot2 folder does not exist. No need to rename."
+
+    # Delivery Optimization jobs (cleared by the built-in troubleshooter's reset too).
+    $doJobs = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Jobs'
+    if (Test-Path -Path $doJobs) { Remove-Item -Path $doJobs -Recurse -Force -ErrorAction SilentlyContinue }
+
+    # --- catroot2: reset outright (cryptsvc rebuilds it; no history to preserve) -------------------
+    if ($catroot2 -and (Test-Path -LiteralPath $catroot2)) {
+        Write-Host "Resetting catroot2..."
+        $r = Remove-PathReliable -Path $catroot2
+        if ($r.Scheduled) { $deferred = $true }
+        if ($r.Error)     { & $log "catroot2: $($r.Error)"; $failed = $true }
     }
-    Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service
 
-
-    Write-Host "Starting Diagnostics..."
-    $winDiagMsg="[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`tStarting Diagnostics:"
-    Add-Content -Path $updateCleanupLog -Value "$winDiagMsg"
-    Write-Verbose $winDiagMsg
-    $updtDiagMsg="`t`tWindows Update Troubleshooting..."
-    $bitsDiagMsg="`t`tBITS Troubleshooting..."
-    try {
-        $DiagMaxDurationVal = 15 * $ChangeTimeout
-        $DiagMaxDuration = New-TimeSpan -Minutes $DiagMaxDurationVal
-        Add-Content -Path $updateCleanupLog -Value "$updtDiagMsg"
-        Write-Host "Starting Windows Update Troubleshooting... (up to $DiagMaxDurationVal min, Start: $(Get-Date -Format "HH:mm"))"
-        $job = Start-Job -ScriptBlock {
-            Get-TroubleshootingPack -Path 'C:\Windows\diagnostics\system\WindowsUpdate' | Invoke-TroubleshootingPack -Unattended
+    # --- BITS transfer queue: drop stuck transfers by clearing qmgr* ------------------------------
+    $programData = [Environment]::GetFolderPath('CommonApplicationData')
+    if ([string]::IsNullOrWhiteSpace($programData)) { $programData = $env:ALLUSERSPROFILE }
+    $bitsQueue = if (-not [string]::IsNullOrWhiteSpace($programData)) { Join-Path $programData 'Microsoft\Network\Downloader' } else { $null }
+    if ($bitsQueue -and (Test-Path -LiteralPath $bitsQueue)) {
+        Write-Host "Clearing BITS transfer queue..."
+        foreach ($q in (Get-ChildItem -LiteralPath $bitsQueue -Filter 'qmgr*' -Force -ErrorAction SilentlyContinue)) {
+            $r = Remove-PathReliable -Path $q.FullName
+            if ($r.Scheduled) { $deferred = $true }
+            if ($r.Error)     { & $log "BITS queue $($q.Name): $($r.Error)" }
         }
-        $startTime = Get-Date
+    }
 
-        while ($job.State -eq 'Running') {
-            Start-Sleep -Seconds 5
-            if ((Get-Date) - $startTime -gt $DiagMaxDuration) {
-                Write-Warning "Diagnostics timed out after $DiagMaxDurationVal minutes."
-                Stop-Job -Job $job
+    # --- sweep any leftover *.bak folders from older versions of this tool -------------------------
+    if ($winDirValid) {
+        foreach ($stale in (Get-ChildItem -LiteralPath $winDir -Filter 'SoftwareDistribution.bak*' -Directory -Force -ErrorAction SilentlyContinue)) {
+            $r = Remove-PathReliable -Path $stale.FullName
+            if ($r.Scheduled) { $deferred = $true }
+        }
+    }
+    if ($catroot2) {
+        foreach ($stale in @("$catroot2.bak")) {
+            if (Test-Path -LiteralPath $stale) {
+                $r = Remove-PathReliable -Path $stale
+                if ($r.Scheduled) { $deferred = $true }
             }
         }
-        $jobResult = Receive-Job -Job $job -Wait
-        # write job result to log
-        Add-Content -Path $updateCleanupLog -Value "`t`tDiag Job-State: $($job.State)Result: $jobResult"
-        Remove-Job -Job $job
-    }
-    catch {
-        $updtTrblShootErr="ERROR:`r`n$_"
-        Add-Content -Path $updateCleanupLog -Value "$updtTrblShootErr"
-        Write-Error $updtTrblShootErr
-    }
-    try {
-        $DiagMaxDurationVal = 10 * $ChangeTimeout
-        $DiagMaxDuration = New-TimeSpan -Minutes $DiagMaxDurationVal
-        Add-Content -Path $updateCleanupLog -Value "$bitsDiagMsg"
-        Write-Host "Starting BITS Troubleshooting... (up to $DiagMaxDurationVal min, Start: $(Get-Date -Format "HH:mm"))"
-        $job = Start-Job -ScriptBlock {
-            Get-TroubleshootingPack -Path 'C:\Windows\diagnostics\system\BITS' | Invoke-TroubleshootingPack -Unattended
-        }
-        $startTime = Get-Date
-
-        while ($job.State -eq 'Running') {
-            Start-Sleep -Seconds 5
-            if ((Get-Date) - $startTime -gt $DiagMaxDuration) {
-                Write-Warning "Diagnostics timed out after $DiagMaxDurationVal minutes."
-                Stop-Job -Job $job
-            }
-        }
-        $jobResult = Receive-Job -Job $job -Wait
-        # write job result to log
-        Add-Content -Path $updateCleanupLog -Value "`t`tDiag Job-State: $($job.State)Result: $jobResult"
-        Remove-Job -Job $job
-
-    }
-    catch {
-        $bitsTrblShootErr="`t`tERROR:`r`n$_"
-        Add-Content -Path $updateCleanupLog -Value "$bitsTrblShootErr"
-        Write-Error $bitsTrblShootErr
     }
 
+    # --- optional legacy component repair (already confirmed by the caller) ------------------------
+    if ($DoLegacyRepair) {
+        Write-Host "Performing legacy Windows Update component repair..."
+        Invoke-WULegacyRepair -LogPath $updateCleanupLog
+        $deferred = $true   # Winsock reset needs a reboot to fully apply
+    }
 
-    $successMessage = "Windows Update Cleanup successful."
-    if($softDist){
-        $successMessage += "`r`n[SUCCESS]`tSoftwareDistribution folder has been renamed."
-    } else {
-        $successMessage += "`r`n[STATUS]`tRenaming SoftwareDistribution: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-        if($softDistErr -ne ""){$successMessage += "`r`n[ERROR]`t$softDistErr"}
-    }
-    if($cat2){
-        $successMessage += "`r`n[SUCCESS]`tcatroot2 folder has been renamed."
-    }else {
-        $successMessage += "`r`n[STATUS]`tRenaming catroot2: folder does not exist or is currently used by another process.`r`n`t`tThis may be because it has been renamed before."
-        if($cat2Err -ne ""){$successMessage += "`r`n[ERROR]`t$cat2Err"}
-    }
-    Write-Verbose $successMessage
-    Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$successMessage"
+    # --- restart services -------------------------------------------------------------------------
+    Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service -ErrorAction SilentlyContinue
+
+    $summary = if ($failed) { 'Windows Update Cleanup completed with errors - review the log.' }
+               elseif ($deferred) { 'Windows Update Cleanup complete; some locked items are scheduled for removal on the next reboot.' }
+               else { 'Windows Update Cleanup successful.' }
+    Write-Host $summary
+    & $log $summary
+
+    if ($failed)   { return 1 }
+    if ($deferred) { return 3010 }   # success, restart required
     return 0
 }
 
@@ -1629,8 +1757,10 @@ function Repair-System {
     When specified, deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder.
 
     .PARAMETER WindowsUpdateCleanup
-    When specified, performs Windows Update Cleanup by renaming the SoftwareDistribution and catroot2 folders.
-    This will also run the Windows Update and BITS Troubleshooting Packs.
+    When specified, resets the Windows Update client: stops the update services, clears the SoftwareDistribution
+    folder (keeping the update history / DataStore when it is healthy - see -ResetUpdateHistory), resets catroot2,
+    and clears the BITS transfer queue. Anything held open by a process is scheduled for removal on the next reboot.
+    If any item is deferred to reboot, the step reports code 3010 ("Success (restart required)").
 
     .PARAMETER ChangeTimeout
     Multiplicator
@@ -1658,6 +1788,20 @@ function Repair-System {
 
     .PARAMETER RepairCCM
     When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
+
+    .PARAMETER ResetUpdateHistory
+    Only meaningful with -WindowsUpdateCleanup. By default the Windows Update history (the DataStore database) is
+    kept when it passes an integrity check and only rebuilt if it is corrupt. When -ResetUpdateHistory is specified,
+    the DataStore is always wiped and rebuilt, discarding the update history.
+
+    .PARAMETER IncludeLegacyRepair
+    Only meaningful with -WindowsUpdateCleanup. Additionally performs invasive legacy repairs: re-registering the
+    Windows Update COM DLLs, resetting the Winsock catalog, and rewriting the security descriptors of the
+    wuauserv/bits services. These can affect networking and require a reboot. In an interactive session this prompts
+    for confirmation; combine with -Force to skip the prompt (required to run it in a non-interactive session).
+
+    .PARAMETER Force
+    Skips the confirmation prompt for -IncludeLegacyRepair (and is required to run legacy repair non-interactively).
 
     .PARAMETER AnalyzeExitCode
     Decodes a previously produced Repair-System exit code (see Exit-Codes in .NOTES) into a human-readable, per-step breakdown.
@@ -1867,6 +2011,15 @@ function Repair-System {
         [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [switch]$RepairCCM,
 
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [switch]$ResetUpdateHistory,
+
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [switch]$IncludeLegacyRepair,
+
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [switch]$Force,
+
         [Parameter(Mandatory=$true, ParameterSetName='Analyze')]
         [string]$AnalyzeExitCode
 
@@ -1966,6 +2119,23 @@ function Repair-System {
         $ExitCode[0]=7
         Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
         return
+    }
+
+    # Resolve the legacy-repair opt-in once, up front - so we never prompt in the middle of a long
+    # run, and so a remote target is authorized here on the local console. -Force skips the prompt;
+    # a non-interactive session without -Force skips legacy repair rather than blocking on a prompt.
+    $legacyRepairConfirmed = $false
+    if ($WindowsUpdateCleanup -and $IncludeLegacyRepair) {
+        if ($Force) {
+            $legacyRepairConfirmed = $true
+        } elseif ([Environment]::UserInteractive) {
+            Write-Warning "-IncludeLegacyRepair runs invasive legacy repairs on ${targetDevice}: re-registering Windows Update DLLs, resetting the Winsock catalog, and rewriting the wuauserv/bits service security descriptors. These can affect networking and require a reboot."
+            $answer = Read-Host "Type 'YES' to proceed with legacy repair (anything else skips it)"
+            $legacyRepairConfirmed = ($answer -eq 'YES')
+            if (-not $legacyRepairConfirmed) { Write-Warning "Legacy Windows Update repair skipped." }
+        } else {
+            Write-Warning "-IncludeLegacyRepair requires -Force in a non-interactive session; skipping legacy repair."
+        }
     }
 
     # Set up paths and file names for logging
@@ -2249,12 +2419,15 @@ function Repair-System {
         $updateCleanupExit=0
         Write-RepairLog -Message "Starting Windows Update Cleanup..." -Component "WUCleanup" -LogPath $masterLogPath
         if ($remote) {
-            $updateCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Stop-ServiceSafely', 'Invoke-WindowsUpdateCleanup') -EntryPoint 'Invoke-WindowsUpdateCleanup'
-            $updateCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $updateCleanupBlock -ArgumentList @($updateCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'Windows Update Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup  $updateCleanupLog $ChangeTimeout $Quiet $VerboseOption }
+            $updateCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Stop-ServiceSafely', 'Remove-PathReliable', 'Test-DataStoreHealth', 'Invoke-WULegacyRepair', 'Invoke-WindowsUpdateCleanup') -EntryPoint 'Invoke-WindowsUpdateCleanup'
+            $updateCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $updateCleanupBlock -ArgumentList @($updateCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption, ([bool]$ResetUpdateHistory), $legacyRepairConfirmed) -ComputerName $ComputerName -StepName 'Windows Update Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
+        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup $updateCleanupLog $ChangeTimeout $Quiet $VerboseOption ([bool]$ResetUpdateHistory) $legacyRepairConfirmed }
 
         if (-not $remoteConnectionLost) {
-            if($updateCleanupExit -ne 0){
+            $updateCleanupExit = [int]($updateCleanupExit | Select-Object -Last 1)
+            if ($updateCleanupExit -eq 3010) {
+                Write-Warning "`r`nWindows Update Cleanup on $ComputerName scheduled some locked items for removal on the next reboot. Please restart the device to finish."
+            } elseif ($updateCleanupExit -ne 0) {
                 Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
             }
             $ExitCode[7]=$updateCleanupExit
