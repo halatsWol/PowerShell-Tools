@@ -1483,6 +1483,151 @@ function Start-ZipFileCreation {
     return 0
 }
 
+function Test-DismSfcStepIncomplete {
+    <#
+    Decides whether a DISM or SFC step that actually RAN failed to truly complete - and therefore
+    warrants a reboot re-run. Returns $true when: the step was timed out (-2) or terminated
+    externally (-3); its captured log is missing or empty (it never really started); its log lacks
+    the tool's completion marker (killed mid-run); or the log reports a reboot-pending / could-not-
+    repair condition. The log is read from the path given (a UNC path for a remote target).
+    #>
+    param(
+        [Parameter(Mandatory=$true)] [int]$ResultCode,
+        [Parameter(Mandatory=$true)] [string]$LogPath,
+        [Parameter(Mandatory=$true)] [ValidateSet('SFC','DISM')] [string]$Kind
+    )
+    if ($ResultCode -eq -4) { return $false }          # requested-but-not-executed: did not run, fine
+    if ($ResultCode -eq -2 -or $ResultCode -eq -3) { return $true }   # timed out / terminated externally
+
+    $content = if (Test-Path -LiteralPath $LogPath) { Get-Content -LiteralPath $LogPath -Raw -ErrorAction SilentlyContinue } else { $null }
+    if ([string]::IsNullOrWhiteSpace($content)) { return $true }      # empty / could not start
+
+    if ($content -match 'system repair pending|unable to fix some of them|could not perform the requested operation') { return $true }
+
+    $completed = if ($Kind -eq 'SFC') {
+        ($content -match 'Windows Resource Protection') -and
+        ($content -match 'did not find any integrity violations|successfully repaired them|found corrupt files|Verification 100% complete')
+    } else {
+        $content -match 'The operation completed successfully|No component store corruption detected|The component store is repairable|Component Store Cleanup Recommended'
+    }
+    return (-not $completed)
+}
+
+function Invoke-DismSfcRebootRepair {
+    <#
+    Entry point for the scheduled reboot re-run. Runs at next boot as SYSTEM. Re-runs the full
+    conditional DISM + SFC flow (ScanHealth -> RestoreHealth if repairable -> AnalyzeComponentStore ->
+    StartComponentCleanup if recommended -> SFC) and writes a CMTrace Repair-System log next to itself.
+    FAIL-SAFE: it deletes its own scheduled task FIRST, so it runs at most once even if it hangs or the
+    machine reboots mid-repair, and it never schedules another run. Self-contained for bundling into a
+    stand-alone script.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]  [string]$RepairFolder,
+        [Parameter(Mandatory=$true)]  [string]$TaskName,
+        [Parameter(Mandatory=$true)]  [string]$SelfScriptPath,
+        [Parameter(Mandatory=$false)] [decimal]$ChangeTimeout = 1.0
+    )
+    # --- fail-safe: remove our own task before doing anything, so this can only ever run once -------
+    try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop }
+    catch { try { & schtasks.exe /Delete /TN $TaskName /F 2>&1 | Out-Null } catch {} }
+
+    New-Folder -FolderPath $RepairFolder
+    $pc  = $env:COMPUTERNAME
+    $ts  = (Get-Date).ToString('yyyy-MM-dd_HH-mm')
+    $masterLog = Join-Path $RepairFolder "SystemRepair_${pc}_${ts}_reboot-rerun.log"
+
+    Write-RepairLog -Message "Repair-System reboot re-run started (DISM/SFC);" -Component "RebootRerun" -LogPath $masterLog -StartLogEntry
+    Write-RepairLog -Message "Target: $pc; Reason: a DISM/SFC step did not complete during the previous run; single automatic attempt;" -Component "RebootRerun" -LogPath $masterLog -EndLogEntry
+
+    $scanLog    = Join-Path $RepairFolder "${ts}_DISM_scanHealth.log"
+    $restoreLog = Join-Path $RepairFolder "${ts}_DISM_restoreHealth.log"
+    $analyzeLog = Join-Path $RepairFolder "${ts}_DISM_analyze-component.log"
+    $cleanupLog = Join-Path $RepairFolder "${ts}_DISM_componentStore-cleanup.log"
+    $sfcLog     = Join-Path $RepairFolder "${ts}_sfc-scannow.log"
+
+    $scanExit = [int]((Invoke-DISMScan $scanLog $ChangeTimeout $false $false) | Select-Object -First 1)
+    Write-RepairLog -Message "DISM ScanHealth completed; ExitCode=$scanExit;" -Component "DISM-ScanHealth" -LogPath $masterLog
+    Start-LogAppendJob -StepLogPath $scanLog -MasterLogPath $masterLog -StepName "DISM-ScanHealth" -Component "DISM-ScanHealth" -Sync
+
+    if ($scanExit -eq 0 -and (Get-DISMScanResult -dismScanLog $scanLog) -eq 1) {
+        $restoreExit = [int]((Invoke-DISMRestore $restoreLog $ChangeTimeout $false $false) | Select-Object -Last 1)
+        Write-RepairLog -Message "DISM RestoreHealth completed; ExitCode=$restoreExit;" -Component "DISM-RestoreHealth" -LogPath $masterLog
+        Start-LogAppendJob -StepLogPath $restoreLog -MasterLogPath $masterLog -StepName "DISM-RestoreHealth" -Component "DISM-RestoreHealth" -Sync
+    }
+
+    $analyzeExit = [int]((Invoke-DISMAnalyzeComponentStore $analyzeLog $ChangeTimeout $false $false) | Select-Object -Last 1)
+    Write-RepairLog -Message "DISM AnalyzeComponentStore completed; ExitCode=$analyzeExit;" -Component "DISM-Analyze" -LogPath $masterLog
+    Start-LogAppendJob -StepLogPath $analyzeLog -MasterLogPath $masterLog -StepName "DISM-AnalyzeComponentStore" -Component "DISM-Analyze" -Sync
+
+    if ($analyzeExit -eq 0 -and (Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeLog)) {
+        $cleanupExit = [int]((Invoke-DISMComponentStoreCleanup $cleanupLog $ChangeTimeout $false $false) | Select-Object -Last 1)
+        Write-RepairLog -Message "DISM ComponentStoreCleanup completed; ExitCode=$cleanupExit;" -Component "DISM-ComponentCleanup" -LogPath $masterLog
+        Start-LogAppendJob -StepLogPath $cleanupLog -MasterLogPath $masterLog -StepName "DISM-ComponentStoreCleanup" -Component "DISM-ComponentCleanup" -Sync
+    }
+
+    $sfcExit = [int]((Invoke-SFC $sfcLog $ChangeTimeout $false $false) | Select-Object -Last 1)
+    Write-RepairLog -Message "SFC /scannow completed; ExitCode=$sfcExit;" -Component "SFC" -LogPath $masterLog
+    Start-LogAppendJob -StepLogPath $sfcLog -MasterLogPath $masterLog -StepName "SFC" -Component "SFC" -Sync
+
+    Write-RepairLog -Message "Repair-System reboot re-run completed;" -Component "RebootRerun" -LogPath $masterLog -StartLogEntry
+    Write-RepairLog -Message "No further re-runs are scheduled (single attempt by design). Log: $masterLog;" -Component "RebootRerun" -LogPath $masterLog -EndLogEntry
+
+    # self-cleanup: remove the generated script (the log stays)
+    try { if (Test-Path -LiteralPath $SelfScriptPath) { Remove-Item -LiteralPath $SelfScriptPath -Force -ErrorAction SilentlyContinue } } catch {}
+}
+
+function Register-RebootRepairTask {
+    <#
+    Writes a self-contained re-run script to the target (bundling the DISM/SFC workers plus
+    Invoke-DismSfcRebootRepair) and registers a one-shot AtStartup SYSTEM scheduled task that runs it
+    after the next reboot. For a remote target the script is written and the task registered ON the
+    target via Invoke-Command; the re-run then runs purely locally at boot. Returns the paths used, or
+    $null on failure (registration failure is never fatal to the calling run).
+    #>
+    param(
+        [Parameter(Mandatory=$true)]  [decimal]$ChangeTimeout,
+        [Parameter(Mandatory=$false)] [hashtable]$InvokeParams = @{},
+        [Parameter(Mandatory=$false)] [switch]$Remote
+    )
+    $repairFolder = 'C:\_IT-RebootRepair'
+    $scriptPath   = Join-Path $repairFolder 'RepairSystem-RebootRerun.ps1'
+    $taskName     = 'RepairSystem-RebootRerun'
+
+    # Bundle the worker functions + the orchestrator into one script, then append the entry call.
+    $bundle = @('New-Folder','Write-RepairLog','Start-LogAppendJob','Write-StepLogEntry',
+                'Get-RepairSystemProcessResult','Invoke-DISMScan','Get-DISMScanResult','Invoke-DISMRestore',
+                'Invoke-DISMAnalyzeComponentStore','Get-DISMAnalyzeComponentStoreResult',
+                'Invoke-DISMComponentStoreCleanup','Invoke-SFC','Invoke-DismSfcRebootRepair')
+    $scriptText = "# Auto-generated by Repair-System; single-shot DISM/SFC reboot re-run. Safe to delete.`r`n"
+    foreach ($n in $bundle) { $scriptText += "function $n {`r`n" + (Get-Item "function:$n").ScriptBlock.ToString() + "`r`n}`r`n" }
+    $scriptText += "`r`nInvoke-DismSfcRebootRepair -RepairFolder '$repairFolder' -TaskName '$taskName' -SelfScriptPath '$scriptPath' -ChangeTimeout $ChangeTimeout`r`n"
+
+    $register = {
+        param($repairFolder, $scriptPath, $taskName, $scriptText)
+        if (-not (Test-Path -LiteralPath $repairFolder)) { New-Item -ItemType Directory -Path $repairFolder -Force | Out-Null }
+        Set-Content -LiteralPath $scriptPath -Value $scriptText -Encoding UTF8 -Force
+        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+        $trigger   = New-ScheduledTaskTrigger -AtStartup
+        $trigger.Delay = 'PT2M'   # let the servicing stack settle before DISM runs
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 3)
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    }
+
+    try {
+        if ($Remote) {
+            Invoke-Command @InvokeParams -ScriptBlock $register -ArgumentList $repairFolder, $scriptPath, $taskName, $scriptText -ErrorAction Stop
+        } else {
+            & $register $repairFolder $scriptPath $taskName $scriptText
+        }
+        return [PSCustomObject]@{ Folder = $repairFolder; Script = $scriptPath; Task = $taskName }
+    } catch {
+        Write-Warning "Could not register the reboot re-run task on the target: $_"
+        return $null
+    }
+}
+
 function Repair-RemoteSystem {
     [CmdletBinding()]
     param (
@@ -1566,6 +1711,13 @@ function Repair-System {
 
     .PARAMETER RepairCCM
     When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
+
+    .PARAMETER NoRebootRepair
+    By default, if any DISM/SFC step does not complete during the run (it timed out, was terminated, produced an
+    empty/incomplete log, or reported a reboot-pending/could-not-repair state), a one-shot scheduled task is
+    registered on the target that re-runs the full DISM + SFC pass once after the next reboot and writes its own
+    Repair-System log under C:\_IT-RebootRepair. The task deletes itself before running (single attempt, no loop).
+    Specify -NoRebootRepair to disable this automatic reboot re-run.
 
     .PARAMETER AnalyzeExitCode
     Decodes a previously produced Repair-System exit code (see Exit-Codes in .NOTES) into a human-readable, per-step breakdown.
@@ -1775,6 +1927,9 @@ function Repair-System {
         [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [switch]$RepairCCM,
 
+        [Parameter(Mandatory = $false, ParameterSetName='Default')]
+        [switch]$NoRebootRepair,
+
         [Parameter(Mandatory=$true, ParameterSetName='Analyze')]
         [string]$AnalyzeExitCode
 
@@ -1972,6 +2127,11 @@ function Repair-System {
     Write-RepairLog -Message "Target: $(if ($remote) { $ComputerName } else { $env:COMPUTERNAME }); Remote: $remote;" -Component "RepairSystem" -LogPath $masterLogPath -AddLogEntryData
     Write-RepairLog -Message "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; SCCMCleanup: $sccmCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
 
+    # Tracks whether any DISM/SFC step that ran did not truly complete (timed out, killed, empty or
+    # incomplete log, or reboot-pending) - which triggers the one-shot reboot re-run below.
+    $needsRebootRerun = $false
+    $rebootRerunScheduled = $false
+
     if (-not $noDism -and -not $remoteConnectionLost) {
         $dismScanLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_scanHealth.log"
         $dismScanResult=0
@@ -1988,6 +2148,7 @@ function Repair-System {
         } else { $ExitCode[1]=5 }
         Write-RepairLog -Message "DISM ScanHealth completed; ExitCode=$($ExitCode[1]);" -Component "DISM-ScanHealth" -LogPath $masterLogPath
         Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismScanLog -Leaf)" } else { $dismScanLog }) -MasterLogPath $masterLogPath -StepName "DISM-ScanHealth" -Component "DISM-ScanHealth" -Sync
+        $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[1] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismScanLog -Leaf)" } else { $dismScanLog }) -Kind 'DISM')
 
         if (-not $remoteConnectionLost) {
 
@@ -2008,6 +2169,7 @@ function Repair-System {
                     if (-not $remoteConnectionLost) { $ExitCode[2]=$dismRestoreExit } else { $ExitCode[2]=5 }
                     Write-RepairLog -Message "DISM RestoreHealth completed; ExitCode=$($ExitCode[2]);" -Component "DISM-RestoreHealth" -LogPath $masterLogPath
                     Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismRestoreLog -Leaf)" } else { $dismRestoreLog }) -MasterLogPath $masterLogPath -StepName "DISM-RestoreHealth" -Component "DISM-RestoreHealth" -Sync
+                    $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[2] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismRestoreLog -Leaf)" } else { $dismRestoreLog }) -Kind 'DISM')
                 } elseif (-not $remoteConnectionLost) {
                     # ScanHealth reported a healthy store, so RestoreHealth was not necessary. Record
                     # the requested-but-not-executed sentinel so a step that never ran is not
@@ -2048,6 +2210,7 @@ function Repair-System {
                     $ExitCode[3]  = $analyzeExit
                     Write-RepairLog -Message "DISM AnalyzeComponentStore completed; ExitCode=$($ExitCode[3]);" -Component "DISM-Analyze" -LogPath $masterLogPath
                     Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $analyzeComponentLog -Leaf)" } else { $analyzeComponentLog }) -MasterLogPath $masterLogPath -StepName "DISM-AnalyzeComponentStore" -Component "DISM-Analyze" -Sync
+                    $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[3] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $analyzeComponentLog -Leaf)" } else { $analyzeComponentLog }) -Kind 'DISM')
 
                     # Check the output and perform cleanup if recommended
                     $message = ""
@@ -2085,6 +2248,7 @@ function Repair-System {
                         if ($analyzeResult) {
                             Write-RepairLog -Message "DISM ComponentStoreCleanup completed; ExitCode=$($ExitCode[4]);" -Component "DISM-ComponentCleanup" -LogPath $masterLogPath
                             Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $componentCleanupLog -Leaf)" } else { $componentCleanupLog }) -MasterLogPath $masterLogPath -StepName "DISM-ComponentStoreCleanup" -Component "DISM-ComponentCleanup" -Sync
+                            $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[4] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $componentCleanupLog -Leaf)" } else { $componentCleanupLog }) -Kind 'DISM')
                         }
                     } else {
                         # AnalyzeComponentStore did not complete cleanly, so cleanup could not run.
@@ -2111,7 +2275,22 @@ function Repair-System {
         if (-not $remoteConnectionLost) { $ExitCode[5]=[int]($sfcExitCode | Select-Object -Last 1) } else { $ExitCode[5]=5 }
         Write-RepairLog -Message "SFC /scannow completed; ExitCode=$($ExitCode[5]);" -Component "SFC" -LogPath $masterLogPath
         Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $sfcLog -Leaf)" } else { $sfcLog }) -MasterLogPath $masterLogPath -StepName "SFC" -Component "SFC" -Sync
+        $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[5] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $sfcLog -Leaf)" } else { $sfcLog }) -Kind 'SFC')
         & $removeStepLog $sfcLog; $stepLogPaths.Add($sfcLog)
+    }
+
+    # If any DISM/SFC step that ran did not complete cleanly, schedule a single automatic repair to
+    # run after the next reboot (default on; suppressed by -NoRebootRepair). Only when DISM was in
+    # play - the re-run performs the full DISM + SFC pass.
+    if ($needsRebootRerun -and -not $NoRebootRepair -and -not $noDism -and -not $remoteConnectionLost) {
+        Write-RepairLog -Message "A DISM/SFC step did not complete cleanly; scheduling a one-shot reboot re-run..." -Component "RebootRerun" -LogPath $masterLogPath
+        $rebootTask = Register-RebootRepairTask -ChangeTimeout $ChangeTimeout -InvokeParams $invokeParams -Remote:$remote
+        if ($null -ne $rebootTask) {
+            $rebootRerunScheduled = $true
+            Write-RepairLog -Message "Reboot re-run scheduled as task '$($rebootTask.Task)' on $targetDevice; its log will be written under $($rebootTask.Folder) after the next restart." -Component "RebootRerun" -LogPath $masterLogPath
+        } else {
+            Write-RepairLog -Message "Reboot re-run could NOT be scheduled (task registration failed); a manual re-run after restart is recommended." -Component "RebootRerun" -LogPath $masterLogPath
+        }
     }
 
     $zipJob      = $null
@@ -2234,6 +2413,9 @@ function Repair-System {
 
     if($remote) {$path=$finalDestinationPath} else {$path=$localTempPath}
     $extmsg= "`r`nSystem-Repair performed.`r`n`r`nIf Errors Occurred, or SFC/DISM/WindowsUpdate Cleanup and Diagnostics Jobs were Terminated due to Timeout, please restart the system and run once more."
+    if ($rebootRerunScheduled) {
+        $extmsg += "`r`n`r`n[INFO]`tOne or more DISM/SFC steps did not complete. A one-time repair has been scheduled to run automatically after the next restart of $targetDevice; its log will be saved on that machine under C:\_IT-RebootRepair\ (kept separate from the temp folder so cleanup will not remove it)."
+    }
     $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'`r`nRepair log: $masterLogPath"
     $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
     if ($remote){
