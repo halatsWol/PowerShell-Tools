@@ -12,7 +12,7 @@
 RootModule = '.\TempDataCleanup.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.6'
+ModuleVersion = '1.7'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -30,7 +30,7 @@ CompanyName = 'Marflow Software'
 Copyright = '(c) Wolfram Halatschek. All rights reserved.'
 
 # Description of the functionality provided by this module
-Description = 'The TempDataCleanup PowerShell module is designed to clean up temporary files from both user profiles and system folders. It supports local and remote execution, making it useful for freeing up disk space and enhancing system performance across multiple machines. By using this module, you can automate the removal of temporary files, ensuring a cleaner, more efficient environment.'
+Description = 'The TempDataCleanup PowerShell module is designed to clean up temporary files from user profiles and system folders, system logs, and software-distribution content caches (ConfigMgr/SCCM, Windows Update, Adaptiva, Intune). It supports local and remote execution, making it useful for freeing up disk space and enhancing system performance across multiple machines. Deletion is guarded and long-path safe; locked items in system folders and content caches are scheduled for removal on the next reboot.'
 
 # Minimum version of the PowerShell engine required by this module
 PowerShellVersion = '5.1'
@@ -107,7 +107,15 @@ PrivateData = @{
         # IconUri = ''
 
         # ReleaseNotes of this module
-        # ReleaseNotes = ''
+        ReleaseNotes = @'
+1.7
+- Content-cache cleanup (-IncludeCCMCache) is now relocation-aware and multi-system: ConfigMgr/SCCM
+  ccmcache (located via WMI, the Software Center COM API, the registry, or the default under Windows),
+  Windows Update, Adaptiva OneSite, and the Intune Management Extension. Absent systems are skipped.
+- Deletion is guarded (drive root / Windows / System32 are refused) and long-path safe. Locked items in
+  the system folders (-IncludeSystemData / -IncludeSystemLogs) and content caches are scheduled for
+  deletion on the next reboot; locked user-profile files are skipped (best-effort).
+'@
 
         # Prerelease string of this module
         # Prerelease = ''

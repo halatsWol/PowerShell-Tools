@@ -1,4 +1,4 @@
-# Shortcuts PowerShell Module
+# TempDataCleanup PowerShell Module
 
 ## Overview
 
@@ -7,13 +7,14 @@ The `TempDataCleanup` PowerShell module provides a function to clean up temporar
 ## Functionality
 ### `Invoke-TempDataCleanup`
 
-The primary function of this module is `Invoke-TempDataCleanup`, which removes temporary files from user profiles and, optionally, system folders. This function can be executed on the local computer or remotely on other systems. It also offers the flexibility to include system directories when performing a full cleanup.
+The primary function of this module is `Invoke-TempDataCleanup`, which removes temporary files from user profiles and, optionally, system folders, system logs, and software-distribution content caches (ConfigMgr/SCCM, Windows Update, Adaptiva, Intune). This function can be executed on the local computer or remotely on other systems. Deletion is guarded and long-path safe; items that are locked in the system folders and content caches are scheduled for deletion on the next reboot (a restart finishes those), while locked user-profile files are skipped.
 
 #### Parameters
 
 - **`-ComputerName`** (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host.
-- **`-IncludeSystemData`** (Optional): When this switch is provided, the cleanup will also include system folders such as the Windows `Temp`, `Prefetch`, and `SoftwareDistribution` folders.
-- **`-IncludeCCMCache`** (Optional): When this switch is provided, the cleanup will also include the Configuration Management Cache folder, if it exists.
+- **`-IncludeSystemData`** (Optional): When this switch is provided, the cleanup will also include system folders such as the Windows `Temp`, `Prefetch`, and `SoftwareDistribution\Download` folders.
+- **`-IncludeSystemLogs`** (Optional): When this switch is provided, the cleanup will also include system log files and reporting folders such as `C:\Windows\Logs`, `C:\Windows\Minidump`, and the Windows Error Reporting queues. Logs held open by Windows services are scheduled for deletion on the next reboot.
+- **`-IncludeCCMCache`** (Optional): When this switch is provided, the cleanup will also clear the content/download caches of the software-distribution systems detected on the device: ConfigMgr/SCCM (`ccmcache`), Windows Update (`SoftwareDistribution\Download`), Adaptiva OneSite, and the Intune Management Extension. The ConfigMgr cache is relocation-aware, so a moved cache (e.g. `D:\SCCMCache`) is found instead of assuming `C:\Windows\ccmcache`.
 - **`-IncludeBrowserData`** (Optional): When this switch is provided, the cleanup will also include Browser cache of MS Edge, Mozilla Firefox and Google Chrome
 - **`-IncludeMSTeamsCache`** (Optional): When this switch is provided, the cleanup will also include the Microsoft Teams cache folders.
 - **`-IncludeIconCache`** (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
@@ -47,6 +48,10 @@ Invoke-TempDataCleanup -ComputerName "localhost" -IncludeSystemData
 
 # Perform a full cleanup (user temp, Browser Cache, MSTeams Cache and system temp files) on a remote computer
 Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBrowserData -IncludeMSTeamsCache
+
+# Clean user/system temp, system logs, and software-distribution content caches (ConfigMgr/WU/Adaptiva/Intune)
+# Locked system/cache items are scheduled for deletion on the next reboot - restart to finish.
+Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeSystemLogs -IncludeCCMCache
 ```
 
 ## Requirements
@@ -61,6 +66,7 @@ Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBro
 - This script is provided as-is and is not supported by Microsoft.
 - Test thoroughly before using on production systems as improper use may cause data loss or system instability.
 - Ensure you understand the consequences before making system changes or deleting files.
+- Deletion is guarded (it refuses drive-root / Windows / System32 targets) and long-path safe. Locked files under the **system** folders (`-IncludeSystemData` / `-IncludeSystemLogs`) and the **content caches** (`-IncludeCCMCache`) are scheduled for deletion on the next reboot, so **restart the device to finish**. Locked user-profile files are skipped (best-effort) and are never queued for boot-time deletion.
 
  :bangbang: If in Windows Terminal Settings, Terminal is set as Default Terminal Application, Powershell 5.1 may throw an error instead of prompting for User Credentials. As workaround you can pass on credentials using the `Get-CredentialObject` from the [`CredentialHander-Module`](https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/CredentialHandler)
 
@@ -73,7 +79,7 @@ Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBro
 
 - **Author**: Wolfram Halatschek
 - **Contact**: dev@kMarflow.com
-- **Date**: 2026-06-16
+- **Date**: 2026-08-15
 
 ## Warnings
 
