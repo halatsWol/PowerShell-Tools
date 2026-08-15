@@ -13,8 +13,9 @@ LONG DESCRIPTION
     - Pings the remote machine to check its availability.
     - Executes `sfc /scannow` to check and repair system files.
     - Optionally, executes `DISM /Online /Cleanup-Image /ScanHealth` and `DISM /Online /Cleanup-Image /RestoreHealth` to repair the Windows image.
-    - Optionally, performs Component Store cleanup and Windows Update Cache cleanup.
+    - Optionally, performs Component Store cleanup and a history-preserving Windows Update reset.
     - Optionally, deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder, and/or runs CCMRepair.exe.
+    - If any DISM/SFC step does not complete (it timed out, was terminated, or reported a reboot-pending / could-not-repair state), automatically schedules a one-shot repair that re-runs the full DISM + SFC pass once after the next reboot (default on; disable with `-NoRebootRepair`).
     - Prints progress and status to the local console. Step outputs are written to temporary log files, then consolidated into a single master repair log (SystemRepair_<PC>_<date>.log) in CMTrace-compatible format; individual step log files are removed after embedding.
     - On remote runs, transfers the master log and a CBS/DISM system log archive to the local machine.
 
@@ -28,7 +29,11 @@ LONG DESCRIPTION
     - noDism (Optional): When specified, all DISM commands are skipped. This cannot be used in combination with `-IncludeComponentCleanup`.
     - Quiet (Optional): Suppresses console output on the local machine. The output is always logged to files on the remote machine.
     - IncludeComponentCleanup (Optional): Analyzes and, if recommended, cleans up the Windows Component Store. This cannot be used in combination with `-noDism`.
-    - WindowsUpdateCleanup (Optional): Renames the `SoftwareDistribution` and `catroot2` folders after stopping related services, effectively performing a Windows Update Cache cleanup. Additionally runs Windows Update and BITS Diagnostics.
+    - WindowsUpdateCleanup (Optional): Resets the Windows Update client. Stops the update services, clears the `SoftwareDistribution` folder while keeping the update history (the `DataStore` database) when it passes an integrity check - it is only rebuilt when found corrupt - resets `catroot2`, and clears the BITS transfer queue. Any item held open by a running process is scheduled for removal on the next reboot; when that happens the step reports code 3010 ("Success (restart required)").
+    - ResetUpdateHistory (Optional): Only meaningful together with -WindowsUpdateCleanup. Forces the `DataStore` (update history) to always be wiped and rebuilt, instead of being preserved when it is healthy. Use this to deliberately discard the Windows Update history.
+    - IncludeLegacyRepair (Optional): Only meaningful together with -WindowsUpdateCleanup. Additionally performs invasive legacy repairs - re-registering the Windows Update COM DLLs, resetting the Winsock catalog, and rewriting the security descriptors of the `wuauserv`/`bits` services. These can affect networking and require a reboot. In an interactive session this prompts for confirmation; combine with -Force to skip the prompt (required to run it in a non-interactive session).
+    - Force (Optional): Skips the confirmation prompt for -IncludeLegacyRepair (and is required to run legacy repair in a non-interactive session).
+    - NoRebootRepair (Optional): Disables the automatic one-shot reboot re-run that is otherwise scheduled when a DISM/SFC step does not complete cleanly. The re-run task deletes itself before running (single attempt, no loop) and writes its own Repair-System log under C:\_IT-RebootRepair after the next restart.
     - ChangeTimeout (Optional): Decimal multiplier to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it). Range = 0.25 - 10.0
     - sccmCleanup (Optional): Deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder.
     - KeepLogs (Optional): Individual step log files are retained alongside the master log instead of being deleted after their content is embedded. On remote runs, step logs remain on the remote device and the full set (step logs + master log) is transferred to the Client.
@@ -86,12 +91,15 @@ EXAMPLES
     and removes old data which is not required anymore. Cannot be used with '-noDism'.
 
 
-    Example 7: Perform Windows Update Cache cleanup
+    Example 7: Perform a history-preserving Windows Update reset
     -----------------------------------------------
     PS C:\> Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 
-    Stops the Windows Update and related services, renames the SoftwareDistribution and catroot2 folders,
-    restarts the services, and runs the Windows Update and BITS Diagnostics.
+    Stops the Windows Update and related services, clears SoftwareDistribution (keeping the update history
+    when the DataStore is healthy), resets catroot2, and clears the BITS transfer queue, then restarts the
+    services. Items locked by a running process are scheduled for deletion on the next reboot, and the step
+    then reports 3010. To also discard the update history and run the invasive legacy repairs
+    non-interactively, add -ResetUpdateHistory -IncludeLegacyRepair -Force.
 
 
     Example 8: Decode a previously produced exit code
@@ -226,6 +234,11 @@ EXIT CODES
     object and in -AnalyzeExitCode output; inside the packed detailed code string they appear as the
     32-bit two's-complement hex fields FFFFFFFE, FFFFFFFD and FFFFFFFC.
 
+    The Windows Update Cleanup step (position 7) reports 3010 when it deferred locked items (for
+    example catroot2 catalog files held open by CryptSvc) to the next reboot - surfaced as "Success
+    (restart required)" in the per-step Analysis. This is not a failure; a restart finishes the
+    removal, after which Windows rebuilds the affected caches automatically.
+
     Run `Repair-System -AnalyzeExitCode <code>` to get a readable explanation of any code produced
     by a previous run.
 
@@ -244,7 +257,7 @@ KEYWORDS
 AUTHOR
     Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2026-08-13
+    Date: 2026-08-15
 
 COPYRIGHT
     © 2026 Wolfram Halatschek. All rights reserved.
