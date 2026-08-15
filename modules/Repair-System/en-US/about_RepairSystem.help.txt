@@ -14,7 +14,7 @@ LONG DESCRIPTION
     - Executes `sfc /scannow` to check and repair system files.
     - Optionally, executes `DISM /Online /Cleanup-Image /ScanHealth` and `DISM /Online /Cleanup-Image /RestoreHealth` to repair the Windows image.
     - Optionally, performs Component Store cleanup and a history-preserving Windows Update reset.
-    - Optionally, deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder, and/or runs CCMRepair.exe.
+    - Optionally, clears the content/download caches of the installed software-distribution systems (ConfigMgr, Adaptiva OneSite, Intune Management Extension, Windows Update), and/or runs CCMRepair.exe.
     - If any DISM/SFC step does not complete (it timed out, was terminated, or reported a reboot-pending / could-not-repair state), automatically schedules a one-shot repair that re-runs the full DISM + SFC pass once after the next reboot (default on; disable with `-NoRebootRepair`).
     - Prints progress and status to the local console. Step outputs are written to temporary log files, then consolidated into a single master repair log (SystemRepair_<PC>_<date>.log) in CMTrace-compatible format; individual step log files are removed after embedding.
     - On remote runs, transfers the master log and a CBS/DISM system log archive to the local machine.
@@ -35,7 +35,14 @@ LONG DESCRIPTION
     - Force (Optional): Skips the confirmation prompt for -IncludeLegacyRepair (and is required to run legacy repair in a non-interactive session).
     - NoRebootRepair (Optional): Disables the automatic one-shot reboot re-run that is otherwise scheduled when a DISM/SFC step does not complete cleanly. The re-run task deletes itself before running (single attempt, no loop) and writes its own Repair-System log under C:\_IT-RebootRepair after the next restart.
     - ChangeTimeout (Optional): Decimal multiplier to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it). Range = 0.25 - 10.0
-    - sccmCleanup (Optional): Deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder.
+    - ContentCacheCleanup (Optional): Clears the content/download caches of every software-distribution
+        system detected on the device - ConfigMgr (ccmcache), Windows Update (SoftwareDistribution\Download),
+        Adaptiva OneSite (<drive>:\AdaptivaCache) and the Intune Management Extension (IMECache + the
+        Content\{Incoming,Staging,Staged} staging folders). Each cache location is auto-detected; systems
+        that are not installed are skipped. Items locked by a running agent are cleared best-effort now and
+        the remainder is scheduled for removal on the next reboot, in which case the step reports 3010
+        ("restart required"). The alias -sccmCleanup is accepted for backwards compatibility (it now
+        performs this broader cleanup).
     - KeepLogs (Optional): Individual step log files are retained alongside the master log instead of being deleted after their content is embedded. On remote runs, step logs remain on the remote device and the full set (step logs + master log) is transferred to the Client.
     - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File. No other parameter will be executed when this is specified.
     - Credentials (Optional): When specified, this will prompt for User-Credentials that will be used for the Remote-Access.
@@ -209,7 +216,7 @@ EXIT CODES
         3 = DISM AnalyzeComponentStore
         4 = DISM StartComponentCleanup
         5 = SFC /scannow
-        6 = SCCM Cleanup
+        6 = Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)
         7 = Windows Update Cleanup
         8 = Repair CCM
         9 = Zip CBS/DISM Logs

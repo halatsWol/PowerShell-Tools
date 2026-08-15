@@ -34,7 +34,7 @@ This function performs the following tasks on a specified computer (either local
 - **`-NoRebootRepair`** (Optional): Disables the automatic one-shot reboot re-run that is otherwise scheduled when a DISM/SFC step does not complete cleanly. The re-run task deletes itself before running (single attempt, no loop) and writes its own Repair-System log under `C:\_IT-RebootRepair` after the next restart.
 - **`-ChangeTimeout`** (Optional) use decimal value to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
 Range = 0.25 - 10.0
-- **`-sccmCleanup`** (Optional): deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder
+- **`-ContentCacheCleanup`** (Optional): Clears the content/download caches of every software-distribution system detected on the device - **ConfigMgr** (`ccmcache`), **Windows Update** (`SoftwareDistribution\Download`), **Adaptiva OneSite** (`<drive>:\AdaptivaCache`), and the **Intune Management Extension** (`IMECache` + the `Content\{Incoming,Staging,Staged}` staging folders). Each cache location is auto-detected (e.g. a relocated `ccmcache` is read from the client, an Adaptiva cache from every fixed drive it lives on); systems that aren't installed are skipped. Items locked by a running agent are cleared best-effort now and any remainder is scheduled for removal on the next reboot - in which case the step reports `3010` ("restart required"). The alias **`-sccmCleanup`** is accepted for backwards compatibility (it now performs this broader cleanup).
 - **`-KeepLogs`** (Optional): individual step log files are retained alongside the master log instead of being deleted after their content is embedded. On remote runs, step logs remain on the remote device and the full set (step logs + master log) is transferred to the Client.
 - **`-init`** (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
 - **`-Credentials`** (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
@@ -65,6 +65,9 @@ Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup -ResetUpdateHi
 
 # Skip the automatic post-reboot DISM/SFC re-run
 Repair-System -ComputerName <remote-device> -NoRebootRepair
+
+# Clear all detected content/download caches (ConfigMgr, Adaptiva, Intune, Windows Update)
+Repair-System -ComputerName <remote-device> -ContentCacheCleanup
 
 # Decode a previously produced exit code (runs standalone, no repair actions)
 Repair-System -AnalyzeExitCode "0000000000"
@@ -101,7 +104,7 @@ Positions follow the order the steps actually run in (DISM before SFC):
 | 3 | DISM AnalyzeComponentStore |
 | 4 | DISM StartComponentCleanup |
 | 5 | SFC /scannow |
-| 6 | SCCM Cleanup |
+| 6 | Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update) |
 | 7 | Windows Update Cleanup |
 | 8 | Repair CCM |
 | 9 | Zip CBS/DISM Logs |

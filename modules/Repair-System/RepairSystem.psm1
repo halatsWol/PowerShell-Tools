@@ -186,7 +186,7 @@ $script:RepairSystemSteps = [ordered]@{
     3 = @{ Key = 'DISMAnalyzeComponentStore'; Label = 'DISM /Online /Cleanup-Image /AnalyzeComponentStore' }
     4 = @{ Key = 'DISMComponentCleanup';      Label = 'DISM /Online /Cleanup-Image /StartComponentCleanup' }
     5 = @{ Key = 'SFC';                       Label = 'SFC /scannow' }
-    6 = @{ Key = 'SCCMCleanup';               Label = 'SCCM Cache / SoftwareDistribution Cleanup' }
+    6 = @{ Key = 'SCCMCleanup';               Label = 'Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / WU)' }
     7 = @{ Key = 'WindowsUpdateCleanup';      Label = 'Windows Update Cleanup' }
     8 = @{ Key = 'RepairCCM';                 Label = 'CCM Client Repair' }
     9 = @{ Key = 'ZipLogs';                   Label = 'Zip CBS/DISM Logs' }
@@ -1047,11 +1047,20 @@ function Invoke-DISMComponentStoreCleanup {
     }
 }
 
-function Invoke-SCCMCleanup {
+function Invoke-ContentCacheCleanup {
+    <#
+    Clears the content/download caches of the software-distribution systems present on the device -
+    ConfigMgr (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite
+    (<drive>:\AdaptivaCache) and the Intune Management Extension (IMECache + Content staging). Each
+    location is auto-detected; systems that are not installed are skipped. Whatever a running agent
+    holds open is cleared best-effort now and the remainder is scheduled for deletion on the next
+    reboot (via Remove-PathReliable), so the step returns 3010 ("restart required") when anything was
+    deferred, otherwise 0. Self-contained apart from Remove-PathReliable, so it can be shipped remotely.
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, Position=0)]
-        [string]$sccmCleanupLog,
+        [string]$cacheCleanupLog,
 
         [Parameter(Mandatory=$true, Position=1)]
         [switch]$Quiet,
@@ -1062,30 +1071,26 @@ function Invoke-SCCMCleanup {
     )
     if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
 
-    if (-not $Quiet) { Write-Host "executing SCCM Cleanup" }
-    $returnVal=0
+    if (-not $Quiet) { Write-Host "executing Content Cache Cleanup" }
 
     # Resolve the Windows directory from the OS itself - $env:windir can be empty in a stripped
     # environment, and an empty base is exactly how a cleanup can end up deleting from a drive root.
     # The result is validated, paths are only built from a validated base, and every deletion target
-    # is re-checked below, so an empty/garbage value can never reach a Remove-Item.
+    # is re-checked below, so an empty/garbage value can never reach a delete.
     $winDir = [Environment]::GetFolderPath('Windows')
     if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
     if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
     $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
 
-    # Clears a folder's contents child-by-child (\\?\ + -LiteralPath: long-path safe, and no '?'
-    # wildcard footgun). Only ever called on a validated target below.
-    $clearFolder = {
-        param($folder)
-        Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            Remove-Item -LiteralPath "\\?\$($_.FullName)" -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
+    # Per-step log writer (captures the log path so it is safe to call from anywhere in the function).
+    $log = {
+        param($m)
+        try { Add-Content -Path $cacheCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - $m" -ErrorAction SilentlyContinue } catch {}
+    }.GetNewClosure()
 
-    # A cache path is only safe to clear if it is absolute, below a drive root, not the Windows
-    # directory or System32, and exists. No folder-name requirement - a relocated cache can be
-    # custom-named (e.g. D:\SCCMCache). An empty/garbage value fails the first checks, so it can
+    # A cache path is only safe to clear if it is absolute, at least one level below a drive root, not
+    # the Windows directory or System32, and it exists. No folder-name requirement - a relocated cache
+    # can be custom-named (e.g. D:\SCCMCache). An empty/garbage value fails the first checks, so it can
     # never become a root-level delete.
     $isSafeCache = {
         param($p, $win)
@@ -1099,37 +1104,105 @@ function Invoke-SCCMCleanup {
         return (Test-Path -LiteralPath $n -PathType Container)
     }
 
-    # ConfigMgr client cache (relocatable): WMI is the only reliable source. If it is unavailable
-    # (e.g. a broken client), fall back to the default under the Windows directory - a relocated
-    # cache simply won't be found in that case, which is logged rather than guessed at.
-    $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
-    if ([string]::IsNullOrWhiteSpace($ccmCachePath) -and $winDirValid) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
-    if (& $isSafeCache $ccmCachePath $winDir) {
-        & $clearFolder $ccmCachePath
-        Add-Content -Path $sccmCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$ccmCachePath cleaned`r`n"
-    } else {
-        $msg = "CCM Cache folder not found or its path could not be trusted ('$ccmCachePath'). Skipping."
-        Write-Verbose $msg
-        Add-Content -Path $sccmCleanupLog -Value $msg
+    # Clears a validated folder's CONTENTS via Remove-PathReliable: deletes what is free right now and
+    # schedules anything still locked for deletion at the next reboot. Returns $true if anything was
+    # deferred to reboot.
+    $clearContents = {
+        param($folder)
+        $deferred = $false
+        Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            $r = Remove-PathReliable -Path $_.FullName
+            if ($r -and $r.Scheduled) { $deferred = $true }
+        }
+        return $deferred
     }
 
-    # Windows Update download cache - built only from the validated Windows directory.
-    if ($winDirValid) {
-        $sdDownload = Join-Path $winDir 'SoftwareDistribution\Download'
-        if (Test-Path -LiteralPath $sdDownload -PathType Container) {
-            & $clearFolder $sdDownload
-            Add-Content -Path $sccmCleanupLog -Value "`r`n[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$sdDownload cleaned`r`n"
-        } else {
-            $msg = "SoftwareDistribution\Download folder does not exist. No need to delete."
-            Write-Verbose $msg
-            Add-Content -Path $sccmCleanupLog -Value $msg
-        }
-    } else {
-        $msg = "Windows directory could not be resolved; skipping SoftwareDistribution\Download cleanup."
-        Write-Warning $msg
-        Add-Content -Path $sccmCleanupLog -Value $msg
+    # -----------------------------------------------------------------------------------------------
+    # Detect each system's cache location(s). Absent systems yield nothing and are simply skipped.
+    # -----------------------------------------------------------------------------------------------
+
+    # ConfigMgr ccmcache (relocatable). The WMI CacheConfig class can come back empty even on a healthy
+    # client, so try several sources in order and take the first trusted, non-empty path: WMI ->
+    # UIResourceMgr COM (what Software Center reads) -> registry CacheConfig -> default under Windows.
+    $ccmLoc = $null
+    try { $ccmLoc = (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop | Select-Object -First 1).Location } catch { $ccmLoc = $null }
+    if ([string]::IsNullOrWhiteSpace($ccmLoc)) {
+        try {
+            $ui = New-Object -ComObject UIResource.UIResourceMgr
+            $ccmLoc = $ui.GetCacheInfo().Location
+            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ui)
+        } catch { }
     }
-    return $returnVal
+    if ([string]::IsNullOrWhiteSpace($ccmLoc)) {
+        $ccmLoc = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Mobile Client\Software Distribution\CacheConfig' -Name Location -ErrorAction SilentlyContinue).Location
+    }
+    if ([string]::IsNullOrWhiteSpace($ccmLoc) -and $winDirValid) { $ccmLoc = Join-Path $winDir 'ccmcache' }
+    $ccmPaths = @(); if (-not [string]::IsNullOrWhiteSpace($ccmLoc)) { $ccmPaths = @($ccmLoc) }
+
+    # Windows Update download cache - built only from the validated Windows directory.
+    $wuPaths = @(); if ($winDirValid) { $wuPaths = @((Join-Path $winDir 'SoftwareDistribution\Download')) }
+
+    # Adaptiva OneSite content cache. Content sits directly under <drive>:\AdaptivaCache (no \Client
+    # subfolder). Relocatable via the registry value 'cache.folder' ('na' = use the default), which
+    # lives somewhere under the HKLM\SOFTWARE\Adaptiva hive. Only touched when the Adaptiva client is
+    # present, so a stray AdaptivaCache folder on a non-Adaptiva box is never cleared.
+    $adaptivaPaths = @()
+    $adaptivaPresent = ($null -ne (Get-Service -Name 'AdaptivaClient' -ErrorAction SilentlyContinue)) -or (Test-Path 'HKLM:\SOFTWARE\Adaptiva')
+    if ($adaptivaPresent) {
+        $cacheFolder = $null
+        try {
+            Get-ChildItem 'HKLM:\SOFTWARE\Adaptiva' -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                $v = (Get-ItemProperty -LiteralPath $_.PSPath -Name 'cache.folder' -ErrorAction SilentlyContinue).'cache.folder'
+                if (-not [string]::IsNullOrWhiteSpace($v)) { $cacheFolder = [string]$v }
+            }
+        } catch { }
+        if ((-not [string]::IsNullOrWhiteSpace($cacheFolder)) -and ($cacheFolder.Trim().ToLower() -ne 'na')) {
+            $adaptivaPaths = @($cacheFolder.Trim())
+        } else {
+            $adaptivaPaths = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | ForEach-Object { Join-Path $_.RootDirectory.FullName 'AdaptivaCache' })
+        }
+    }
+
+    # Intune Management Extension (Company Portal / Win32) staging + IMECache. IME normally self-cleans
+    # on success but leaves residue on failure/locks. IMECache is under Windows; the Content staging
+    # folders are under the IME install (Program Files (x86) on 64-bit, Program Files on 32-bit).
+    $intunePaths = @()
+    if ($winDirValid) { $intunePaths += (Join-Path $winDir 'IMECache') }
+    $imeBases = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    foreach ($base in $imeBases) {
+        $imeContent = Join-Path $base 'Microsoft Intune Management Extension\Content'
+        if (Test-Path -LiteralPath $imeContent -PathType Container) {
+            foreach ($sub in @('Incoming','Staging','Staged')) { $intunePaths += (Join-Path $imeContent $sub) }
+        }
+    }
+
+    # -----------------------------------------------------------------------------------------------
+    # Clear every detected, trusted cache location; defer whatever is locked to the next reboot.
+    # -----------------------------------------------------------------------------------------------
+    $providers = @(
+        @{ Name = 'ConfigMgr (ccmcache)';                          Paths = $ccmPaths }
+        @{ Name = 'Windows Update (SoftwareDistribution\Download)'; Paths = $wuPaths }
+        @{ Name = 'Adaptiva OneSite (AdaptivaCache)';              Paths = $adaptivaPaths }
+        @{ Name = 'Intune Management Extension (IMECache/Content)'; Paths = $intunePaths }
+    )
+
+    $anyDeferred = $false
+    foreach ($prov in $providers) {
+        $cleaned = New-Object System.Collections.Generic.List[string]
+        foreach ($p in @($prov.Paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+            if (& $isSafeCache $p $winDir) {
+                $deferred = & $clearContents $p
+                if ($deferred) { $anyDeferred = $true }
+                if ($deferred) { $cleaned.Add("$p (locked items deferred to reboot)") } else { $cleaned.Add($p) }
+            } else {
+                & $log "$($prov.Name): skipped '$p' (not found or path could not be trusted)."
+            }
+        }
+        if ($cleaned.Count -gt 0) { & $log "$($prov.Name): cleaned $($cleaned -join '; ')" }
+        else { & $log "$($prov.Name): nothing to clean (not installed or no cache present)." }
+    }
+
+    if ($anyDeferred) { return 3010 } else { return 0 }
 }
 
 function Stop-ServiceSafely {
@@ -1627,9 +1700,22 @@ function Repair-CCM {
         # Clear SCCM Cache
         if (-not $Quiet) { Write-Host "Clearing SCCM Cache..." }
         Write-RepairCCMLog "Clearing SCCM Cache..."
-        # ConfigMgr client cache (relocatable): WMI is the only reliable source; fall back to the
-        # default under the Windows directory. Cleared only if the path passes the safety guard.
-        $ccmCachePath = try { (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop).Location } catch { $null }
+        # ConfigMgr client cache (relocatable). The WMI CacheConfig class can come back empty even on a
+        # healthy client, so try WMI -> UIResourceMgr COM (what Software Center reads) -> registry
+        # CacheConfig -> default under Windows, and take the first trusted, non-empty path. Cleared only
+        # if it passes the safety guard.
+        $ccmCachePath = $null
+        try { $ccmCachePath = (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop | Select-Object -First 1).Location } catch { $ccmCachePath = $null }
+        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) {
+            try {
+                $ccmUi = New-Object -ComObject UIResource.UIResourceMgr
+                $ccmCachePath = $ccmUi.GetCacheInfo().Location
+                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ccmUi)
+            } catch { }
+        }
+        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) {
+            $ccmCachePath = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Mobile Client\Software Distribution\CacheConfig' -Name Location -ErrorAction SilentlyContinue).Location
+        }
         if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
         if (& $isSafeCache $ccmCachePath $winDir) {
             Get-ChildItem -LiteralPath $ccmCachePath -Force -ErrorAction SilentlyContinue | ForEach-Object {
@@ -1938,8 +2024,14 @@ function Repair-System {
     .PARAMETER IncludeComponentCleanup
     When specified, performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, performs `DISM /Online /Cleanup-Image /StartComponentCleanup`.
 
-    .PARAMETER sccmCleanup
-    When specified, deletes the contents of the CCMCache folder and SoftwareDistribution\Download folder.
+    .PARAMETER ContentCacheCleanup
+    When specified, clears the content/download caches of every software-distribution system detected on
+    the device: ConfigMgr (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite
+    (<drive>:\AdaptivaCache) and the Intune Management Extension (IMECache + Content staging). Each cache
+    location is auto-detected; systems that are not installed are skipped. Items locked by a running
+    agent are cleared best-effort now and the remainder is scheduled for removal on the next reboot, in
+    which case the step reports 3010 ("restart required"). The alias -sccmCleanup is accepted for
+    backwards compatibility (it now performs this broader cleanup).
 
     .PARAMETER WindowsUpdateCleanup
     When specified, resets the Windows Update client: stops the update services, clears the SoftwareDistribution
@@ -2128,7 +2220,7 @@ function Repair-System {
     Position 3: DISM AnalyzeComponentStore
     Position 4: DISM StartComponentCleanup
     Position 5: SFC /scannow
-    Position 6: SCCM Cleanup
+    Position 6: Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)
     Position 7: Windows Update Cleanup
     Position 8: Repair CCM
     Position 9: Zip CBS/DISM Logs
@@ -2189,7 +2281,8 @@ function Repair-System {
         [decimal]$ChangeTimeout = 1.0,
 
         [Parameter(Mandatory = $false, ParameterSetName='Default')]
-        [switch]$sccmCleanup,
+        [Alias('sccmCleanup')]
+        [switch]$ContentCacheCleanup,
 
         [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [switch]$KeepLogs,
@@ -2225,7 +2318,7 @@ function Repair-System {
         return
     }
 
-    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0 #Startup, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SFC, SCCM Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
+    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0 #Startup, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SFC, Content Cache Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
 
     $ComputerName = $ComputerName.Trim()
     $targetDevice   = $env:COMPUTERNAME
@@ -2236,7 +2329,7 @@ function Repair-System {
         (-not $noDism),                               # [3] DISM AnalyzeComponentStore
         (-not $noDism -and $IncludeComponentCleanup), # [4] DISM ComponentCleanup
         (-not $noSfc),                                # [5] SFC
-        $sccmCleanup.IsPresent,                       # [6] SCCM Cleanup
+        $ContentCacheCleanup.IsPresent,               # [6] Content Cache Cleanup
         $WindowsUpdateCleanup.IsPresent,              # [7] WU Cleanup
         $RepairCCM.IsPresent,                         # [8] CCM Repair
         (-not $noSfc -or -not $noDism)                # [9] Zip Logs
@@ -2433,7 +2526,7 @@ function Repair-System {
 
     Write-RepairLog -Message "Repair-System started;" -Component "RepairSystem" -LogPath $masterLogPath -StartLogEntry
     Write-RepairLog -Message "Target: $(if ($remote) { $ComputerName } else { $env:COMPUTERNAME }); Remote: $remote;" -Component "RepairSystem" -LogPath $masterLogPath -AddLogEntryData
-    Write-RepairLog -Message "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; SCCMCleanup: $sccmCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
+    Write-RepairLog -Message "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; ContentCacheCleanup: $ContentCacheCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
 
     # Tracks whether any DISM/SFC step that ran did not truly complete (timed out, killed, empty or
     # incomplete log, or reboot-pending) - which triggers the one-shot reboot re-run below.
@@ -2619,18 +2712,25 @@ function Repair-System {
         }
     }
 
-    if ($sccmCleanup -and -not $remoteConnectionLost) {
-        $sccmCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_SCCM_cleanup.log"
-        $sccmCleanupResult=0
-        Write-RepairLog -Message "Starting SCCM Cache / SoftwareDistribution Cleanup..." -Component "SCCMCleanup" -LogPath $masterLogPath
+    if ($ContentCacheCleanup -and -not $remoteConnectionLost) {
+        $cacheCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_ContentCache_cleanup.log"
+        $cacheCleanupResult=0
+        Write-RepairLog -Message "Starting Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)..." -Component "ContentCacheCleanup" -LogPath $masterLogPath
         if ($remote) {
-            $sccmCleanupResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Invoke-SCCMCleanup} -ArgumentList @($sccmCleanupLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'SCCM Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else { $sccmCleanupResult=Invoke-SCCMCleanup $sccmCleanupLog $Quiet $VerboseOption }
+            $cacheCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Remove-PathReliable', 'Invoke-ContentCacheCleanup') -EntryPoint 'Invoke-ContentCacheCleanup'
+            $cacheCleanupResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $cacheCleanupBlock -ArgumentList @($cacheCleanupLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'Content Cache Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
+        } else { $cacheCleanupResult=Invoke-ContentCacheCleanup $cacheCleanupLog $Quiet $VerboseOption }
 
-        if (-not $remoteConnectionLost) { $ExitCode[6]=$sccmCleanupResult } else { $ExitCode[6]=5 }
-        Write-RepairLog -Message "SCCM Cleanup completed; ExitCode=$($ExitCode[6]);" -Component "SCCMCleanup" -LogPath $masterLogPath
-        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $sccmCleanupLog -Leaf)" } else { $sccmCleanupLog }) -MasterLogPath $masterLogPath -StepName "SCCM-Cleanup" -Component "SCCMCleanup" -Sync
-        & $removeStepLog $sccmCleanupLog; $stepLogPaths.Add($sccmCleanupLog)
+        if (-not $remoteConnectionLost) {
+            $cacheCleanupResult = [int]($cacheCleanupResult | Select-Object -Last 1)
+            $ExitCode[6]=$cacheCleanupResult
+            if ($cacheCleanupResult -eq 3010) {
+                Write-Warning "`r`nContent Cache Cleanup on $targetDevice scheduled some locked cache items for removal on the next reboot. Please restart the device to finish."
+            }
+        } else { $ExitCode[6]=5 }
+        Write-RepairLog -Message "Content Cache Cleanup completed; ExitCode=$($ExitCode[6]);" -Component "ContentCacheCleanup" -LogPath $masterLogPath
+        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $cacheCleanupLog -Leaf)" } else { $cacheCleanupLog }) -MasterLogPath $masterLogPath -StepName "ContentCache-Cleanup" -Component "ContentCacheCleanup" -Sync
+        & $removeStepLog $cacheCleanupLog; $stepLogPaths.Add($cacheCleanupLog)
     }
 
     if ($WindowsUpdateCleanup -and -not $remoteConnectionLost) {
