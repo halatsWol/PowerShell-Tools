@@ -10,7 +10,7 @@ LONG DESCRIPTION
     Invoke-TempDataCleanup:
     This core function handles the cleanup of temporary files in user profiles and, optionally, system folders, system logs, and software-distribution content caches. Switches select what is included; without them only user-profile temp is cleaned. This function supports remote execution through PowerShell remoting.
 
-    Deletion is guarded and long-path safe: a drive root, the Windows directory, and System32 are always refused. Locked user-profile files are skipped (best-effort). Locked files in the system folders (IncludeSystemData / IncludeSystemLogs) and the content caches (IncludeCCMCache) are scheduled for deletion on the next reboot, so a restart is required to finish clearing those.
+    Deletion is guarded and long-path safe: a drive root, the Windows directory, and System32 are always refused. Locked user-profile files are skipped (best-effort). Locked files in the system folders (IncludeSystemData / IncludeSystemLogs) and the content caches (ContentCacheCleanup) are scheduled for deletion on the next reboot, so a restart is required to finish clearing those.
 
 
     Parameters:
@@ -18,14 +18,14 @@ LONG DESCRIPTION
     - ComputerName (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host.
     - IncludeSystemData (Optional): When this switch is used, system folders (such as Windows Temp, Prefetch, and SoftwareDistribution\Download) will also be cleaned up.
     - IncludeSystemLogs (Optional): When this switch is used, system log files and reporting folders (such as C:\Windows\Logs, C:\Windows\Minidump, and the Windows Error Reporting queues) will also be cleaned up. Logs held open by Windows services are scheduled for deletion on the next reboot.
-    - IncludeCCMCache (Optional): When this switch is provided, the cleanup will also clear the content/download caches of the software-distribution systems detected on the device: ConfigMgr/SCCM (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite, and the Intune Management Extension. The ConfigMgr cache is relocation-aware (found via WMI, the Software Center COM API, the registry, or the default under the Windows directory), so a moved cache (e.g. D:\SCCMCache) is found instead of assuming C:\Windows\ccmcache.
+    - ContentCacheCleanup (Optional, alias IncludeCCMCache): When this switch is provided, the cleanup will also clear the content/download caches of the software-distribution systems detected on the device: ConfigMgr/SCCM (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite, and the Intune Management Extension. The ConfigMgr cache is relocation-aware (found via WMI, the Software Center COM API, the registry, or the default under the Windows directory), so a moved cache (e.g. D:\SCCMCache) is found instead of assuming C:\Windows\ccmcache.
     - IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
     - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
     - IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
     - IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
-    - LowDisk (Optional): Performs a System Cleanup using CleanMgr with basic settings. Additionally performs  `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+    - LowDisk (Optional): Performs a System Cleanup using CleanMgr with basic settings. Additionally performs  `IncludeSystemData`, `ContentCacheCleanup` and `IncludeIconCache`
     - VeryLowDisk (Optional): Performs a System Cleanup as with 'LowDisk' with advanced settings. Additionally clears all Recycle-Bins and runs also -AutoClean
-    - AutoClean (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `IncludeCCMCache` and `IncludeIconCache`
+    - AutoClean (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `ContentCacheCleanup` and `IncludeIconCache`
     - ConfirmWarning (Optional): Bypass Confirmation when using 'VeryLowDisk'
     - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
     - Credentials (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
@@ -59,7 +59,7 @@ EXAMPLES
 
     Example 7: Clean user/system temp, system logs, and software-distribution content caches (locked items deferred to reboot)
     -----------------------------------------------
-    Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeSystemLogs -IncludeCCMCache
+    Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeSystemLogs -ContentCacheCleanup
 
 
 NOTES
@@ -67,7 +67,7 @@ NOTES
     Always test the script thoroughly in non-production environments to prevent unintended file deletions or other system disruptions.
     Incorrect use of the script may cause system instability or data loss.
 
-    Deletion is guarded (it refuses drive-root / Windows / System32 targets) and long-path safe. Locked files under the system folders (-IncludeSystemData / -IncludeSystemLogs) and the content caches (-IncludeCCMCache) are scheduled for deletion on the next reboot, so a restart is required to finish. Locked user-profile files are skipped (best-effort) and are never queued for boot-time deletion.
+    Deletion is guarded (it refuses drive-root / Windows / System32 targets) and long-path safe. Locked files under the system folders (-IncludeSystemData / -IncludeSystemLogs) and the content caches (-ContentCacheCleanup) are scheduled for deletion on the next reboot, so a restart is required to finish. Locked user-profile files are skipped (best-effort) and are never queued for boot-time deletion.
 
     !! If in Windows Terminal Settings, Terminal is set as Default Terminal Application, Powershell 5.1 may throw an error instead of prompting for User Credentials.
     As workaround you can pass on credentials using the `Get-CredentialObject` from the CredentialHander-Module (https://github.com/halatsWol/PowerShell-Tools/tree/main/modules/CredentialHandler)

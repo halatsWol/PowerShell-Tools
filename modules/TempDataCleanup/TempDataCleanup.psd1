@@ -109,9 +109,10 @@ PrivateData = @{
         # ReleaseNotes of this module
         ReleaseNotes = @'
 1.7
-- Content-cache cleanup (-IncludeCCMCache) is now relocation-aware and multi-system: ConfigMgr/SCCM
-  ccmcache (located via WMI, the Software Center COM API, the registry, or the default under Windows),
-  Windows Update, Adaptiva OneSite, and the Intune Management Extension. Absent systems are skipped.
+- Content-cache cleanup (-ContentCacheCleanup, alias -IncludeCCMCache) is now relocation-aware and
+  multi-system: ConfigMgr/SCCM ccmcache (located via WMI, the Software Center COM API, the registry, or
+  the default under Windows), Windows Update, Adaptiva OneSite, and the Intune Management Extension.
+  Absent systems are skipped.
 - Deletion is guarded (drive root / Windows / System32 are refused) and long-path safe. Locked items in
   the system folders (-IncludeSystemData / -IncludeSystemLogs) and content caches are scheduled for
   deletion on the next reboot; locked user-profile files are skipped (best-effort).

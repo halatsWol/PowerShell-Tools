@@ -17,7 +17,7 @@ This .exe-installer will install the following Modules:
 - `Repair System`: DISM/SFC timeouts are now reported correctly instead of being masked as a generic failure
 - `Repair System`: safety hardening - path handling can no longer turn an empty/garbage base into a drive-root or system-folder deletion (SCCM/CCM/WU), and a hung `ccmrepair.exe` is now timed out
 - `Repair System`: a failing device no longer aborts a caller's `foreach` loop; `-Quiet` now suppresses progress output; and the pre-flight ping tolerates name-resolution failures
-- `TempDataCleanup`: content-cache cleanup (`-IncludeCCMCache`) is now relocation-aware and multi-system - it clears ConfigMgr/SCCM (relocated caches included), Windows Update, Adaptiva OneSite and Intune (IME) caches instead of assuming `C:\Windows\ccmcache`
+- `TempDataCleanup`: content-cache cleanup (`-ContentCacheCleanup`, alias `-IncludeCCMCache`) is now relocation-aware and multi-system - it clears ConfigMgr/SCCM (relocated caches included), Windows Update, Adaptiva OneSite and Intune (IME) caches instead of assuming `C:\Windows\ccmcache`
 - `TempDataCleanup`: deletion is now guarded (a drive root, the Windows directory and `System32` are refused) and long-path safe, and locked items in the system folders and content caches are scheduled for removal on the next reboot
 
 
@@ -55,10 +55,11 @@ This .exe-installer will install the following Modules:
 
 #### New Features:
 
-- **Relocation-aware, multi-system content-cache cleanup (`-IncludeCCMCache`).** Instead of the hardcoded `C:\Windows\ccmcache`, the switch now auto-detects and clears the content/download caches of every software-distribution system present on the device: ConfigMgr/SCCM `ccmcache` (located via WMI `CacheConfig` → the `UIResourceMgr` COM API → the registry → the default under `%windir%`, so a relocated, custom-named cache such as `D:\SCCMCache` is honored), Windows Update (`SoftwareDistribution\Download`), **Adaptiva OneSite** (`<drive>:\AdaptivaCache`) and the **Intune Management Extension** (`IMECache` + the `Content\{Incoming,Staging,Staged}` staging folders). Systems that are not installed are skipped, and only the cache contents are removed (never the agent's install root).
+- **Relocation-aware, multi-system content-cache cleanup (`-ContentCacheCleanup`, alias `-IncludeCCMCache`).** Instead of the hardcoded `C:\Windows\ccmcache`, the switch now auto-detects and clears the content/download caches of every software-distribution system present on the device: ConfigMgr/SCCM `ccmcache` (located via WMI `CacheConfig` → the `UIResourceMgr` COM API → the registry → the default under `%windir%`, so a relocated, custom-named cache such as `D:\SCCMCache` is honored), Windows Update (`SoftwareDistribution\Download`), **Adaptiva OneSite** (`<drive>:\AdaptivaCache`) and the **Intune Management Extension** (`IMECache` + the `Content\{Incoming,Staging,Staged}` staging folders). Systems that are not installed are skipped, and only the cache contents are removed (never the agent's install root).
 - **Guarded, reboot-aware deletion.** All deletions now route through a guarded, long-path-safe (`\\?\`) helper that refuses any drive root, the Windows directory, or `System32`. Items locked in the system folders (`-IncludeSystemData` / `-IncludeSystemLogs`) and the content caches are scheduled for removal on the next reboot via the Session Manager's `PendingFileRenameOperations`; locked user-profile files are skipped (best-effort) and are never queued for boot-time deletion. A restart finishes clearing the deferred items.
 
 #### Changes:
 
 - `ModuleVersion` 1.6 → 1.7.
+- The content-cache switch is now `-ContentCacheCleanup` (matching Repair-System); `-IncludeCCMCache` is kept as an alias for backwards compatibility.
 - `-IncludeSystemLogs` is now documented in the README, about-help, and comment-based help (it was a working but undocumented switch).

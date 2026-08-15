@@ -688,7 +688,7 @@ function Invoke-TempDataCleanup {
     drive root, the Windows directory, and System32 are always refused. Files that are locked at the
     time of the run are handled according to where they live:
     - User-profile temp is best-effort - locked files are skipped and left in place.
-    - System folders (-IncludeSystemData / -IncludeSystemLogs) and the content caches (-IncludeCCMCache)
+    - System folders (-IncludeSystemData / -IncludeSystemLogs) and the content caches (-ContentCacheCleanup)
       schedule any still-locked item for deletion on the next reboot, so a restart is required to finish
       clearing those.
 
@@ -706,7 +706,8 @@ function Invoke-TempDataCleanup {
     as C:\Windows\Logs, C:\Windows\Minidump, and the Windows Error Reporting queues. Logs held open by
     Windows services are scheduled for deletion on the next reboot.
 
-    .PARAMETER IncludeCCMCache
+    .PARAMETER ContentCacheCleanup
+    Alias: -IncludeCCMCache (kept for backwards compatibility).
     If this switch is present, the cleanup will also clear the content/download caches of the
     software-distribution systems detected on the device. Each location is auto-detected and systems
     that are not installed are skipped:
@@ -739,7 +740,7 @@ function Invoke-TempDataCleanup {
     This Switch will Use the CleanMgr to clean up the system. This can be used with all other Switches.
     Please keep in mind that this may take a while to complete.
     Using this Switch will also set the following switches:
-    -IncludeSystemData, -IncludeCCMCache, -IncludeIconCache
+    -IncludeSystemData, -ContentCacheCleanup, -IncludeIconCache
 
     Following CleanMgr Settings will be set:
     - D3D Shader Cache
@@ -763,7 +764,7 @@ function Invoke-TempDataCleanup {
     Confirmation is required before proceeding with the cleanup (can be bypassed using -ConfirmWarning).
     If the Prompt is denied, the cleanup will fall back to -LowDisk
     Using this Switch will also set the following switches:
-    -IncludeSystemData, -IncludeCCMCache, -IncludeIconCache
+    -IncludeSystemData, -ContentCacheCleanup, -IncludeIconCache
 
     This will use the same CleanMgr Settings as -LowDisk, but will also set the following settings:
     - Update Cleanup
@@ -784,7 +785,7 @@ function Invoke-TempDataCleanup {
     .PARAMETER AutoClean
     Automatically deletes the files that are left behind after you upgrade Windows. This can be used with all other Switches.
     Using this Switch will also set the following switches:
-    -IncludeSystemData, -IncludeCCMCache, -IncludeIconCache
+    -IncludeSystemData, -ContentCacheCleanup, -IncludeIconCache
 
     .PARAMETER init
     When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
@@ -834,7 +835,7 @@ function Invoke-TempDataCleanup {
     This will clean up temporary files including Browser-Cache Data and Microsoft Teams cache from user profiles and system folders on Computer01.
 
     .EXAMPLE
-    Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeSystemLogs -IncludeCCMCache
+    Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeSystemLogs -ContentCacheCleanup
 
     This will clean up user and system temp, system logs, and the software-distribution content caches
     (ConfigMgr/SCCM ccmcache, Windows Update, Adaptiva, Intune) on Computer01. The ConfigMgr cache is
@@ -857,7 +858,7 @@ function Invoke-TempDataCleanup {
     In a Domain, powershell can be executed locally as the user wich has the necessary permissions on the remote computer.
 
     Deletion is guarded and long-path safe. Locked files under the system folders (-IncludeSystemData /
-    -IncludeSystemLogs) and the content caches (-IncludeCCMCache) are scheduled for deletion on the next
+    -IncludeSystemLogs) and the content caches (-ContentCacheCleanup) are scheduled for deletion on the next
     reboot, so a restart is required to finish. Locked user-profile files are skipped (best-effort) and
     are never queued for boot-time deletion.
 
@@ -893,7 +894,8 @@ function Invoke-TempDataCleanup {
         [switch]$IncludeSystemLogs,
 
         [Parameter(Mandatory=$false)]
-        [switch]$IncludeCCMCache,
+        [Alias('IncludeCCMCache')]
+        [switch]$ContentCacheCleanup,
 
         [Parameter(Mandatory=$false)]
         [switch]$IncludeBrowserData,
@@ -1097,7 +1099,7 @@ function Invoke-TempDataCleanup {
 
         if($LowDisk -or $VeryLowDisk){
             $IncludeSystemData=$true
-            $IncludeCCMCache=$true
+            $ContentCacheCleanup=$true
             $IncludeIconCache=$true
         }
 
@@ -1215,7 +1217,7 @@ function Invoke-TempDataCleanup {
             # Content caches run as their own serialized step (ConfigMgr ccmcache is relocation-aware,
             # plus Windows Update / Adaptiva / Intune). Kept after system cleanup and Wait-Job'd so the
             # reboot-scheduling registry writes never overlap the system-cleanup ones.
-            if( $IncludeCCMCache) {
+            if( $ContentCacheCleanup) {
                 Write-Host "Cleaning up Content Caches (ConfigMgr / Windows Update / Adaptiva / Intune)"
                 if ($remote) {
                     $cacheCleanupJob = Invoke-Command @invokeParams -ScriptBlock $cacheCleanupBlock -ArgumentList $logfile, $VerboseOption, $VerboseLogFile -AsJob
