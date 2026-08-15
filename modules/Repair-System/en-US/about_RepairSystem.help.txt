@@ -109,7 +109,18 @@ EXAMPLES
     non-interactively, add -ResetUpdateHistory -IncludeLegacyRepair -Force.
 
 
-    Example 8: Decode a previously produced exit code
+    Example 8: Clear the content/download caches of all detected distribution systems
+    -----------------------------------------------
+    PS C:\> Repair-System -ComputerName <remote-device> -ContentCacheCleanup
+
+    Auto-detects and clears the caches of ConfigMgr (ccmcache), Windows Update (SoftwareDistribution\
+    Download), Adaptiva OneSite (<drive>:\AdaptivaCache) and the Intune Management Extension (IMECache +
+    Content staging). Systems that are not installed are skipped, and only cache contents are removed.
+    Items locked by a running agent are deferred to the next reboot, in which case the step reports 3010.
+    The alias -sccmCleanup behaves identically.
+
+
+    Example 9: Decode a previously produced exit code
     -----------------------------------------------
     PS C:\> Repair-System -AnalyzeExitCode "0000000000"
 
@@ -117,7 +128,7 @@ EXAMPLES
     description of each step's result. Runs standalone; performs no repair actions.
 
 
-    Example 9: Access result properties after a run
+    Example 10: Access result properties after a run
     -----------------------------------------------
     PS C:\> Repair-System -noSfc
     PS C:\> $RepairSystemResult.Actions
@@ -127,14 +138,14 @@ EXAMPLES
     steps were requested; Analysis gives a per-step status breakdown.
 
 
-    Example 10: Inline property access
+    Example 11: Inline property access
     -----------------------------------------------
     PS C:\> (Repair-System -ComputerName SomeDevice).DetailedExitCode
 
     Retrieves only the detailed exit code string from a remote run.
 
 
-    Example 11: Filter analysis to only active steps
+    Example 12: Filter analysis to only active steps
     -----------------------------------------------
     PS C:\> $r = Repair-System
     PS C:\> $r.Analysis | Where-Object { $_.Status -ne 'Not requested' } | Format-Table Position, Label, Status
@@ -179,6 +190,8 @@ OUTPUT
                                 #   DISMScanHealth, DISMRestoreHealth,
                                 #   DISMAnalyzeComponentStore, DISMComponentCleanup, SFC,
                                 #   SCCMCleanup, WindowsUpdateCleanup, RepairCCM
+                                #   (SCCMCleanup reflects the -ContentCacheCleanup step; the
+                                #    property name is kept for backwards compatibility.)
         $r.Analysis             # array of per-step objects:
                                 #   Position, Label, Value, Status
                                 #   Status: Success | Not requested | Skipped (not needed) |

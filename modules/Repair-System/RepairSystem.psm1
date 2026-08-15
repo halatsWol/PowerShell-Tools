@@ -2003,6 +2003,8 @@ function Repair-System {
     This function performs a series of system repair commands locally or on a remote computer. It first checks the availability of the remote machine by pinging it.
     Then, depending on the options specified, it executes `sfc /scannow` and  `DISM` commands to scan and repair the Windows image.
 
+    Optional steps clean up the Windows Component Store, reset the Windows Update client (history-preserving), clear the content/download caches of the installed software-distribution systems (ConfigMgr / Adaptiva / Intune / Windows Update), and repair the ConfigMgr client. If a DISM/SFC step does not complete, a one-shot repair is scheduled to re-run the full DISM + SFC pass once after the next reboot (unless `-NoRebootRepair` is specified).
+
     Progress and status are printed to the local console. Step outputs are written to temporary log files, then consolidated into a single master repair log (`SystemRepair_<PC>_<date>.log`) in CMTrace-compatible format; individual step log files are removed after embedding. On remote runs, the master log and a CBS/DISM system log archive are transferred to the local machine.
 
     .PARAMETER ComputerName
@@ -2010,7 +2012,7 @@ function Repair-System {
 
     .PARAMETER remoteShareDrive
     The ShareDrive of the Remote-Device on which Windows is installed. If non is provided, Default-Value 'C$' will be used
-    The Command `Repair-RemoteSystem -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path `\\SomeDevice\D$\`
+    The Command `Repair-System -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path `\\SomeDevice\D$\`
 
     .PARAMETER noSfc
     When specified, the `SCF /SCANNOW` command is skipped.
@@ -2102,7 +2104,9 @@ function Repair-System {
         LogPath          [string] Full path to the master repair log. $null for early-exit (pre-log) failures.
         Actions          [PSCustomObject] Which steps were requested: DISMScanHealth, DISMRestoreHealth,
                                           DISMAnalyzeComponentStore, DISMComponentCleanup, SFC, SCCMCleanup,
-                                          WindowsUpdateCleanup, RepairCCM — each a [bool].
+                                          WindowsUpdateCleanup, RepairCCM — each a [bool]. (SCCMCleanup
+                                          reflects the -ContentCacheCleanup step; the property name is kept
+                                          for backwards compatibility.)
         Analysis         [PSCustomObject[]] Per-step breakdown: Position, Label, Value, Status.
                                             Status is one of: Success, Not requested, Skipped (not needed),
                                             Skipped (connection lost), Success (restart required), Timed out,
@@ -2166,9 +2170,14 @@ function Repair-System {
     Analyses the Component Store and removes old Data which is not required anymore. Cannot be used with '-noDism'
 
     .EXAMPLE
-    Repair-RemoteSystem <remote-device> -WindowsUpdateCleanup
+    Repair-System -ComputerName <remote-device> -WindowsUpdateCleanup
 
-    stops the Windows Update and related Services, renames the SoftwareDistribution and catroot2 folders, and restarts the services.
+    Resets the Windows Update client on `<remote-device>`: stops the update services, clears SoftwareDistribution (keeping the update history when the DataStore is healthy), resets catroot2, and clears the BITS transfer queue. Items locked by a running process are deferred to the next reboot, in which case the step reports 3010. Add `-ResetUpdateHistory` to also discard the history, or `-IncludeLegacyRepair -Force` to run the invasive legacy repairs non-interactively.
+
+    .EXAMPLE
+    Repair-System -ComputerName <remote-device> -ContentCacheCleanup
+
+    Clears the content/download caches of every distribution system detected on `<remote-device>` - ConfigMgr (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite (<drive>:\AdaptivaCache) and the Intune Management Extension (IMECache + Content staging). Absent systems are skipped, and locked items are deferred to the next reboot (the step then reports 3010). The alias `-sccmCleanup` behaves identically.
 
     .LINK
     https://github.com/halatsWol/PowerShell-Tools
@@ -2250,7 +2259,7 @@ function Repair-System {
 
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2026-08-13
+    Date: 2026-08-15
     #>
 
     [CmdletBinding(DefaultParameterSetName='Default')]
