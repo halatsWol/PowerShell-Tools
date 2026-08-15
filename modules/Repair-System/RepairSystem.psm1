@@ -670,7 +670,7 @@ function Invoke-SFC {
                     $sfcKilledByTimeout = $true
                     try {
                         $process.Kill()
-                        $process.WaitForExit(30000); $process.WaitForExit()
+                        [void]$process.WaitForExit(30000); $process.WaitForExit()
                         Write-StepLogEntry $sfcLog "!!`t`t> $sfcStucknotify"
                         $sfcStuckTerminate = "Sfc.exe terminated."
                         Write-StepLogEntry $sfcLog "!!`t`t> $sfcStuckTerminate"
@@ -685,16 +685,23 @@ function Invoke-SFC {
             }
             $process.WaitForExit()
             $sfcExitCode = Get-RepairSystemProcessResult -Process $process -StartTime $SfcStartTime -KilledByTimeout:$sfcKilledByTimeout
-            $logContent = Get-Content $sfcLog -Raw
-            $logContent = $logContent -replace '[^\x00-\x7F]', ''
-            $logContent = $logContent -replace [char]0
-            Set-Content $sfcLog -Value $logContent
+            # $sfcExitCode is captured above, before this log cleanup: right after a timeout kill a
+            # log handle may still be held, so reading it can throw - keep that out of the outer
+            # catch so a cleanup hiccup can't overwrite the step result (e.g. a -2 timeout as a 1).
+            try {
+                $logContent = Get-Content $sfcLog -Raw
+                $logContent = $logContent -replace '[^\x00-\x7F]', ''
+                $logContent = $logContent -replace [char]0
+                Set-Content $sfcLog -Value $logContent
 
-            $errorLogContent = Get-Content $sfcErrorLog -Raw
-            $errorLogContent = $errorLogContent -replace '[^\x00-\x7F]', ''
-            $errorLogContent = $errorLogContent -replace [char]0
-            Write-StepLogEntry $sfcLog "`r`n`r`n// Start Error-Log:`r`n$errorLogContent`r`n// End Error-Log"
-            Remove-Item -Path $sfcErrorLog -Force -ErrorAction SilentlyContinue
+                $errorLogContent = Get-Content $sfcErrorLog -Raw
+                $errorLogContent = $errorLogContent -replace '[^\x00-\x7F]', ''
+                $errorLogContent = $errorLogContent -replace [char]0
+                Write-StepLogEntry $sfcLog "`r`n`r`n// Start Error-Log:`r`n$errorLogContent`r`n// End Error-Log"
+                Remove-Item -Path $sfcErrorLog -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-StepLogEntry $sfcLog "!!`t`t> Post-run log handling failed (step result preserved): $_" -Silent
+            }
             return $sfcExitCode
         } catch {
             $errorMessage = "An error occurred while performing SFC: `r`n$_"
@@ -744,7 +751,7 @@ function Invoke-DISMScan {
                 try {
                     $process.Kill()
                     Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    $process.WaitForExit(30000); $process.WaitForExit()
+                    [void]$process.WaitForExit(30000); $process.WaitForExit()
                     Write-StepLogEntry $dismScanLog "!!`t`t> $dismStucknotify"
                     $dismStuckTerminate = "Dism.exe terminated."
                     Write-StepLogEntry $dismScanLog "!!`t`t> $dismStuckTerminate"
@@ -759,11 +766,18 @@ function Invoke-DISMScan {
         }
 
         $process.WaitForExit()
-        $dismLogContent = Get-Content $dismErrorLog -Raw
-        Write-StepLogEntry $dismScanLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-
-        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
+        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
+        # Capture the result before the log cleanup below: right after a timeout kill the error-log
+        # handle may still be held, so reading it can throw - and that must not fall through to the
+        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
+        try {
+            $dismLogContent = Get-Content $dismErrorLog -Raw
+            Write-StepLogEntry $dismScanLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
+            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-StepLogEntry $dismScanLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
+        }
+        return $dismResult
     } catch {
         $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
         Write-Error $errorMessage
@@ -831,7 +845,7 @@ function Invoke-DISMRestore {
                 try {
                     $process.Kill()
                     Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    $process.WaitForExit(30000); $process.WaitForExit()
+                    [void]$process.WaitForExit(30000); $process.WaitForExit()
                     Write-StepLogEntry $dismRestoreLog "!!`t`t> $dismStucknotify"
                     $dismStuckTerminate = "Dism.exe terminated."
                     Write-StepLogEntry $dismRestoreLog "!!`t`t> $dismStuckTerminate"
@@ -846,11 +860,18 @@ function Invoke-DISMRestore {
         }
 
         $process.WaitForExit()
-        $dismLogContent = Get-Content $dismErrorLog -Raw
-        Write-StepLogEntry $dismRestoreLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-
-        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
+        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
+        # Capture the result before the log cleanup below: right after a timeout kill the error-log
+        # handle may still be held, so reading it can throw - and that must not fall through to the
+        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
+        try {
+            $dismLogContent = Get-Content $dismErrorLog -Raw
+            Write-StepLogEntry $dismRestoreLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
+            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-StepLogEntry $dismRestoreLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
+        }
+        return $dismResult
     } catch {
         $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
         Write-Error $errorMessage
@@ -900,7 +921,7 @@ function Invoke-DISMAnalyzeComponentStore {
                 try {
                     $process.Kill()
                     Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    $process.WaitForExit(30000); $process.WaitForExit()
+                    [void]$process.WaitForExit(30000); $process.WaitForExit()
                     Write-StepLogEntry $analyzeComponentLog "!!`t`t> $dismStucknotify"
                     $dismStuckTerminate = "Dism.exe terminated."
                     Write-StepLogEntry $analyzeComponentLog "!!`t`t> $dismStuckTerminate"
@@ -914,11 +935,18 @@ function Invoke-DISMAnalyzeComponentStore {
             }
         }
         $process.WaitForExit()
-        $dismLogContent = Get-Content $dismErrorLog -Raw
-        Write-StepLogEntry $analyzeComponentLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-
-        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
+        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
+        # Capture the result before the log cleanup below: right after a timeout kill the error-log
+        # handle may still be held, so reading it can throw - and that must not fall through to the
+        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
+        try {
+            $dismLogContent = Get-Content $dismErrorLog -Raw
+            Write-StepLogEntry $analyzeComponentLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
+            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-StepLogEntry $analyzeComponentLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
+        }
+        return $dismResult
     } catch {
         $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
         Write-Error $errorMessage
@@ -985,7 +1013,7 @@ function Invoke-DISMComponentStoreCleanup {
                 try {
                     $process.Kill()
                     Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    $process.WaitForExit(30000); $process.WaitForExit()
+                    [void]$process.WaitForExit(30000); $process.WaitForExit()
                     Write-StepLogEntry $componentCleanupLog "!!`t`t> $dismStucknotify"
                     $dismStuckTerminate = "Dism.exe terminated."
                     Write-StepLogEntry $componentCleanupLog "!!`t`t> $dismStuckTerminate"
@@ -1000,11 +1028,18 @@ function Invoke-DISMComponentStoreCleanup {
         }
 
         $process.WaitForExit()
-        $dismLogContent = Get-Content $dismErrorLog -Raw
-        Write-StepLogEntry $componentCleanupLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-        Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-
-        return (Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout)
+        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
+        # Capture the result before the log cleanup below: right after a timeout kill the error-log
+        # handle may still be held, so reading it can throw - and that must not fall through to the
+        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
+        try {
+            $dismLogContent = Get-Content $dismErrorLog -Raw
+            Write-StepLogEntry $componentCleanupLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
+            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-StepLogEntry $componentCleanupLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
+        }
+        return $dismResult
     } catch {
         $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
         Write-Error $message
@@ -1766,7 +1801,7 @@ function Invoke-DismSfcRebootRepair {
     $cleanupLog = Join-Path $RepairFolder "${ts}_DISM_componentStore-cleanup.log"
     $sfcLog     = Join-Path $RepairFolder "${ts}_sfc-scannow.log"
 
-    $scanExit = [int]((Invoke-DISMScan $scanLog $ChangeTimeout $false $false) | Select-Object -First 1)
+    $scanExit = [int]((Invoke-DISMScan $scanLog $ChangeTimeout $false $false) | Select-Object -Last 1)
     Write-RepairLog -Message "DISM ScanHealth completed; ExitCode=$scanExit;" -Component "DISM-ScanHealth" -LogPath $masterLog
     Start-LogAppendJob -StepLogPath $scanLog -MasterLogPath $masterLog -StepName "DISM-ScanHealth" -Component "DISM-ScanHealth" -Sync
 
@@ -1793,7 +1828,12 @@ function Invoke-DismSfcRebootRepair {
     Write-RepairLog -Message "Repair-System reboot re-run completed;" -Component "RebootRerun" -LogPath $masterLog -StartLogEntry
     Write-RepairLog -Message "No further re-runs are scheduled (single attempt by design). Log: $masterLog;" -Component "RebootRerun" -LogPath $masterLog -EndLogEntry
 
-    # self-cleanup: remove the generated script (the log stays)
+    # self-cleanup: the per-step logs were embedded into the master log above (same as the main
+    # Repair-System run, which deletes them after embedding), so remove them and the generated
+    # script - only the master reboot-rerun log stays.
+    foreach ($stepLog in @($scanLog, $restoreLog, $analyzeLog, $cleanupLog, $sfcLog)) {
+        try { if (Test-Path -LiteralPath $stepLog) { Remove-Item -LiteralPath $stepLog -Force -ErrorAction SilentlyContinue } } catch {}
+    }
     try { if (Test-Path -LiteralPath $SelfScriptPath) { Remove-Item -LiteralPath $SelfScriptPath -Force -ErrorAction SilentlyContinue } } catch {}
 }
 
@@ -2410,7 +2450,7 @@ function Repair-System {
         } else { $dismScanResult=Invoke-DISMScan $dismScanLog $ChangeTimeout $Quiet $VerboseOption}
 
         if (-not $remoteConnectionLost) {
-            $dismScanResult = [int]($dismScanResult | Select-Object -First 1)
+            $dismScanResult = [int]($dismScanResult | Select-Object -Last 1)
             $ExitCode[1]=$dismScanResult
             $dismScanResultString = $dismScanResult.ToString()
         } else { $ExitCode[1]=5 }
@@ -2605,9 +2645,9 @@ function Repair-System {
         if (-not $remoteConnectionLost) {
             $updateCleanupExit = [int]($updateCleanupExit | Select-Object -Last 1)
             if ($updateCleanupExit -eq 3010) {
-                Write-Warning "`r`nWindows Update Cleanup on $ComputerName scheduled some locked items for removal on the next reboot. Please restart the device to finish."
+                Write-Warning "`r`nWindows Update Cleanup on $targetDevice scheduled some locked items for removal on the next reboot. Please restart the device to finish."
             } elseif ($updateCleanupExit -ne 0) {
-                Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $ComputerName. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
+                Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $targetDevice. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
             }
             $ExitCode[7]=$updateCleanupExit
         } else { $ExitCode[7]=5 }
