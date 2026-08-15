@@ -54,21 +54,43 @@ function Write-RepairLog {
     $logDir    = [System.IO.Path]::GetDirectoryName($LogPath)
     if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
+    # The master log is a contended file: a CMTrace viewer, antivirus / search-indexer scans, or the OS
+    # lagging to release the handle right after the previous append can all briefly lock it. Append with
+    # retry and NEVER throw - a dropped log line must never abort the actual repair. -Encoding UTF8 skips
+    # the BOM-detection read that Add-Content does by default, which is the open that fails on a
+    # transiently held file (the same hardening Write-StepLogEntry already uses for step logs).
+    $appendLog = {
+        param($path, $value)
+        for ($i = 0; $i -lt 10; $i++) {
+            try { Add-Content -Path $path -Value $value -Encoding UTF8 -ErrorAction Stop; return } catch { Start-Sleep -Milliseconds 200 }
+        }
+        Write-Warning "Repair-System: a log entry could not be written to '$(Split-Path $path -Leaf)' after retries; continuing."
+    }
+    # Reads the open-entry state file, tolerating a transient lock or corrupt content (returns $null).
+    $readState = {
+        param($sp)
+        for ($i = 0; $i -lt 10; $i++) {
+            try { return (Get-Content $sp -Raw -ErrorAction Stop | ConvertFrom-Json) } catch { Start-Sleep -Milliseconds 200 }
+        }
+        return $null
+    }
+
     function Close-UnclosedEntry {
         if (Test-Path $statePath) {
-            $state = Get-Content $statePath -Raw | ConvertFrom-Json
-            Remove-Item $statePath -Force
+            $state = & $readState $statePath
+            Remove-Item $statePath -Force -ErrorAction SilentlyContinue
+            if ($null -eq $state) { return }
             $autoCloseTime = [datetime]::Parse($state.Time)
             $dateAuto = $autoCloseTime.ToString("MM-dd-yyyy")
             $timeAuto = $autoCloseTime.ToString("HH:mm:ss.fff")
             $tzAuto   = if ($tzOffset -ge 0) { "+{0:000}" -f $tzOffset } else { "-{0:000}" -f [math]::Abs($tzOffset) }
-            Add-Content -Path $state.LogPath -Value "]LOG]!><time=""$timeAuto$tzAuto"" date=""$dateAuto"" component=""$($state.Component)"" context=""autoClosedByFollowingEntry"" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
+            & $appendLog $state.LogPath "]LOG]!><time=""$timeAuto$tzAuto"" date=""$dateAuto"" component=""$($state.Component)"" context=""autoClosedByFollowingEntry"" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
         }
     }
 
     if ($StartLogEntry -and $EndLogEntry) {
         Close-UnclosedEntry
-        Add-Content -Path $LogPath -Value "<![LOG[$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
+        & $appendLog $LogPath "<![LOG[$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
         return
     }
 
@@ -76,26 +98,29 @@ function Write-RepairLog {
         'Start' {
             Close-UnclosedEntry
             if ($null -eq $Message) { $Message = "LogEntry:" }
-            Add-Content -Path $LogPath -Value "<![LOG[$Message"
+            & $appendLog $LogPath "<![LOG[$Message"
             @{ Component = $Component; Source = $resolvedSource; LogPath = $LogPath; Time = $timestamp.ToString("o") } |
                 ConvertTo-Json -Compress | Out-File -FilePath $statePath -Encoding UTF8 -Force
         }
         'Add' {
-            if ($Message) { Add-Content -Path $LogPath -Value $Message }
+            if ($Message) { & $appendLog $LogPath $Message }
         }
         'End' {
             if ($null -eq $Message) { $Message = "" }
+            $state = $null
             if (Test-Path $statePath) {
-                $state = Get-Content $statePath -Raw | ConvertFrom-Json
-                Remove-Item $statePath -Force
-                Add-Content -Path $state.LogPath -Value "$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$($state.Component)"" context="""" type=""1"" thread=""$threadId"" file=""$($state.Source)"">"
+                $state = & $readState $statePath
+                Remove-Item $statePath -Force -ErrorAction SilentlyContinue
+            }
+            if ($null -ne $state) {
+                & $appendLog $state.LogPath "$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$($state.Component)"" context="""" type=""1"" thread=""$threadId"" file=""$($state.Source)"">"
             } else {
-                Add-Content -Path $LogPath -Value "$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
+                & $appendLog $LogPath "$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
             }
         }
         default {
             Close-UnclosedEntry
-            Add-Content -Path $LogPath -Value "<![LOG[$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
+            & $appendLog $LogPath "<![LOG[$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
         }
     }
 }
@@ -146,9 +171,18 @@ function Start-LogAppendJob {
         $tzOffset = (Get-TimeZone).BaseUtcOffset.TotalMinutes
         $tzFmt   = if ($tzOffset -ge 0) { "+{0:000}" -f $tzOffset } else { "-{0:000}" -f [math]::Abs($tzOffset) }
         $tid     = [System.Diagnostics.Process]::GetCurrentProcess().Id
-        Add-Content -Path $masterLogPath -Value "<![LOG[--- $stepName log ---"
-        Add-Content -Path $masterLogPath -Value $content
-        Add-Content -Path $masterLogPath -Value "--- end $stepName log ---]LOG]!><time=""$timeStr$tzFmt"" date=""$dateStr"" component=""$component"" context="""" type=""1"" thread=""$tid"" file=""LogAppendJob"">"
+        # Same contended-file hardening as Write-RepairLog: retry, and -Encoding UTF8 to skip the
+        # BOM-detection read that fails on a transiently locked file (also keeps the master log a
+        # single uniform encoding).
+        $appendMaster = {
+            param($mp, $v)
+            for ($k = 0; $k -lt 10; $k++) {
+                try { Add-Content -Path $mp -Value $v -Encoding UTF8 -ErrorAction Stop; return } catch { Start-Sleep -Milliseconds 200 }
+            }
+        }
+        & $appendMaster $masterLogPath "<![LOG[--- $stepName log ---"
+        & $appendMaster $masterLogPath $content
+        & $appendMaster $masterLogPath "--- end $stepName log ---]LOG]!><time=""$timeStr$tzFmt"" date=""$dateStr"" component=""$component"" context="""" type=""1"" thread=""$tid"" file=""LogAppendJob"">"
     }
     if ($Sync) {
         & $appendBlock $StepLogPath $MasterLogPath $StepName $Component
