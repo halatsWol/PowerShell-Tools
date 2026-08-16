@@ -17,6 +17,7 @@ This .exe-installer will install the following Modules:
 - `Repair System`: DISM/SFC timeouts are now reported correctly instead of being masked as a generic failure
 - `Repair System`: safety hardening - path handling can no longer turn an empty/garbage base into a drive-root or system-folder deletion (SCCM/CCM/WU), and a hung `ccmrepair.exe` is now timed out
 - `Repair System`: a failing device no longer aborts a caller's `foreach` loop; `-Quiet` now suppresses progress output; and the pre-flight ping tolerates name-resolution failures
+- `Repair System`: a transient lock on the master log (a CMTrace viewer, antivirus, or the search indexer) no longer aborts the run
 - `TempDataCleanup`: content-cache cleanup (`-ContentCacheCleanup`, alias `-IncludeCCMCache`) is now relocation-aware and multi-system - it clears ConfigMgr/SCCM (relocated caches included), Windows Update, Adaptiva OneSite and Intune (IME) caches instead of assuming `C:\Windows\ccmcache`
 - `TempDataCleanup`: deletion is now guarded (a drive root, the Windows directory and `System32` are refused) and long-path safe, and locked items in the system folders and content caches are scheduled for removal on the next reboot
 
@@ -44,6 +45,7 @@ This .exe-installer will install the following Modules:
 - **`-Quiet` is honored for progress output.** The SFC/DISM/cache "executing…" lines, the Repair-CCM step announcements, and the completion summary are now gated on `-Quiet` (they previously printed regardless); the file logs are unaffected.
 - **Pre-flight ping tolerates name-resolution failures.** `Test-Connection` returns `$true`/`$false` for a normally unreachable host but still throws on a DNS-resolution failure; that throw is now caught and treated as unreachable (exit `2`) instead of escaping unhandled.
 - **Path-safety hardening against empty-base deletion.** Every cleanup resolves the Windows directory from `[Environment]::GetFolderPath('Windows')` (robust against an empty `$env:windir`), validates it as an absolute, existing, drive-qualified directory, and builds/deletes paths only from that validated base; `Remove-PathReliable` additionally refuses any target that is a drive root, the Windows directory, or `System32` - blocking both the immediate delete and the reboot-deferred one. A hung `ccmrepair.exe` is now bounded by a 45-minute timeout so it cannot block the whole run.
+- **Logging no longer aborts the run on a transient file lock.** Writes to the master log (`SystemRepair_*.log`) are retried and never throw. A CMTrace viewer open on the log, an antivirus real-time scan, the search indexer, or the OS lagging to release the handle after the previous append could briefly lock the file and raise "the process cannot access the file … because it is being used by another process", which previously aborted the whole run. Writes now retry (with `-Encoding UTF8`, which skips the read that fails on a held file) and, if a line still cannot be written, degrade to a warning instead of crashing the repair - the same hardening the step logs already had.
 
 #### Changes:
 
