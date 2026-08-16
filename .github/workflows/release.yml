@@ -13,6 +13,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Sync version numbers from module manifests
+        shell: pwsh
+        run: ./make/Sync-ReleaseVersions.ps1 -Tag '${{ github.ref_name }}'
+
       - name: Check installer script exists
         run: |
           if (!(Test-Path 'make/Modules-Suite-Installer-Script_UserInstall.iss')) {
@@ -40,6 +44,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Sync version numbers from module manifests
+        shell: pwsh
+        run: ./make/Sync-ReleaseVersions.ps1 -Tag '${{ github.ref_name }}'
 
       - name: Check installer script exists
         run: |
@@ -70,6 +78,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Sync version numbers from module manifests
+        shell: pwsh
+        run: ./make/Sync-ReleaseVersions.ps1 -Tag '${{ github.ref_name }}'
 
       - name: Get tag name
         id: vars
