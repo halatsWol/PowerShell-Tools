@@ -1,3 +1,4 @@
+$(
 # =====================================================================
 # Find files that would exceed the SharePoint/OneDrive path limit
 # after being moved into a SharePoint sync folder.
@@ -162,3 +163,4 @@ Write-Host "Affected files   : $($Results.Count)"
 Write-Host ""
 Write-Host "Detailed CSV : $DetailedCsv" -ForegroundColor Green
 Write-Host "Summary CSV  : $SummaryCsv" -ForegroundColor Green
+)
