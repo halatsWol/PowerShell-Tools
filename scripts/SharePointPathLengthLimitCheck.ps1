@@ -59,6 +59,7 @@ $MaxLength = 259
 
 if (!(Test-Path $SourceRoot)) {
     Write-Host "Source path not found: $SourceRoot" -ForegroundColor Red
+    Read-Host "Press Enter to continue"
     exit
 }
 
@@ -90,6 +91,7 @@ $Results = foreach ($File in Get-ChildItem -Path $SourceRoot -File -Recurse -For
 if (-not $Results) {
     Write-Host ""
     Write-Host "No files would exceed $MaxLength characters." -ForegroundColor Green
+    Read-Host "Press Enter to continue"
     return
 }
 
