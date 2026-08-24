@@ -163,4 +163,5 @@ Write-Host "Affected files   : $($Results.Count)"
 Write-Host ""
 Write-Host "Detailed CSV : $DetailedCsv" -ForegroundColor Green
 Write-Host "Summary CSV  : $SummaryCsv" -ForegroundColor Green
-pause)
+Pause
+)
