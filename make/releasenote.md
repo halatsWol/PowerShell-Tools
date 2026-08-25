@@ -1,25 +1,18 @@
-Easy installer for PowerShell-Tools v1.6.0
+Easy installer for PowerShell-Tools v1.7.0
 
 This .exe-installer will install the following Modules:
 
-- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.6.0/modules/Repair-System) (v1.9)
-- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.6.0/modules/TempDataCleanup) (v1.7)
-- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.6.0/modules/Shortcuts) (v1.0)
-- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.6.0/modules/CredentialHandler) (v1.0)
+- [RepairSystem](https://github.com/halatsWol/PowerShell-Tools/tree/v1.7.0/modules/Repair-System) (v1.10)
+- [TempDataCleanup](https://github.com/halatsWol/PowerShell-Tools/tree/v1.7.0/modules/TempDataCleanup) (v1.7)
+- [Shortcuts](https://github.com/halatsWol/PowerShell-Tools/tree/v1.7.0/modules/Shortcuts) (v1.0)
+- [CredentialHandler](https://github.com/halatsWol/PowerShell-Tools/tree/v1.7.0/modules/CredentialHandler) (v1.0)
 
 # Change Log:
 
 
-- `Repair System`: multi-system content-cache cleanup - the former `-sccmCleanup` is now `-ContentCacheCleanup` and also clears Adaptiva OneSite and Intune (IME) caches, not just ConfigMgr + Windows Update
-- `Repair System`: Windows Update reset reworked to preserve the update history and tolerate locked files
-- `Repair System`: automatic one-shot DISM/SFC re-run after the next reboot when a repair step could not complete
-- `Repair System`: more robust ConfigMgr cache-location detection (WMI can be empty even on a healthy client), plus WMI class re-registration for a broken client
-- `Repair System`: DISM/SFC timeouts are now reported correctly instead of being masked as a generic failure
-- `Repair System`: safety hardening - path handling can no longer turn an empty/garbage base into a drive-root or system-folder deletion (SCCM/CCM/WU), and a hung `ccmrepair.exe` is now timed out
-- `Repair System`: a failing device no longer aborts a caller's `foreach` loop; `-Quiet` now suppresses progress output; and the pre-flight ping tolerates name-resolution failures
-- `Repair System`: a transient lock on the master log (a CMTrace viewer, antivirus, or the search indexer) no longer aborts the run
-- `TempDataCleanup`: content-cache cleanup (`-ContentCacheCleanup`, alias `-IncludeCCMCache`) is now relocation-aware and multi-system - it clears ConfigMgr/SCCM (relocated caches included), Windows Update, Adaptiva OneSite and Intune (IME) caches instead of assuming `C:\Windows\ccmcache`
-- `TempDataCleanup`: deletion is now guarded (a drive root, the Windows directory and `System32` are refused) and long-path safe, and locked items in the system folders and content caches are scheduled for removal on the next reboot
+- `Repair System`: new `-RepairWMI` step - a non-destructive WMI repository check + repair (verify, then salvage if inconsistent), run before the WMI-dependent ConfigMgr/CCM steps
+- `Repair System`: a DISM AnalyzeComponentStore that recommends a component-store cleanup is no longer misread as "terminated externally" (which had also skipped the cleanup and scheduled a needless reboot re-run)
+- `Repair System`: clearer exit-code analysis - a `0` field now reads as "success or not requested" instead of ambiguously "or skipped"
 
 
 
@@ -31,37 +24,14 @@ This .exe-installer will install the following Modules:
 
 #### New Features:
 
-- **Multi-system content-cache cleanup (`-ContentCacheCleanup`, alias `-sccmCleanup`).** The cache cleanup now auto-detects and clears the content/download caches of every software-distribution system present on the device: ConfigMgr (`ccmcache`), Windows Update (`SoftwareDistribution\Download`), **Adaptiva OneSite** (`<drive>:\AdaptivaCache`, on every fixed drive it lives on) and the **Intune Management Extension** (`IMECache` + the `Content\{Incoming,Staging,Staged}` staging folders). Systems that are not installed are skipped, and only the cache contents are removed (never the agent's install root). Items a running agent holds open are cleared best-effort now and the remainder is scheduled for removal on the next reboot (via `PendingFileRenameOperations`), in which case the step reports `3010` ("restart required"). The old `-sccmCleanup` switch is kept as an alias and now performs this broader cleanup.
-- **History-preserving, lock-tolerant Windows Update reset (`-WindowsUpdateCleanup` reworked).** Replaces the old rename-to-`.bak` + MSDT-troubleshooter approach (a frequent source of hangs and "Close operation" transport errors) with a direct, deterministic reset: it stops the update services (medic/orchestrator first so they can't resurrect them), clears `SoftwareDistribution` while **keeping the update history** — the `DataStore` database is integrity-checked with `esentutl` and only rebuilt when it is actually corrupt — resets `catroot2`, and clears the Delivery Optimization job queue and the BITS transfer queue. Anything a running process still holds open is scheduled for deletion on the next reboot (via the Session Manager's `PendingFileRenameOperations`, processed before any service starts); when that happens the step reports `3010` ("Success (restart required)") and a restart completes the removal, after which Windows rebuilds the affected caches automatically.
-- **`-ResetUpdateHistory`.** Opt-in switch (only meaningful with `-WindowsUpdateCleanup`) that always wipes and rebuilds the `DataStore`, deliberately discarding the Windows Update history instead of preserving it.
-- **`-IncludeLegacyRepair` / `-Force`.** Opt-in legacy repairs (only with `-WindowsUpdateCleanup`): re-registering the Windows Update COM DLLs, resetting the Winsock catalog, and rewriting the security descriptors of the `wuauserv`/`bits` services. These can affect networking and require a reboot, so an interactive run prompts for confirmation; `-Force` skips the prompt and is required to run legacy repair in a non-interactive session.
-- **Automatic one-shot reboot re-run for incomplete DISM/SFC (default on; `-NoRebootRepair` to disable).** If any DISM/SFC step does not truly complete during a run — it timed out, was terminated, produced an empty/incomplete log, or reported a reboot-pending / could-not-repair state — Repair-System registers a single self-deleting scheduled task that re-runs the full DISM + SFC pass once after the next reboot and writes its own Repair-System log under `C:\_IT-RebootRepair`. The task deletes itself before running, so it runs at most once and never loops. Pass `-NoRebootRepair` to opt out.
+- **WMI repository repair (`-RepairWMI`).** New opt-in step that checks the WMI repository with `winmgmt /verifyrepository` and, when the store is reported inconsistent, repairs it non-destructively with `winmgmt /salvagerepository` followed by a re-verify. It never runs the destructive `/resetrepository`, so third-party WMI providers (ConfigMgr/SCCM, antivirus, monitoring agents) are preserved. The step runs **before** the WMI-dependent Content Cache Cleanup and CCM Repair steps so those act on a repaired store, and it is remote-capable like the rest of the module. The consistency verdict is taken from `winmgmt`'s exit code (locale-independent) - captured via a background job, because `winmgmt.exe` is a service stub that does not expose its exit code through `Start-Process`.
 
 #### Fixes:
 
-- **DISM/SFC timeouts are no longer mislabelled as a generic failure.** When Repair-System killed a DISM or SFC step for exceeding its time budget, the timeout sentinel (`-2`) could be overwritten by a stray `WaitForExit` return value and reported as a plain `1`, hiding the fact that the step never finished. Timed-out steps now correctly report `-2` ("timed out"), which also drives the automatic reboot re-run described above.
-- **More robust ConfigMgr cache-location detection.** The `ccmcache` location is resolved through an ordered chain - WMI `CacheConfig` → the `UIResourceMgr` COM API (what Software Center reads) → the registry `CacheConfig` → the default under `%windir%` - because the WMI class can come back empty even on a healthy client, which previously left the cleanup falling back to the default path and potentially missing a relocated cache. A relocated, custom-named cache (e.g. `D:\SCCMCache`) is now honored, not just the default location. Applies to both the content-cache cleanup and the `-RepairCCM` cache clear. `-RepairCCM` additionally re-registers the CCM client WMI classes (recompiling the CCM MOFs with `mofcomp`, with `CcmExec` stopped) when a broken client is not registered in WMI.
-- **A failing device no longer aborts the caller's loop.** The three pre-flight error exits (parameter conflict, ping failure, WinRM failure) used `break` instead of `return`; outside a loop `break` walks up the call stack, so when Repair-System is called inside a `foreach` over devices (the documented usage) one unreachable device silently aborted the loop and skipped every remaining device. They now `return`.
-- **`-Quiet` is honored for progress output.** The SFC/DISM/cache "executing…" lines, the Repair-CCM step announcements, and the completion summary are now gated on `-Quiet` (they previously printed regardless); the file logs are unaffected.
-- **Pre-flight ping tolerates name-resolution failures.** `Test-Connection` returns `$true`/`$false` for a normally unreachable host but still throws on a DNS-resolution failure; that throw is now caught and treated as unreachable (exit `2`) instead of escaping unhandled.
-- **Path-safety hardening against empty-base deletion.** Every cleanup resolves the Windows directory from `[Environment]::GetFolderPath('Windows')` (robust against an empty `$env:windir`), validates it as an absolute, existing, drive-qualified directory, and builds/deletes paths only from that validated base; `Remove-PathReliable` additionally refuses any target that is a drive root, the Windows directory, or `System32` - blocking both the immediate delete and the reboot-deferred one. A hung `ccmrepair.exe` is now bounded by a 45-minute timeout so it cannot block the whole run.
-- **Logging no longer aborts the run on a transient file lock.** Writes to the master log (`SystemRepair_*.log`) are retried and never throw. A CMTrace viewer open on the log, an antivirus real-time scan, the search indexer, or the OS lagging to release the handle after the previous append could briefly lock the file and raise "the process cannot access the file … because it is being used by another process", which previously aborted the whole run. Writes now retry (with `-Encoding UTF8`, which skips the read that fails on a held file) and, if a line still cannot be written, degrade to a warning instead of crashing the repair - the same hardening the step logs already had.
+- **DISM AnalyzeComponentStore success is no longer misreported as "terminated externally" (`-3`).** AnalyzeComponentStore returns a *non-zero* exit code precisely when it recommends a component-store cleanup ("Component Store Cleanup Recommended: Yes"), and it legitimately finishes in seconds. That fast, non-zero-but-successful result tripped the "exited implausibly fast -> likely terminated externally" heuristic, so the step was recorded as `-3`, which additionally **suppressed the StartComponentCleanup step** (leaving reclaimable packages uncleaned) and scheduled an unnecessary reboot re-run. A self-completed analysis that produced a Yes/No verdict is now recorded as success, and the component-store cleanup runs as recommended. The reboot re-run's own DISM/SFC pass shares the fixed worker.
+- **Exit-code `0` analysis wording corrected.** `-AnalyzeExitCode` and the `.Analysis` output described a `0` field as "success, not requested, or skipped ... skipped due to a prior failure or connection loss", but genuinely skipped steps carry their own codes (`-4` "not necessary", `5` "connection lost") and never surface as `0`. A `0` now reads as "success, or the step was not requested" - the only non-success meaning - and the module's README, about-help and comment-based help mirror the correction.
 
 #### Changes:
 
-- `ModuleVersion` 1.7 → 1.9.
-
-### TempDataCleanup
-
-
-
-#### New Features:
-
-- **Relocation-aware, multi-system content-cache cleanup (`-ContentCacheCleanup`, alias `-IncludeCCMCache`).** Instead of the hardcoded `C:\Windows\ccmcache`, the switch now auto-detects and clears the content/download caches of every software-distribution system present on the device: ConfigMgr/SCCM `ccmcache` (located via WMI `CacheConfig` → the `UIResourceMgr` COM API → the registry → the default under `%windir%`, so a relocated, custom-named cache such as `D:\SCCMCache` is honored), Windows Update (`SoftwareDistribution\Download`), **Adaptiva OneSite** (`<drive>:\AdaptivaCache`) and the **Intune Management Extension** (`IMECache` + the `Content\{Incoming,Staging,Staged}` staging folders). Systems that are not installed are skipped, and only the cache contents are removed (never the agent's install root).
-- **Guarded, reboot-aware deletion.** All deletions now route through a guarded, long-path-safe (`\\?\`) helper that refuses any drive root, the Windows directory, or `System32`. Items locked in the system folders (`-IncludeSystemData` / `-IncludeSystemLogs`) and the content caches are scheduled for removal on the next reboot via the Session Manager's `PendingFileRenameOperations`; locked user-profile files are skipped (best-effort) and are never queued for boot-time deletion. A restart finishes clearing the deferred items.
-
-#### Changes:
-
-- `ModuleVersion` 1.6 → 1.7.
-- The content-cache switch is now `-ContentCacheCleanup` (matching Repair-System); `-IncludeCCMCache` is kept as an alias for backwards compatibility.
-- `-IncludeSystemLogs` is now documented in the README, about-help, and comment-based help (it was a working but undocumented switch).
+- `ModuleVersion` 1.9 → 1.10.
+- The detailed exit code gains a step at **position 6 (WMI Repository Repair)**; Content Cache Cleanup, Windows Update Cleanup, Repair CCM and Zip Logs shift to positions 7-10. `-AnalyzeExitCode` stays backward-compatible: it selects the step layout by the code's field count, so a pre-v1.10 ten-field code still decodes with its original labels.

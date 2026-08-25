@@ -2457,7 +2457,10 @@ function Repair-System {
     from any real DISM/SFC exit code). If the process exited on its own with a NON-ZERO code in
     well under 30 seconds - implausibly fast for a real scan/repair to have failed legitimately -
     that field instead reads -3 ("likely terminated externally, e.g. via Task Manager - its own
-    exit code could not be trusted").
+    exit code could not be trusted"). AnalyzeComponentStore is the exception to that last rule: it
+    returns a NON-ZERO code precisely when it recommends a cleanup, a normal success, so a
+    self-completed analysis that produced a Yes/No verdict is recorded as 0 (not -3) and
+    StartComponentCleanup then runs as recommended.
 
     Except for Position 0, the detailed exit code field is the return value of the corresponding
     command. If a step was requested but deliberately did not run because it was not necessary
