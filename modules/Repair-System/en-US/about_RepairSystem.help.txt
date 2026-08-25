@@ -234,9 +234,10 @@ EXIT CODES
         8 = Repair CCM
         9 = Zip CBS/DISM Logs
 
-    If a step was not requested, or was skipped because the remote connection was already lost, its
-    field is 0. A field value of 5 means the step was requested but skipped because the remote
-    connection was lost while/after the previous step ran. A field value of -4 means the step was
+    If a step was not requested (e.g. -noDism, -noSfc, or component cleanup not included), its field
+    is 0 - indistinguishable, without the original run context, from a step that ran and succeeded.
+    A field value of 5 means the step was requested but skipped because the remote connection was
+    lost while/after the previous step ran. A field value of -4 means the step was
     requested but deliberately did not run because it was not necessary (RestoreHealth when
     ScanHealth finds no corruption; StartComponentCleanup when AnalyzeComponentStore recommends none)
     or because a prerequisite step did not complete - reported as "Skipped (not needed)" and not
@@ -248,7 +249,10 @@ EXIT CODES
     seconds. If Repair-System itself killed it for exceeding its time budget, that field reads -2
     ("timed out"); if it exited on its own with a NON-ZERO code in well under 30 seconds, that field
     reads -3 ("likely terminated externally, e.g. via Task Manager; its own exit code could not be
-    trusted").
+    trusted"). AnalyzeComponentStore is the exception to that last rule: it returns a NON-ZERO code
+    precisely when it recommends a cleanup ("Component Store Cleanup Recommended : Yes"), a normal
+    success, so a self-completed analysis that produced a Yes/No verdict is recorded as 0 rather than
+    -3, and StartComponentCleanup then runs as recommended.
 
     The out-of-band values -2, -3 and -4 are shown as these small signed numbers in the result
     object and in -AnalyzeExitCode output; inside the packed detailed code string they appear as the
