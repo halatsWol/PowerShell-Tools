@@ -970,6 +970,20 @@ function Invoke-DISMAnalyzeComponentStore {
         }
         $process.WaitForExit()
         $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
+        # AnalyzeComponentStore returns a NON-ZERO exit code (e.g. 1) precisely when it recommends
+        # cleanup ("Component Store Cleanup Recommended : Yes") - a normal, successful outcome, not a
+        # failure. Left alone, that fast (well under the plausibility window) non-zero-but-clean finish
+        # is misread by Get-RepairSystemProcessResult as -3 (terminated externally), which in the caller
+        # also suppresses the StartComponentCleanup step. DISM writes the verdict line only after the
+        # scan has finished, so a self-completed analysis that produced a Yes/No verdict is a success:
+        # normalise it to 0 and let Get-DISMAnalyzeComponentStoreResult (log-parsed) drive the cleanup
+        # decision. A timeout kill (-2) or a genuine failure with no verdict line is left untouched.
+        if (-not $dismKilledByTimeout -and $dismResult -ne 0) {
+            try {
+                $analyzeOutput = Get-Content -Path $analyzeComponentLog -Raw -ErrorAction Stop
+                if ($analyzeOutput -match 'Component Store Cleanup Recommended\s*:\s*(Yes|No)') { $dismResult = 0 }
+            } catch { }
+        }
         # Capture the result before the log cleanup below: right after a timeout kill the error-log
         # handle may still be held, so reading it can throw - and that must not fall through to the
         # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
