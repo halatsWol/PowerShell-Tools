@@ -48,6 +48,7 @@ LONG DESCRIPTION
     - Credentials (Optional): When specified, this will prompt for User-Credentials that will be used for the Remote-Access.
         This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
     - RepairCCM (Optional): When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
+    - RepairWMI (Optional): When specified, the WMI repository is checked with "winmgmt /verifyrepository" and, if it reports inconsistent, repaired non-destructively with "winmgmt /salvagerepository" followed by a re-verify. It never runs the destructive "/resetrepository". This step runs before the WMI-dependent Content Cache Cleanup and CCM Repair steps so those act on a repaired store.
     - AnalyzeExitCode (Optional): Decodes a previously produced exit code (see EXIT CODES below) into a human-readable, per-step breakdown. Cannot be combined with any other parameter and never performs any repair actions.
 
 
@@ -189,7 +190,7 @@ OUTPUT
         $r.Actions              # PSCustomObject — which steps were requested (bool per step):
                                 #   DISMScanHealth, DISMRestoreHealth,
                                 #   DISMAnalyzeComponentStore, DISMComponentCleanup, SFC,
-                                #   SCCMCleanup, WindowsUpdateCleanup, RepairCCM
+                                #   WMIRepair, SCCMCleanup, WindowsUpdateCleanup, RepairCCM
                                 #   (SCCMCleanup reflects the -ContentCacheCleanup step; the
                                 #    property name is kept for backwards compatibility.)
         $r.Analysis             # array of per-step objects:
@@ -219,20 +220,26 @@ EXIT CODES
     reordering, no delimiters). Each field starts with a single hex digit (0-8) giving how many hex
     digits follow ('0' alone means the step's value is 0), then those digits (if any) are the step's
     real return value (DISM/SFC's own exit code, or the step's own small result code). A fully
-    successful run collapses to "0000000000" (ten '0' characters).
+    successful run collapses to "00000000000" (eleven '0' characters).
 
     Step positions follow the order the steps actually run in (DISM before SFC):
-        0 = Startup / Pre-Flight Checks (parameter/network/WinRM/elevation/config errors, or
-            connection-lost mid-run)
-        1 = DISM ScanHealth
-        2 = DISM RestoreHealth
-        3 = DISM AnalyzeComponentStore
-        4 = DISM StartComponentCleanup
-        5 = SFC /scannow
-        6 = Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)
-        7 = Windows Update Cleanup
-        8 = Repair CCM
-        9 = Zip CBS/DISM Logs
+        0  = Startup / Pre-Flight Checks (parameter/network/WinRM/elevation/config errors, or
+             connection-lost mid-run)
+        1  = DISM ScanHealth
+        2  = DISM RestoreHealth
+        3  = DISM AnalyzeComponentStore
+        4  = DISM StartComponentCleanup
+        5  = SFC /scannow
+        6  = WMI Repository Repair
+        7  = Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)
+        8  = Windows Update Cleanup
+        9  = Repair CCM
+        10 = Zip CBS/DISM Logs
+
+    Codes produced before v1.10 have ten fields and no WMI Repository Repair step. They still decode
+    correctly: -AnalyzeExitCode picks the step layout that matches the code's field count, so a
+    ten-field (legacy) code keeps its original labels (position 6 = Content Cache Cleanup, 7 = Windows
+    Update Cleanup, 8 = Repair CCM, 9 = Zip Logs) while an eleven-field code uses the layout above.
 
     If a step was not requested (e.g. -noDism, -noSfc, or component cleanup not included), its field
     is 0 - indistinguishable, without the original run context, from a step that ran and succeeded.

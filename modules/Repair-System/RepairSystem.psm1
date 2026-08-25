@@ -212,18 +212,60 @@ function Write-StepLogEntry {
 <#
 Single source of truth for Repair-System's exit code: position -> step name/label.
 Used both when building the composite code and when decoding it via -AnalyzeExitCode.
+
+The detailed exit code is a length-prefixed sequence of per-step fields whose position is the
+step's identity AND its execution order. When a new step is inserted mid-sequence, every later
+step shifts down a position - so a code produced by an OLDER build must be decoded against the
+layout that produced it, or its fields get the wrong labels. RepairSystemStepLayouts keeps every
+historical layout keyed by its field count; the current layout is the one with the most fields.
+ConvertFrom / Get-RepairSystemStepAnalysis pick the layout by how many fields the code actually
+carries, so historical codes keep their correct labels while new codes reflect the current order.
 #>
-$script:RepairSystemSteps = [ordered]@{
-    0 = @{ Key = 'Startup';                   Label = 'Startup / Pre-Flight Checks' }
-    1 = @{ Key = 'DISMScanHealth';            Label = 'DISM /Online /Cleanup-Image /ScanHealth' }
-    2 = @{ Key = 'DISMRestoreHealth';         Label = 'DISM /Online /Cleanup-Image /RestoreHealth' }
-    3 = @{ Key = 'DISMAnalyzeComponentStore'; Label = 'DISM /Online /Cleanup-Image /AnalyzeComponentStore' }
-    4 = @{ Key = 'DISMComponentCleanup';      Label = 'DISM /Online /Cleanup-Image /StartComponentCleanup' }
-    5 = @{ Key = 'SFC';                       Label = 'SFC /scannow' }
-    6 = @{ Key = 'SCCMCleanup';               Label = 'Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / WU)' }
-    7 = @{ Key = 'WindowsUpdateCleanup';      Label = 'Windows Update Cleanup' }
-    8 = @{ Key = 'RepairCCM';                 Label = 'CCM Client Repair' }
-    9 = @{ Key = 'ZipLogs';                   Label = 'Zip CBS/DISM Logs' }
+$script:RepairSystemStepLayouts = @{
+    # Legacy layout (builds up to v1.9): WMI Repository Repair did not exist yet.
+    10 = [ordered]@{
+        0 = @{ Key = 'Startup';                   Label = 'Startup / Pre-Flight Checks' }
+        1 = @{ Key = 'DISMScanHealth';            Label = 'DISM /Online /Cleanup-Image /ScanHealth' }
+        2 = @{ Key = 'DISMRestoreHealth';         Label = 'DISM /Online /Cleanup-Image /RestoreHealth' }
+        3 = @{ Key = 'DISMAnalyzeComponentStore'; Label = 'DISM /Online /Cleanup-Image /AnalyzeComponentStore' }
+        4 = @{ Key = 'DISMComponentCleanup';      Label = 'DISM /Online /Cleanup-Image /StartComponentCleanup' }
+        5 = @{ Key = 'SFC';                       Label = 'SFC /scannow' }
+        6 = @{ Key = 'SCCMCleanup';               Label = 'Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / WU)' }
+        7 = @{ Key = 'WindowsUpdateCleanup';      Label = 'Windows Update Cleanup' }
+        8 = @{ Key = 'RepairCCM';                 Label = 'CCM Client Repair' }
+        9 = @{ Key = 'ZipLogs';                   Label = 'Zip CBS/DISM Logs' }
+    }
+    # Current layout (v1.10+): WMI Repository Repair inserted at position 6 - it runs right after
+    # SFC and before the WMI-dependent Content Cache Cleanup and CCM Repair steps, so those act on
+    # a repaired store. Positions 7-10 are the former 6-9 shifted down by one.
+    11 = [ordered]@{
+        0  = @{ Key = 'Startup';                   Label = 'Startup / Pre-Flight Checks' }
+        1  = @{ Key = 'DISMScanHealth';            Label = 'DISM /Online /Cleanup-Image /ScanHealth' }
+        2  = @{ Key = 'DISMRestoreHealth';         Label = 'DISM /Online /Cleanup-Image /RestoreHealth' }
+        3  = @{ Key = 'DISMAnalyzeComponentStore'; Label = 'DISM /Online /Cleanup-Image /AnalyzeComponentStore' }
+        4  = @{ Key = 'DISMComponentCleanup';      Label = 'DISM /Online /Cleanup-Image /StartComponentCleanup' }
+        5  = @{ Key = 'SFC';                       Label = 'SFC /scannow' }
+        6  = @{ Key = 'WMIRepair';                 Label = 'WMI Repository Repair' }
+        7  = @{ Key = 'SCCMCleanup';               Label = 'Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / WU)' }
+        8  = @{ Key = 'WindowsUpdateCleanup';      Label = 'Windows Update Cleanup' }
+        9  = @{ Key = 'RepairCCM';                 Label = 'CCM Client Repair' }
+        10 = @{ Key = 'ZipLogs';                   Label = 'Zip CBS/DISM Logs' }
+    }
+}
+# The current (widest) layout - what ConvertTo encodes against and what live runs report/analyse.
+$script:RepairSystemSteps = $script:RepairSystemStepLayouts[11]
+
+function Get-RepairSystemStepLayout {
+    <#
+    Selects the step layout that matches a decoded code's field count: 10 -> legacy, 11 -> current.
+    An unrecognised count (a partial or foreign string) falls back to the current layout for
+    best-effort labelling; Get-RepairSystemStepAnalysis tolerates positions with no mapped step.
+    #>
+    param([Parameter(Mandatory=$true)][int]$FieldCount)
+    if ($script:RepairSystemStepLayouts.ContainsKey($FieldCount)) {
+        return $script:RepairSystemStepLayouts[$FieldCount]
+    }
+    return $script:RepairSystemSteps
 }
 
 <#
@@ -251,6 +293,10 @@ $script:RepairSystemKnownCodes = @{
         '5' = 'Not running with administrative privileges.'
         '6' = 'Error reading or writing the configuration file.'
         '7' = 'Conflicting parameters were supplied (e.g. -IncludeComponentCleanup with -noDism).'
+    }
+    WMIRepair = @{
+        '0' = 'WMI repository is consistent, or was inconsistent and successfully salvaged (verified consistent afterwards).'
+        '1' = 'WMI repository repair failed - still inconsistent after salvage, or the verify/salvage could not complete. See the step log; a manual "winmgmt /resetrepository" may be required (not attempted in this non-destructive step).'
     }
 }
 
@@ -360,22 +406,25 @@ function ConvertFrom-RepairSystemExitCode {
         [string]$Code
     )
     $Code = $Code.Trim()
-    $stepCount = $script:RepairSystemSteps.Count
+    if ([string]::IsNullOrEmpty($Code)) {
+        return [PSCustomObject]@{
+            IsValid = $false
+            Error   = "An empty string is not a valid Repair-System exit code."
+            Values  = $null
+        }
+    }
+    # The field count is NOT fixed: a code carries one field per step that existed in the build that
+    # produced it (10 for legacy builds, 11 for current). Parse every field the string actually holds
+    # and let the caller pick the matching step layout by the resulting count - this is what keeps a
+    # historical code decoding correctly after a new step is inserted ahead of the old trailing ones.
     # Signed Int32 so the out-of-band sentinels round-trip back to the small negatives they were
     # stored as (-2/-3/-4) instead of surfacing as their unwieldy uint32 form (4294967294/93/92).
     # This makes ConvertFrom the true inverse of ConvertTo, which takes a signed [int[]].
     $values = [System.Collections.Generic.List[int]]::new()
     $pos = 0
+    $i = 0
 
-    for ($i = 0; $i -lt $stepCount; $i++) {
-        if ($pos -ge $Code.Length) {
-            return [PSCustomObject]@{
-                IsValid = $false
-                Error   = "'$Code' is not a valid Repair-System exit code: ran out of characters while reading step $i of $stepCount."
-                Values  = $null
-            }
-        }
-
+    while ($pos -lt $Code.Length) {
         $lengthChar = $Code[$pos]
         if ($lengthChar -notmatch '^[0-8]$') {
             return [PSCustomObject]@{
@@ -389,6 +438,7 @@ function ConvertFrom-RepairSystemExitCode {
 
         if ($len -eq 0) {
             $values.Add(0)
+            $i++
             continue
         }
 
@@ -413,14 +463,7 @@ function ConvertFrom-RepairSystemExitCode {
         # signed value (e.g. FFFFFFFC -> -4), the inverse of how ConvertTo encoded it.
         $values.Add([Convert]::ToInt32($hexChunk, 16))
         $pos += $len
-    }
-
-    if ($pos -ne $Code.Length) {
-        return [PSCustomObject]@{
-            IsValid = $false
-            Error   = "'$Code' is not a valid Repair-System exit code: $($Code.Length - $pos) unexpected trailing character(s)."
-            Values  = $null
-        }
+        $i++
     }
 
     return [PSCustomObject]@{
@@ -454,13 +497,18 @@ function Get-RepairSystemStepAnalysis {
     )
     $parsed = ConvertFrom-RepairSystemExitCode -Code $Code
     if (-not $parsed.IsValid) { return $null }
+    # Decode against the layout that matches the code's field count, so a legacy (10-field) code
+    # gets the pre-WMI labels and a current (11-field) code gets WMI at position 6.
+    $stepMap = Get-RepairSystemStepLayout -FieldCount $parsed.Values.Count
     $steps = [System.Collections.Generic.List[PSCustomObject]]::new()
     for ($i = 0; $i -lt $parsed.Values.Count; $i++) {
-        $step     = $script:RepairSystemSteps[$i]
-        $value    = $parsed.Values[$i]
-        $valueKey = $value.ToString()
-        $description = if ($script:RepairSystemKnownCodes.ContainsKey($step.Key) -and $script:RepairSystemKnownCodes[$step.Key].ContainsKey($valueKey)) {
-            $script:RepairSystemKnownCodes[$step.Key][$valueKey]
+        $step      = $stepMap[$i]
+        $value     = $parsed.Values[$i]
+        $valueKey  = $value.ToString()
+        $stepKey   = if ($null -ne $step) { $step.Key }   else { $null }
+        $stepLabel = if ($null -ne $step) { $step.Label } else { "Unknown step $i" }
+        $description = if ($null -ne $stepKey -and $script:RepairSystemKnownCodes.ContainsKey($stepKey) -and $script:RepairSystemKnownCodes[$stepKey].ContainsKey($valueKey)) {
+            $script:RepairSystemKnownCodes[$stepKey][$valueKey]
         } elseif ($script:RepairSystemKnownCodes.Generic.ContainsKey($valueKey)) {
             $script:RepairSystemKnownCodes.Generic[$valueKey]
         } else {
@@ -468,7 +516,7 @@ function Get-RepairSystemStepAnalysis {
         }
         $steps.Add([PSCustomObject]@{
             Position    = $i
-            Label       = $step.Label
+            Label       = $stepLabel
             Value       = $value
             Description = $description
         })
@@ -506,9 +554,10 @@ function Set-RepairSystemExitCode {
             DISMAnalyzeComponentStore = $RequestedSteps[3]
             DISMComponentCleanup      = $RequestedSteps[4]
             SFC                       = $RequestedSteps[5]
-            SCCMCleanup               = $RequestedSteps[6]
-            WindowsUpdateCleanup      = $RequestedSteps[7]
-            RepairCCM                 = $RequestedSteps[8]
+            WMIRepair                 = $RequestedSteps[6]
+            SCCMCleanup               = $RequestedSteps[7]
+            WindowsUpdateCleanup      = $RequestedSteps[8]
+            RepairCCM                 = $RequestedSteps[9]
         }
         if ($null -ne $analysis) {
             $analysis = foreach ($step in $analysis) {
@@ -1811,6 +1860,117 @@ function Repair-CCM {
     return 0
 }
 
+function Repair-WMIRepository {
+    <#
+    Non-destructive WMI repository check + repair, run as a Repair-System step (position 6, after SFC
+    and before the WMI-dependent Content Cache Cleanup and CCM Repair steps). Verifies the repository
+    with 'winmgmt /verifyrepository'; if it reports inconsistent, runs 'winmgmt /salvagerepository'
+    and re-verifies. It deliberately never runs '/resetrepository', which is destructive and can break
+    third-party WMI providers (SCCM, AV, monitoring). Self-contained so it can be shipped to a remote
+    session via ${function:Repair-WMIRepository}. Returns 0 (consistent or successfully salvaged) or
+    1 (still inconsistent / could not complete).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$WMIRepairLog,
+
+        [Parameter(Mandatory=$true, Position=1)]
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$true, Position=2)]
+        [switch]$VerboseArg
+    )
+    if ($VerboseArg) { $PSCmdlet.MyInvocation.BoundParameters['Verbose'] = $true }
+    if ($Quiet)      { $PSCmdlet.MyInvocation.BoundParameters['Verbose'] = $false }
+
+    function Write-WMIRepairLog {
+        param([string]$Message)
+        Add-Content -Path $WMIRepairLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$Message"
+    }
+
+    # winmgmt sets a NON-ZERO exit code when the repository is inconsistent and 0 when consistent - a
+    # locale-independent signal, unlike the (localised) verdict text, so the EXIT CODE drives the
+    # decision and the text is only captured for the log. winmgmt.exe is a service stub, though: it
+    # does NOT expose its exit code through Start-Process -PassThru (the ExitCode comes back empty even
+    # after WaitForExit) - only the call operator ($LASTEXITCODE) or -Wait capture it. Run it in a
+    # background job so the call operator gets the real code while Wait-Job still enforces a hard
+    # timeout against a wedged WMI service. Returns @{ ExitCode; Output; TimedOut }.
+    $invokeWinmgmt = {
+        param([string]$WinmgmtArg, [int]$TimeoutSec)
+        $winDir = [Environment]::GetFolderPath('Windows')
+        if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
+        if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = 'C:\Windows' }
+        $winmgmt = Join-Path $winDir 'System32\wbem\winmgmt.exe'
+        $job = Start-Job -ScriptBlock {
+            param($exe, $a)
+            $o = & $exe $a 2>&1 | Out-String
+            [PSCustomObject]@{ Code = $LASTEXITCODE; Out = $o }
+        } -ArgumentList $winmgmt, $WinmgmtArg
+        if (Wait-Job $job -Timeout $TimeoutSec) {
+            $r = Receive-Job $job
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+            $code = $r.Code
+            if ($null -eq $code) { $code = 0 }
+            return @{ ExitCode = [int]$code; Output = ([string]$r.Out).Trim(); TimedOut = $false }
+        } else {
+            Stop-Job  $job -ErrorAction SilentlyContinue
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+            return @{ ExitCode = -2; Output = 'winmgmt timed out'; TimedOut = $true }
+        }
+    }
+
+    try {
+        if (-not $Quiet) { Write-Host "Verifying WMI repository (winmgmt /verifyrepository)..." }
+        Write-WMIRepairLog "Verifying WMI repository (winmgmt /verifyrepository)..."
+        $verify = & $invokeWinmgmt '/verifyrepository' 60
+        Write-WMIRepairLog "verifyrepository exit=$($verify.ExitCode); output:`r`n`t$($verify.Output)"
+
+        if ($verify.TimedOut) {
+            Write-Warning "WMI /verifyrepository timed out; the WMI service may be wedged."
+            Write-WMIRepairLog "verifyrepository timed out. Aborting WMI repair (non-destructive step)."
+            return 1
+        }
+
+        if ($verify.ExitCode -eq 0) {
+            if (-not $Quiet) { Write-Host "WMI repository is consistent; no repair needed." }
+            Write-WMIRepairLog "WMI repository is consistent (verify exit 0); no repair needed."
+            return 0
+        }
+
+        if (-not $Quiet) { Write-Host "WMI repository is inconsistent; salvaging (winmgmt /salvagerepository)..." }
+        Write-WMIRepairLog "WMI repository reported inconsistent (verify exit $($verify.ExitCode)). Running winmgmt /salvagerepository..."
+        $salvage = & $invokeWinmgmt '/salvagerepository' 300
+        Write-WMIRepairLog "salvagerepository exit=$($salvage.ExitCode); output:`r`n`t$($salvage.Output)"
+        if ($salvage.TimedOut) {
+            Write-Warning "WMI /salvagerepository timed out; the WMI service may be wedged."
+            Write-WMIRepairLog "salvagerepository timed out. WMI repository still needs attention."
+            return 1
+        }
+
+        # The salvage command's own exit code is not conclusive; re-verify to confirm consistency.
+        if (-not $Quiet) { Write-Host "Re-verifying WMI repository after salvage..." }
+        Write-WMIRepairLog "Re-verifying WMI repository after salvage..."
+        $reverify = & $invokeWinmgmt '/verifyrepository' 60
+        Write-WMIRepairLog "post-salvage verifyrepository exit=$($reverify.ExitCode); output:`r`n`t$($reverify.Output)"
+
+        if (-not $reverify.TimedOut -and $reverify.ExitCode -eq 0) {
+            if (-not $Quiet) { Write-Host "WMI repository salvaged; now consistent." }
+            Write-WMIRepairLog "WMI repository salvaged successfully; re-verify reports consistent."
+            return 0
+        }
+
+        Write-Warning "WMI repository is still inconsistent after salvage."
+        Write-WMIRepairLog "WMI repository still inconsistent after salvage. A manual 'winmgmt /resetrepository' may be required; not attempted (non-destructive step)."
+        return 1
+    } catch {
+        $err = "An error occurred during WMI repository repair:`r`n$_"
+        Write-Warning $err
+        Write-WMIRepairLog "ERROR: $err"
+        return 1
+    }
+}
+
 function Start-ZipFileCreation {
     param (
         [Parameter(Mandatory=$true, Position=0)]
@@ -2116,6 +2276,12 @@ function Repair-System {
     .PARAMETER RepairCCM
     When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
 
+    .PARAMETER RepairWMI
+    When specified, the WMI repository is checked with "winmgmt /verifyrepository" and, if it reports inconsistent,
+    repaired non-destructively with "winmgmt /salvagerepository" followed by a re-verify. It never runs the destructive
+    "/resetrepository". This step runs before the WMI-dependent Content Cache Cleanup and CCM Repair steps so those act
+    on a repaired store.
+
     .PARAMETER ResetUpdateHistory
     Only meaningful with -WindowsUpdateCleanup. By default the Windows Update history (the DataStore database) is
     kept when it passes an integrity check and only rebuilt if it is corrupt. When -ResetUpdateHistory is specified,
@@ -2277,10 +2443,11 @@ function Repair-System {
     Position 3: DISM AnalyzeComponentStore
     Position 4: DISM StartComponentCleanup
     Position 5: SFC /scannow
-    Position 6: Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)
-    Position 7: Windows Update Cleanup
-    Position 8: Repair CCM
-    Position 9: Zip CBS/DISM Logs
+    Position 6: WMI Repository Repair
+    Position 7: Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)
+    Position 8: Windows Update Cleanup
+    Position 9: Repair CCM
+    Position 10: Zip CBS/DISM Logs
 
     For the DISM and SFC steps (Positions 1-5) specifically, a raw process exit code is only
     trusted if it is either a clean success or the process had a fair chance to run. A clean exit
@@ -2354,6 +2521,9 @@ function Repair-System {
         [switch]$RepairCCM,
 
         [Parameter(Mandatory=$false, ParameterSetName='Default')]
+        [switch]$RepairWMI,
+
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [switch]$ResetUpdateHistory,
 
         [Parameter(Mandatory=$false, ParameterSetName='Default')]
@@ -2375,7 +2545,7 @@ function Repair-System {
         return
     }
 
-    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0 #Startup, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SFC, Content Cache Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
+    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0,0 #Startup, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SFC, WMI Repository Repair, Content Cache Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
 
     $ComputerName = $ComputerName.Trim()
     $targetDevice   = $env:COMPUTERNAME
@@ -2386,10 +2556,11 @@ function Repair-System {
         (-not $noDism),                               # [3] DISM AnalyzeComponentStore
         (-not $noDism -and $IncludeComponentCleanup), # [4] DISM ComponentCleanup
         (-not $noSfc),                                # [5] SFC
-        $ContentCacheCleanup.IsPresent,               # [6] Content Cache Cleanup
-        $WindowsUpdateCleanup.IsPresent,              # [7] WU Cleanup
-        $RepairCCM.IsPresent,                         # [8] CCM Repair
-        (-not $noSfc -or -not $noDism)                # [9] Zip Logs
+        $RepairWMI.IsPresent,                         # [6] WMI Repository Repair
+        $ContentCacheCleanup.IsPresent,               # [7] Content Cache Cleanup
+        $WindowsUpdateCleanup.IsPresent,              # [8] WU Cleanup
+        $RepairCCM.IsPresent,                         # [9] CCM Repair
+        (-not $noSfc -or -not $noDism)                # [10] Zip Logs
     )
     if ($ComputerName -and ($ComputerName -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
         Write-Error "Invalid ComputerName format: '$ComputerName'.`r`nValid Windows hostnames must:
@@ -2583,7 +2754,7 @@ function Repair-System {
 
     Write-RepairLog -Message "Repair-System started;" -Component "RepairSystem" -LogPath $masterLogPath -StartLogEntry
     Write-RepairLog -Message "Target: $(if ($remote) { $ComputerName } else { $env:COMPUTERNAME }); Remote: $remote;" -Component "RepairSystem" -LogPath $masterLogPath -AddLogEntryData
-    Write-RepairLog -Message "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; ContentCacheCleanup: $ContentCacheCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
+    Write-RepairLog -Message "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; RepairWMI: $RepairWMI; ContentCacheCleanup: $ContentCacheCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
 
     # Tracks whether any DISM/SFC step that ran did not truly complete (timed out, killed, empty or
     # incomplete log, or reboot-pending) - which triggers the one-shot reboot re-run below.
@@ -2769,6 +2940,22 @@ function Repair-System {
         }
     }
 
+    # WMI Repository Repair runs BEFORE the WMI-dependent Content Cache Cleanup and CCM Repair steps
+    # so those act on a repaired store. Its exit-code field is position 6 (see RepairSystemStepLayouts).
+    if ($RepairWMI -and -not $remoteConnectionLost) {
+        $wmiRepairLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_WMI_repository-repair.log"
+        $wmiRepairResult=0
+        Write-RepairLog -Message "Starting WMI Repository Repair (verify + salvage)..." -Component "WMIRepair" -LogPath $masterLogPath
+        if ($remote) {
+            $wmiRepairResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Repair-WMIRepository} -ArgumentList @($wmiRepairLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'WMI Repository Repair' -ConnectionLost ([ref]$remoteConnectionLost)
+        } else { $wmiRepairResult=Repair-WMIRepository $wmiRepairLog $Quiet $VerboseOption }
+
+        if (-not $remoteConnectionLost) { $ExitCode[6]=[int]($wmiRepairResult | Select-Object -Last 1) } else { $ExitCode[6]=5 }
+        Write-RepairLog -Message "WMI Repository Repair completed; ExitCode=$($ExitCode[6]);" -Component "WMIRepair" -LogPath $masterLogPath
+        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $wmiRepairLog -Leaf)" } else { $wmiRepairLog }) -MasterLogPath $masterLogPath -StepName "WMI-RepositoryRepair" -Component "WMIRepair" -Sync
+        & $removeStepLog $wmiRepairLog; $stepLogPaths.Add($wmiRepairLog)
+    }
+
     if ($ContentCacheCleanup -and -not $remoteConnectionLost) {
         $cacheCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_ContentCache_cleanup.log"
         $cacheCleanupResult=0
@@ -2780,12 +2967,12 @@ function Repair-System {
 
         if (-not $remoteConnectionLost) {
             $cacheCleanupResult = [int]($cacheCleanupResult | Select-Object -Last 1)
-            $ExitCode[6]=$cacheCleanupResult
+            $ExitCode[7]=$cacheCleanupResult
             if ($cacheCleanupResult -eq 3010) {
                 Write-Warning "`r`nContent Cache Cleanup on $targetDevice scheduled some locked cache items for removal on the next reboot. Please restart the device to finish."
             }
-        } else { $ExitCode[6]=5 }
-        Write-RepairLog -Message "Content Cache Cleanup completed; ExitCode=$($ExitCode[6]);" -Component "ContentCacheCleanup" -LogPath $masterLogPath
+        } else { $ExitCode[7]=5 }
+        Write-RepairLog -Message "Content Cache Cleanup completed; ExitCode=$($ExitCode[7]);" -Component "ContentCacheCleanup" -LogPath $masterLogPath
         Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $cacheCleanupLog -Leaf)" } else { $cacheCleanupLog }) -MasterLogPath $masterLogPath -StepName "ContentCache-Cleanup" -Component "ContentCacheCleanup" -Sync
         & $removeStepLog $cacheCleanupLog; $stepLogPaths.Add($cacheCleanupLog)
     }
@@ -2806,9 +2993,9 @@ function Repair-System {
             } elseif ($updateCleanupExit -ne 0) {
                 Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $targetDevice. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
             }
-            $ExitCode[7]=$updateCleanupExit
-        } else { $ExitCode[7]=5 }
-        Write-RepairLog -Message "Windows Update Cleanup completed; ExitCode=$($ExitCode[7]);" -Component "WUCleanup" -LogPath $masterLogPath
+            $ExitCode[8]=$updateCleanupExit
+        } else { $ExitCode[8]=5 }
+        Write-RepairLog -Message "Windows Update Cleanup completed; ExitCode=$($ExitCode[8]);" -Component "WUCleanup" -LogPath $masterLogPath
         Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $updateCleanupLog -Leaf)" } else { $updateCleanupLog }) -MasterLogPath $masterLogPath -StepName "WindowsUpdate-Cleanup" -Component "WUCleanup" -Sync
         & $removeStepLog $updateCleanupLog; $stepLogPaths.Add($updateCleanupLog)
     }
@@ -2821,8 +3008,8 @@ function Repair-System {
             $repairCCMResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Repair-CCM} -ArgumentList @($localTempPath, $repairCCMLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'CCM Repair' -ConnectionLost ([ref]$remoteConnectionLost)
         } else { $repairCCMResult=Repair-CCM $localTempPath $repairCCMLog $Quiet $VerboseOption }
 
-        if (-not $remoteConnectionLost) { $ExitCode[8]=$repairCCMResult } else { $ExitCode[8]=5 }
-        Write-RepairLog -Message "CCM Repair completed; ExitCode=$($ExitCode[8]);" -Component "RepairCCM" -LogPath $masterLogPath
+        if (-not $remoteConnectionLost) { $ExitCode[9]=$repairCCMResult } else { $ExitCode[9]=5 }
+        Write-RepairLog -Message "CCM Repair completed; ExitCode=$($ExitCode[9]);" -Component "RepairCCM" -LogPath $masterLogPath
         Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $repairCCMLog -Leaf)" } else { $repairCCMLog }) -MasterLogPath $masterLogPath -StepName "CCM-Repair" -Component "RepairCCM" -Sync
         & $removeStepLog $repairCCMLog; $stepLogPaths.Add($repairCCMLog)
         if ($remote) {
@@ -2863,13 +3050,13 @@ function Repair-System {
                 Write-RepairLog -Message "Failed to copy zip to local immediately: $_" -Component "ZipLogs" -LogPath $masterLogPath
             }
         }
-        if (-not $remoteConnectionLost) { $ExitCode[9]=$zipErrorCode } else { $ExitCode[9]=5 }
+        if (-not $remoteConnectionLost) { $ExitCode[10]=$zipErrorCode } else { $ExitCode[10]=5 }
     } elseif ($remoteConnectionLost) {
-        $ExitCode[9]=5
+        $ExitCode[10]=5
     } else {
-        $ExitCode[9]=0
+        $ExitCode[10]=0
     }
-    Write-RepairLog -Message "CBS/DISM zip step completed; ExitCode=$($ExitCode[9]);" -Component "ZipLogs" -LogPath $masterLogPath
+    Write-RepairLog -Message "CBS/DISM zip step completed; ExitCode=$($ExitCode[10]);" -Component "ZipLogs" -LogPath $masterLogPath
 
     # Wait for all background log-append / fetch jobs BEFORE the bulk copy so that jobs
     # reading from remote UNC paths finish before -KeepLogs deletion can remove those files.

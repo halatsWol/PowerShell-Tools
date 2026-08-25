@@ -14,6 +14,7 @@ This function performs the following tasks on a specified computer (either local
 - Executes `sfc /scannow` to check and repair system files.
 - Optionally, executes `DISM /Online /Cleanup-Image /ScanHealth` and `DISM /Online /Cleanup-Image /RestoreHealth` to repair the Windows image.
 - Optionally, performs Component Store cleanup and a history-preserving Windows Update reset (see `-WindowsUpdateCleanup`).
+- Optionally, verifies the WMI repository and repairs it non-destructively when it is inconsistent (see `-RepairWMI`).
 - If any DISM/SFC step does not complete during the run (it timed out, was terminated, or reported a reboot-pending / could-not-repair state), automatically registers a one-shot task that re-runs the full DISM + SFC pass once after the next reboot (default on; disable with `-NoRebootRepair`).
 - Prints progress and status to the local console. Step outputs are written to temporary log files, then consolidated into a single master repair log (`SystemRepair_<PC>_<date>.log`) in CMTrace-compatible format; individual step log files are removed after embedding.
 - On remote runs, transfers the master log and a CBS/DISM system log archive to the local machine.
@@ -40,6 +41,7 @@ Range = 0.25 - 10.0
 - **`-Credentials`** (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
 This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
 - **`-RepairCCM`** (Optional): When specified, the CCMRepair.exe will be executed. This will also copy the ccmsetup.log to the local Temp-Path.
+- **`-RepairWMI`** (Optional): Checks the WMI repository with `winmgmt /verifyrepository` and, if it reports inconsistent, repairs it non-destructively with `winmgmt /salvagerepository` (then re-verifies). It never runs the destructive `/resetrepository`, so third-party WMI providers (SCCM, AV, monitoring) are preserved. Runs before the WMI-dependent Content Cache Cleanup and CCM Repair steps so those act on a repaired store.
 - **`-AnalyzeExitCode`** (Optional): Decodes a previously produced exit code (see Exit Codes below) into a human-readable, per-step breakdown. Cannot be combined with any other parameter and never performs any repair actions.
 
 #### Examples
@@ -69,8 +71,11 @@ Repair-System -ComputerName <remote-device> -NoRebootRepair
 # Clear all detected content/download caches (ConfigMgr, Adaptiva, Intune, Windows Update)
 Repair-System -ComputerName <remote-device> -ContentCacheCleanup
 
+# Verify and non-destructively repair the WMI repository (before the ConfigMgr/CCM steps)
+Repair-System -ComputerName <remote-device> -RepairWMI
+
 # Decode a previously produced exit code (runs standalone, no repair actions)
-Repair-System -AnalyzeExitCode "0000000000"
+Repair-System -AnalyzeExitCode "00000000000"
 ```
 
 
@@ -92,7 +97,7 @@ Repair-System -AnalyzeExitCode "0000000000"
 
 The full, lossless detail behind that digit is printed to the console as `Repair-System Detailed Exit Code: <code>` and also stored in `$global:RepairSystemDetailedExitCode` (mirroring the ExitCode/DetailedExitCode pattern used elsewhere, e.g. ConfigMgr), so it remains available even though `$LASTEXITCODE` itself is now just a plain digit.
 
-The detailed code is made up of one field per step, concatenated in a fixed position order (no reordering, no delimiters). Each field starts with a single hex digit (`0`-`8`) giving how many hex digits follow (`0` alone means the step's value is `0`), then those digits (if any) are the step's real return value (DISM/SFC's own exit code, or the step's own small result code), so no detail is lost. Because the length prefix marks where each field ends, no separators are needed, and a fully successful run collapses to `0000000000` (ten `0` characters) instead of a long fixed-width string.
+The detailed code is made up of one field per step, concatenated in a fixed position order (no reordering, no delimiters). Each field starts with a single hex digit (`0`-`8`) giving how many hex digits follow (`0` alone means the step's value is `0`), then those digits (if any) are the step's real return value (DISM/SFC's own exit code, or the step's own small result code), so no detail is lost. Because the length prefix marks where each field ends, no separators are needed, and a fully successful run collapses to `00000000000` (eleven `0` characters) instead of a long fixed-width string.
 
 Positions follow the order the steps actually run in (DISM before SFC):
 
@@ -104,10 +109,13 @@ Positions follow the order the steps actually run in (DISM before SFC):
 | 3 | DISM AnalyzeComponentStore |
 | 4 | DISM StartComponentCleanup |
 | 5 | SFC /scannow |
-| 6 | Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update) |
-| 7 | Windows Update Cleanup |
-| 8 | Repair CCM |
-| 9 | Zip CBS/DISM Logs |
+| 6 | WMI Repository Repair |
+| 7 | Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update) |
+| 8 | Windows Update Cleanup |
+| 9 | Repair CCM |
+| 10 | Zip CBS/DISM Logs |
+
+Codes produced before v1.10 have ten fields and no WMI Repository Repair step; `-AnalyzeExitCode` still decodes them correctly by selecting the step layout that matches the code's field count (a ten-field code keeps its original labels: position 6 = Content Cache Cleanup, 7 = Windows Update Cleanup, 8 = Repair CCM, 9 = Zip Logs).
 
 If a step was not requested, or was skipped because the remote connection was already lost, its field is `0`. A field value of `5` means the step was requested but skipped because the remote connection was lost while/after the previous step ran. A field value of `-4` means the step was requested but deliberately did not run because it was not necessary (RestoreHealth when ScanHealth finds no corruption; StartComponentCleanup when AnalyzeComponentStore recommends none) or because a prerequisite step did not complete - reported as "Skipped (not needed)" and not counted as a failure. Run `Repair-System -AnalyzeExitCode <code>` to get a readable explanation of any code produced by a previous run.
 
@@ -115,9 +123,9 @@ For the DISM and SFC steps (positions 1-5), a raw process exit code is only trus
 
 The out-of-band values `-2`, `-3` and `-4` are shown as these small signed numbers in the result object and in `-AnalyzeExitCode` output; inside the packed `DetailedExitCode` string they appear as the 32-bit two's-complement hex fields `FFFFFFFE`, `FFFFFFFD` and `FFFFFFFC`.
 
-The Windows Update Cleanup step (position 7) reports `3010` when it deferred locked items (for example `catroot2` catalog files held open by CryptSvc) to the next reboot - surfaced as "Success (restart required)" in the per-step Analysis. This is not a failure; a restart finishes the removal, after which Windows rebuilds the affected caches automatically.
+The Windows Update Cleanup step (position 8) reports `3010` when it deferred locked items (for example `catroot2` catalog files held open by CryptSvc) to the next reboot - surfaced as "Success (restart required)" in the per-step Analysis. This is not a failure; a restart finishes the removal, after which Windows rebuilds the affected caches automatically.
 
-Example: `0000000000` means every step succeeded; `171100000000` means Startup reported code `7` (conflicting parameters) and DISM ScanHealth (position 1) reported code `1` (failed), with every other step at `0`.
+Example: `00000000000` means every step succeeded; `1711000000000` means Startup reported code `7` (conflicting parameters) and DISM ScanHealth (position 1) reported code `1` (failed), with every other step at `0`.
 
 
 ## Notes
