@@ -232,7 +232,7 @@ Anything not listed here falls back to a generic "tool-specific result code" mes
 #>
 $script:RepairSystemKnownCodes = @{
     Generic = @{
-        '0'          = 'Success, not requested, or skipped. Without the original run context, it cannot be determined whether this step ran and succeeded, or was not executed (not requested, not applicable, or skipped due to a prior failure or connection loss).'
+        '0'          = 'Success, or the step was not requested. Without the original run context this cannot be distinguished: a step that was never requested (e.g. -noDism, -noSfc, or component cleanup not included) keeps its initial value of 0, indistinguishable here from a step that ran and succeeded. A step skipped for a known reason instead carries its own code - not necessary (-4) or connection lost (5) - so those never appear as 0.'
         '1'          = 'The step failed. See the step''s log file for details.'
         '5'          = 'Skipped - the remote connection was lost before this step could run.'
         '87'         = 'DISM: The parameter is incorrect (ERROR_INVALID_PARAMETER).'
