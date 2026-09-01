@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.1.0'
+$script:ScriptVersion   = '0.2.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -250,15 +250,237 @@ function Protect-SnapshotStore {
 }
 
 # =================================================================================================
-# Mode stubs (fleshed out in later commits)
+# Tweak catalog
+# =================================================================================================
+# One declarative row per tweak. Apply, preview, capture and rollback are all derived from these
+# fields, so there is no per-tweak imperative code. Fields:
+#   Id/Name/Category/Impact - identity + guided-mode text.
+#   MinLevel  - lowest tier a level row belongs to (cumulative: Full includes Balanced includes Minimal).
+#   AddOn     - 'AI' | 'Gaming' for add-on rows (selected only when the add-on is requested / at Full);
+#               $null for ordinary level rows.
+#   Scope     - 'User' (HKCU) | 'Machine' (HKLM).
+#   Risk / Reversible - reporting + guided-mode.
+#   Type      - Registry | Service | ScheduledTask | Appx | Bcdedit | Powercfg (only Registry so far).
+#   Registry payload: Path / ValueName / ValueType / Data.
+# This commit seeds a representative slice of the Minimal tier; later commits flesh out every tier.
+function Get-TweakCatalog {
+    @(
+        [pscustomobject]@{
+            Id = 'Explorer.LaunchToThisPC'; Name = 'Open File Explorer to This PC'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Opens File Explorer to This PC instead of Home/Quick Access.'
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            ValueName = 'LaunchTo'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.HideTaskViewButton'; Name = 'Hide Task View button'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Hides the Task View button from the taskbar (feature stays available via Win+Tab).'
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            ValueName = 'ShowTaskViewButton'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.TaskbarSearchIcon'; Name = 'Collapse taskbar search to an icon'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Shrinks the taskbar search box to a single icon to reclaim taskbar space.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
+            ValueName = 'SearchboxTaskbarMode'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Performance.MenuShowDelay'; Name = 'Faster menu animations'; Category = 'Performance'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Reduces the menu open delay from 400ms to 10ms (snappier UI, no functional change).'
+            Type = 'Registry'; Path = 'HKCU:\Control Panel\Desktop'
+            ValueName = 'MenuShowDelay'; ValueType = 'String'; Data = '10'
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableAdvertisingId'; Name = 'Disable advertising ID'; Category = 'Privacy'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops apps using an advertising ID to profile you. No functional loss.'
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo'
+            ValueName = 'Enabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.LockScreenAdOverlay'; Name = 'Disable lock-screen ads (overlay)'; Category = 'Privacy'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = "Turns off ads and 'fun facts' shown on the lock screen (Spotlight overlay)."
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+            ValueName = 'RotatingLockScreenOverlayEnabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.LockScreenAdSuggestions'; Name = 'Disable lock-screen suggestions'; Category = 'Privacy'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off suggested content / ads on the lock screen.'
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+            ValueName = 'SubscribedContent-338387Enabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Performance.LongPathsEnabled'; Name = 'Enable Win32 long paths'; Category = 'Performance'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Allows paths longer than 260 characters for apps that opt in. Safe, widely recommended.'
+            Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+            ValueName = 'LongPathsEnabled'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Power.FastStartupOff'; Name = 'Disable Fast Startup'; Category = 'Power'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables Fast Startup so Windows Update and drivers initialise cleanly; hibernation itself stays available.'
+            Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'
+            ValueName = 'HiberbootEnabled'; ValueType = 'DWord'; Data = 0
+        }
+    )
+}
+
+# =================================================================================================
+# Defender safety guard (hard invariant - see script header / DESIGN section 5.1)
+# =================================================================================================
+function Test-IsDefenderTarget {
+    <#
+        Returns $true when a tweak would weaken Windows/Microsoft Defender, so the selection pipeline can
+        drop it. No level or add-on may ever disable Defender. Registry: any Defender policy/product key
+        is blocked outright. Service: a protected AV/Security service is blocked only when the desired
+        start type would weaken it (Disabled/Manual) - normalising it toward Automatic is allowed.
+    #>
+    param ([Parameter(Mandatory = $true)]$Tweak)
+
+    switch ($Tweak.Type) {
+        'Registry' {
+            $p = [string]$Tweak.Path
+            $patterns = @(
+                '\\Microsoft\\Windows Defender',
+                '\\Microsoft\\Windows Defender Security Center',
+                '\\Microsoft\\Microsoft Antimalware',
+                '\\Microsoft\\Windows Defender Exploit Guard'
+            )
+            foreach ($pat in $patterns) { if ($p -match $pat) { return $true } }
+            return $false
+        }
+        'Service' {
+            $protected = @('WinDefend', 'WdNisSvc', 'WdNisDrv', 'WdFilter', 'Sense', 'MsSecFlt',
+                'SecurityHealthService', 'wscsvc', 'webthreatdefsvc', 'webthreatdefusersvc')
+            if (($protected -contains [string]$Tweak.ServiceName) -and
+                (@('Disabled', 'Manual') -contains [string]$Tweak.StartupType)) {
+                return $true
+            }
+            return $false
+        }
+        default { return $false }
+    }
+}
+
+# =================================================================================================
+# Selection engine
+# =================================================================================================
+function Select-Tweaks {
+    <#
+        Resolves the effective tweak set for the requested Level / Categories / add-ons, then runs every
+        row through the Defender guard (blocked rows are dropped with a warning). Levels are cumulative;
+        add-on rows are included only when their add-on is requested or the Level is Full. Custom (guided
+        mode, later commit) previews the whole catalog.
+    #>
+    param (
+        [string]$Level,
+        [string[]]$Categories,
+        [switch]$IncludeAI,
+        [switch]$IncludeGaming
+    )
+
+    $rank = @{ Minimal = 1; Balanced = 2; Full = 3 }
+    $wantAI     = $IncludeAI.IsPresent     -or ($Level -in @('Full', 'Custom'))
+    $wantGaming = $IncludeGaming.IsPresent -or ($Level -in @('Full', 'Custom'))
+
+    $selected = foreach ($t in (Get-TweakCatalog)) {
+        # Level / add-on membership.
+        if ($t.AddOn -eq 'AI')          { $include = $wantAI }
+        elseif ($t.AddOn -eq 'Gaming')  { $include = $wantGaming }
+        elseif ($Level -eq 'Custom')    { $include = $true }
+        else                            { $include = ($rank[$t.MinLevel] -le $rank[$Level]) }
+
+        # Optional category filter.
+        if ($include -and $Categories) { $include = ($Categories -contains $t.Category) }
+
+        if ($include) {
+            if (Test-IsDefenderTarget -Tweak $t) {
+                Write-OptiLog "Skipping '$($t.Id)': targets a protected Windows Defender key/service and is never applied." 'Warning'
+            } else {
+                $t
+            }
+        }
+    }
+
+    return @($selected)
+}
+
+# =================================================================================================
+# Current-state reads (the read half of the capture engine; full capture arrives in a later commit)
+# =================================================================================================
+function Get-RegistryValueState {
+    # Returns Exists / Data / Kind for a single registry value without altering anything.
+    param ([string]$Path, [string]$ValueName)
+
+    $res = [pscustomobject]@{ Exists = $false; Data = $null; Kind = $null }
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            $key = Get-Item -LiteralPath $Path -ErrorAction Stop
+            if ($key.GetValueNames() -contains $ValueName) {
+                $res.Exists = $true
+                $res.Data   = $key.GetValue($ValueName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                $res.Kind   = $key.GetValueKind($ValueName).ToString()
+            }
+        }
+    } catch { }
+    return $res
+}
+
+function Get-TweakCurrentState {
+    # Human-readable current on-machine value for a tweak (read-only).
+    param ($Tweak)
+    switch ($Tweak.Type) {
+        'Registry' {
+            $s = Get-RegistryValueState -Path $Tweak.Path -ValueName $Tweak.ValueName
+            if ($s.Exists) { return [string]$s.Data } else { return '<absent>' }
+        }
+        default { return '<n/a>' }
+    }
+}
+
+function Get-TweakTargetText {
+    # Short human description of what a tweak touches.
+    param ($Tweak)
+    switch ($Tweak.Type) {
+        'Registry' { return "$($Tweak.Path)\$($Tweak.ValueName)" }
+        default    { return $Tweak.Id }
+    }
+}
+
+# =================================================================================================
+# Modes
 # =================================================================================================
 function Invoke-ApplyMode {
-    Write-OptiLog "Apply mode - Level '$Level'$(if ($IncludeAI) {' +AI'})$(if ($IncludeGaming) {' +Gaming'})." 'Info'
-    Write-OptiLog "No tweak catalog is wired up yet (skeleton build). Nothing was changed." 'Info'
+    $rows = Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming
+    $addons = @(); if ($IncludeAI -or $Level -eq 'Full') { $addons += 'AI' }; if ($IncludeGaming -or $Level -eq 'Full') { $addons += 'Gaming' }
+    $suffix = if ($addons) { " (+$($addons -join ', +'))" } else { '' }
+    Write-OptiLog "Apply mode - Level '$Level'$suffix : $($rows.Count) tweak(s) selected." 'Info'
+    Write-OptiLog "The apply engine is not implemented yet. Run with -Preview to inspect the selection. Nothing was changed." 'Info'
 }
 
 function Invoke-PreviewMode {
-    Write-OptiLog "Preview mode - Level '$Level'. The tweak catalog is not implemented yet; nothing to list." 'Info'
+    $rows = Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming
+    Write-OptiLog "Preview - Level '$Level': $($rows.Count) tweak(s) would be evaluated (read-only; nothing changed)." 'Info'
+
+    if (-not $Quiet) {
+        foreach ($t in $rows) {
+            $tier    = if ($t.AddOn) { "+$($t.AddOn)" } else { $t.MinLevel }
+            $current = Get-TweakCurrentState -Tweak $t
+            $desired = if ($t.Type -eq 'Registry') { [string]$t.Data } else { '' }
+            $flag    = if ($current -eq $desired) { 'ok' } elseif ($current -eq '<absent>') { 'new' } else { 'change' }
+            Write-Host ""
+            Write-Host ("  [{0}/{1}] {2}" -f $tier, $t.Category, $t.Id) -ForegroundColor Cyan
+            Write-Host ("      {0}" -f (Get-TweakTargetText -Tweak $t))
+            Write-Host ("      current: {0}   ->   desired: {1}   [{2}, risk {3}]" -f $current, $desired, $flag, $t.Risk)
+        }
+        Write-Host ""
+    }
 }
 
 function Invoke-RollbackMode {
