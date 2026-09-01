@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.2.0'
+$script:ScriptVersion   = '0.3.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -114,6 +114,9 @@ function Write-OptiLog {
         [ValidateSet('Info', 'Warning', 'Error', 'Success')]
         [string]$Level = 'Info'
     )
+
+    # Logging is bookkeeping, not a system change: it must run (and be recorded) even under -WhatIf.
+    $WhatIfPreference = $false
 
     $line = "[{0}] {1,-7} {2}" -f (Get-Date).ToString('yyyy-MM-dd_HH-mm-ss'), $Level.ToUpper(), $Message
 
@@ -164,6 +167,7 @@ function Get-OptiOSInfo {
         whether this is a client or server SKU. Server has no Checkpoint-Computer, so the restore-point
         step degrades on it later.
     #>
+    $WhatIfPreference = $false   # read-only probe; never a -WhatIf target (and avoids CIM module-load WhatIf noise)
     $info = [PSCustomObject]@{
         Build      = 0
         Caption    = ''
@@ -194,6 +198,8 @@ function Initialize-SnapshotStore {
     [CmdletBinding()]
     param ([switch]$ReadOnlyMode)
 
+    $WhatIfPreference = $false   # store + log setup is infrastructure, not a -WhatIf target
+
     try {
         foreach ($dir in @($script:VendorRoot, $script:StoreRoot, $script:SnapshotsRoot, $script:RolledBackRoot, $script:LogsRoot)) {
             if (-not (Test-Path -LiteralPath $dir)) {
@@ -221,6 +227,8 @@ function Protect-SnapshotStore {
     #>
     [CmdletBinding()]
     param ()
+
+    $WhatIfPreference = $false   # ACL hardening is infrastructure, not a -WhatIf target
 
     if ($NoProtectSnapshots) {
         Write-OptiLog "Snapshot-store ACL hardening skipped (-NoProtectSnapshots)." 'Info'
@@ -454,14 +462,230 @@ function Get-TweakTargetText {
 }
 
 # =================================================================================================
+# Capture engine + snapshot / undo-script generation
+# (This commit captures prior state and writes the rollback artifacts; the live apply that will sit
+#  between capture and finish arrives in the next commit.)
+# =================================================================================================
+function Get-TweakCaptureRecord {
+    # Records the live prior state of a tweak so an undo can restore it exactly. Read-only.
+    param ($Tweak)
+    switch ($Tweak.Type) {
+        'Registry' {
+            $state = Get-RegistryValueState -Path $Tweak.Path -ValueName $Tweak.ValueName
+            return [pscustomobject]@{
+                Id = $Tweak.Id; Category = $Tweak.Category; Type = 'Registry'; Scope = $Tweak.Scope
+                AddOn = $Tweak.AddOn
+                Path = $Tweak.Path; ValueName = $Tweak.ValueName
+                DesiredType = $Tweak.ValueType; DesiredData = $Tweak.Data
+                PriorExists = $state.Exists; PriorData = $state.Data; PriorKind = $state.Kind
+                KeyExisted = (Test-Path -LiteralPath $Tweak.Path)
+            }
+        }
+        default { throw "Capture for tweak type '$($Tweak.Type)' is not implemented in this build." }
+    }
+}
+
+function ConvertTo-RegLiteral {
+    # Renders a registry value as a PowerShell literal for the generated undo script.
+    param ($Kind, $Data)
+    switch ($Kind) {
+        'DWord'       { return [string]([int64]$Data) }
+        'QWord'       { return [string]([int64]$Data) }
+        'Binary'      { if ($null -eq $Data) { return '@()' }; return '@(' + ((@($Data) | ForEach-Object { [int]$_ }) -join ',') + ')' }
+        'MultiString' { return '@(' + ((@($Data) | ForEach-Object { "'" + ([string]$_ -replace "'", "''") + "'" }) -join ',') + ')' }
+        default       { return "'" + ([string]$Data -replace "'", "''") + "'" }   # String / ExpandString
+    }
+}
+
+function New-RegistryUndoLine {
+    # PowerShell lines that restore one registry value to its captured prior state.
+    param ($Record)
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ($Record.Type -ne 'Registry') {
+        $lines.Add("# (skip: undo for type '$($Record.Type)' is not implemented in this build)")
+        return $lines
+    }
+    $pathLit = "'" + ([string]$Record.Path -replace "'", "''") + "'"
+    $nameLit = "'" + ([string]$Record.ValueName -replace "'", "''") + "'"
+    if ($Record.PriorExists) {
+        $valLit = ConvertTo-RegLiteral -Kind $Record.PriorKind -Data $Record.PriorData
+        $lines.Add("if (-not (Test-Path -LiteralPath $pathLit)) { New-Item -Path $pathLit -Force | Out-Null }")
+        $lines.Add("New-ItemProperty -LiteralPath $pathLit -Name $nameLit -PropertyType $($Record.PriorKind) -Value $valLit -Force | Out-Null")
+    } else {
+        $lines.Add("Remove-ItemProperty -LiteralPath $pathLit -Name $nameLit -Force -ErrorAction SilentlyContinue")
+        if (-not $Record.KeyExisted) {
+            $lines.Add("if (Test-Path -LiteralPath $pathLit) { `$k = Get-Item -LiteralPath $pathLit; if (`$k.ValueCount -eq 0 -and `$k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $pathLit -Force -ErrorAction SilentlyContinue } }")
+        }
+    }
+    return $lines
+}
+
+function New-UndoScriptFile {
+    # Writes a self-contained, idempotent undo .ps1 for one snapshot segment.
+    param ($SnapshotFolder, $Stamp, $Segment, $Level, [object[]]$Records)
+    $file = Join-Path $SnapshotFolder ("Undo-{0}_{1}.ps1" -f $Segment, $Stamp)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("#Requires -Version 5.1")
+    [void]$sb.AppendLine("<#")
+    [void]$sb.AppendLine("  Auto-generated rollback for Optimize-Windows11 snapshot $Stamp (segment: $Segment; level: $Level).")
+    [void]$sb.AppendLine("  Restores the prior state captured before the run. Self-contained and idempotent - safe to re-run.")
+    [void]$sb.AppendLine("  Run in an ELEVATED Windows PowerShell (HKLM changes require administrator).")
+    [void]$sb.AppendLine("#>")
+    [void]$sb.AppendLine("`$ErrorActionPreference = 'Continue'")
+    [void]$sb.AppendLine("Write-Host 'Undoing Optimize-Windows11 snapshot $Stamp ($Segment segment)...'")
+    foreach ($r in $Records) {
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("# $($r.Id)  [$($r.Type)]  ->  $(Get-TweakTargetText -Tweak $r)")
+        foreach ($line in (New-RegistryUndoLine -Record $r)) { [void]$sb.AppendLine($line) }
+    }
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("Write-Host 'Undo complete for snapshot $Stamp ($Segment segment).'")
+    Set-Content -LiteralPath $file -Value $sb.ToString() -Encoding UTF8
+    return $file
+}
+
+function ConvertTo-RegExePath {
+    # HKCU:\... -> HKEY_CURRENT_USER\... for reg.exe export.
+    param ($PsPath)
+    $map = [ordered]@{
+        'HKLM:' = 'HKEY_LOCAL_MACHINE'; 'HKCU:' = 'HKEY_CURRENT_USER'; 'HKU:' = 'HKEY_USERS'
+        'HKCR:' = 'HKEY_CLASSES_ROOT'; 'HKCC:' = 'HKEY_CURRENT_CONFIG'
+    }
+    foreach ($k in $map.Keys) { if ($PsPath.StartsWith($k, [System.StringComparison]::OrdinalIgnoreCase)) { return ($map[$k] + $PsPath.Substring($k.Length)) } }
+    return $null
+}
+
+function Export-RegistrySubtree {
+    # Belt-and-suspenders: exports one existing registry key to a .reg file. Absent keys are skipped.
+    param ($PsPath, $DestFolder)
+    if (-not (Test-Path -LiteralPath $PsPath)) { return $null }
+    $regPath = ConvertTo-RegExePath -PsPath $PsPath
+    if (-not $regPath) { return $null }
+    $safe = ($regPath -replace '[\\:/*?"<>|]', '_')
+    if ($safe.Length -gt 120) { $safe = $safe.Substring(0, 120) }
+    $file = Join-Path $DestFolder ($safe + '.reg')
+    & reg.exe export "$regPath" "$file" /y > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { return $file } else { return $null }
+}
+
+function Get-StackIndex {
+    if (Test-Path -LiteralPath $script:StackIndexPath) {
+        try { return (Get-Content -Raw -LiteralPath $script:StackIndexPath | ConvertFrom-Json) } catch { }
+    }
+    return [pscustomobject]@{ SchemaVersion = 1; Layers = @() }
+}
+
+function Save-StackIndex {
+    param ($State)
+    $State | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $script:StackIndexPath -Encoding UTF8
+}
+
+function New-OptiSnapshot {
+    <#
+        Captures the prior state of every selected tweak and writes a stack layer under ProgramData:
+        a snapshot folder with per-segment undo .ps1 scripts, .reg backups of the touched keys, a
+        snapshot.json manifest, and an entry in stack-index.json. Does NOT modify the system.
+    #>
+    param ([object[]]$Tweaks, [string]$Level)
+
+    # One folder per run (never overwritten).
+    $stamp = $script:StartStamp
+    $folder = Join-Path $script:SnapshotsRoot $stamp
+    $n = 1
+    while (Test-Path -LiteralPath $folder) { $n++; $stamp = "$($script:StartStamp)_$n"; $folder = Join-Path $script:SnapshotsRoot $stamp }
+    New-Item -Path $folder -ItemType Directory -Force | Out-Null
+    $regFolder = Join-Path $folder 'registry-backup'
+    New-Item -Path $regFolder -ItemType Directory -Force | Out-Null
+
+    # Capture prior state.
+    $records = @(foreach ($t in $Tweaks) { Get-TweakCaptureRecord -Tweak $t })
+
+    # .reg export of each distinct existing registry key.
+    foreach ($k in (@($records | Where-Object { $_.Type -eq 'Registry' } | Select-Object -ExpandProperty Path -Unique))) {
+        Export-RegistrySubtree -PsPath $k -DestFolder $regFolder | Out-Null
+    }
+
+    # Group into undo segments: Level / AI / Gaming (independent stacks).
+    $segments = @{}
+    foreach ($r in $records) {
+        $seg = if ($r.AddOn) { $r.AddOn } else { 'Level' }
+        if (-not $segments.ContainsKey($seg)) { $segments[$seg] = New-Object System.Collections.Generic.List[object] }
+        $segments[$seg].Add($r)
+    }
+
+    # Compute this run's index once (shared across its segment layers).
+    $idxState = Get-StackIndex
+    $index = 0
+    foreach ($l in @($idxState.Layers)) { if ($l.Index -gt $index) { $index = $l.Index } }
+    $index++
+
+    $segmentInfo = @{}
+    foreach ($seg in $segments.Keys) {
+        $segRecords = $segments[$seg].ToArray()
+        $undoName = $null
+        if (-not $NoRollbackScript) {
+            $undoName = Split-Path (New-UndoScriptFile -SnapshotFolder $folder -Stamp $stamp -Segment $seg -Level $Level -Records $segRecords) -Leaf
+        }
+        $segmentInfo[$seg] = [pscustomobject]@{ UndoScript = $undoName; TweakCount = $segRecords.Count; Records = $segRecords }
+    }
+
+    # Manifest.
+    $manifest = [pscustomobject]@{
+        SchemaVersion   = 1
+        Index           = $index
+        Stamp           = $stamp
+        Computer        = $env:COMPUTERNAME
+        ScriptVersion   = $script:ScriptVersion
+        Level           = $Level
+        AddOns          = @($segments.Keys | Where-Object { $_ -ne 'Level' })
+        Status          = 'Active'
+        RestorePointSeq = $null
+        Created         = (Get-Date).ToString('o')
+        Segments        = $segmentInfo
+    }
+    $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $folder 'snapshot.json') -Encoding UTF8
+
+    # Stack index: one layer entry per segment produced this run.
+    $layers = @($idxState.Layers)
+    foreach ($seg in $segmentInfo.Keys) {
+        $info = $segmentInfo[$seg]
+        $layers += [pscustomobject]@{
+            Index = $index; Stamp = $stamp; Folder = $stamp; Segment = $seg; Level = $Level
+            Status = 'Active'; UndoScript = $info.UndoScript; TweakCount = $info.TweakCount
+        }
+    }
+    $idxState.Layers = $layers
+    Save-StackIndex -State $idxState
+
+    return [pscustomobject]@{ Folder = $folder; Stamp = $stamp; Index = $index; Segments = $segmentInfo }
+}
+
+# =================================================================================================
 # Modes
 # =================================================================================================
 function Invoke-ApplyMode {
     $rows = Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming
     $addons = @(); if ($IncludeAI -or $Level -eq 'Full') { $addons += 'AI' }; if ($IncludeGaming -or $Level -eq 'Full') { $addons += 'Gaming' }
     $suffix = if ($addons) { " (+$($addons -join ', +'))" } else { '' }
-    Write-OptiLog "Apply mode - Level '$Level'$suffix : $($rows.Count) tweak(s) selected." 'Info'
-    Write-OptiLog "The apply engine is not implemented yet. Run with -Preview to inspect the selection. Nothing was changed." 'Info'
+
+    if ($rows.Count -eq 0) {
+        Write-OptiLog "Apply - Level '$Level'$suffix : no tweaks selected; nothing to do." 'Info'
+        return
+    }
+    if ($WhatIfPreference) {
+        Write-OptiLog "WhatIf - Level '$Level'$suffix : would capture prior state of $($rows.Count) tweak(s), write a snapshot + undo script, then apply. No snapshot written, system unchanged." 'Info'
+        return
+    }
+
+    Write-OptiLog "Apply - Level '$Level'$suffix : capturing prior state of $($rows.Count) tweak(s)..." 'Info'
+    $snap = New-OptiSnapshot -Tweaks $rows -Level $Level
+    Write-OptiLog "Snapshot #$($snap.Index) written: $($snap.Folder)" 'Info'
+    foreach ($seg in $snap.Segments.Keys) {
+        $u = $snap.Segments[$seg].UndoScript
+        if ($u) { Write-OptiLog "  undo ($seg, $($snap.Segments[$seg].TweakCount) tweak(s)): $u" 'Info' }
+    }
+    # The live apply engine sits here in the next commit.
+    Write-OptiLog "Apply engine not wired yet - the system was NOT modified. The generated undo script restores the captured (current) state, so it is a valid no-op right now." 'Info'
 }
 
 function Invoke-PreviewMode {
