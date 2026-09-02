@@ -29,10 +29,12 @@ What this project adds over TBOK:
 
 ### Available now
 
-- `-Level Minimal|Balanced|Full|Custom` selection. **Minimal** and **Balanced** are implemented — Minimal:
-  Explorer/UI quality-of-life, consumer ads/tips off, Fast Startup off, a few safe services to Manual;
-  Balanced adds responsiveness/network tuning, Bing/web-search off, **telemetry reduced (not off)**,
-  **desktop-only hibernation-off**, and **essential-service normalization**. Full is still being filled in.
+- `-Level Minimal|Balanced|Full|Custom` selection. **Minimal**, **Balanced** and **Full** are implemented —
+  Minimal: Explorer/UI quality-of-life, consumer ads/tips off, Fast Startup off, a few safe services to
+  Manual; Balanced adds responsiveness/network tuning, Bing/web-search off, **telemetry reduced (not off)**,
+  **desktop-only hibernation-off**, and **essential-service normalization**; **Full** does the aggressive
+  set (telemetry fully OFF, more services disabled, WPBT/device-metadata hardening, Edge policies,
+  svchost/RAM & SysMain tuning) **behind a confirmation prompt** (`-Force` to skip). Defender is never touched.
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
   per-key `.reg` backups, and a self-contained **undo `.ps1`**).
@@ -48,8 +50,8 @@ What this project adds over TBOK:
 
 ### Upcoming
 
-- The **Full** tweak catalog (aggressive telemetry-off, the full service map, debloat, security hardening, Edge).
-- `-IncludeAI` and `-IncludeGaming` add-ons (independently revertible).
+- **Appx debloat** (remove Widgets/Bing) and `-IncludeAI` / `-IncludeGaming` add-ons (independently revertible).
+- More Full coverage (wider service map, pagefile sizing).
 - `-AllUsers` (all profiles) and the guided `Custom` walkthrough.
 
 ## Usage

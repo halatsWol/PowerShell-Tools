@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.9.0'
+$script:ScriptVersion   = '0.10.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -438,8 +438,8 @@ function Get-TweakCatalog {
         }
         [pscustomobject]@{
             Id = 'Privacy.ReduceTelemetry'; Name = 'Reduce telemetry to Required (not off)'; Category = 'Privacy'
-            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
-            Impact = 'Sets diagnostic data to the Required level (1) - NOT off - so Windows Update and the Store keep working. Full turns it fully off.'
+            MinLevel = 'Balanced'; MaxLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets diagnostic data to the Required level (1) - NOT off - so Windows Update and the Store keep working. Full turns it fully off instead.'
             Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
             ValueName = 'AllowTelemetry'; ValueType = 'DWord'; Data = 1
         }
@@ -476,6 +476,90 @@ function Get-TweakCatalog {
         #  gets Access Denied configuring it - it is left entirely to Windows to manage.)
         [pscustomobject]@{ Id = 'Services.NormWscSvc';     Name = 'Normalize Security Center';   Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Security Center service is Delayed-Auto (its default). Strengthens, never weakens.'; Type = 'Service'; ServiceName = 'wscsvc';              StartupType = 'AutomaticDelayedStart' }
         [pscustomobject]@{ Id = 'Services.NormWSearch';    Name = 'Normalize Windows Search';    Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures Windows Search is Delayed-Auto (its default; no change if already correct).';           Type = 'Service'; ServiceName = 'WSearch';             StartupType = 'AutomaticDelayedStart' }
+
+        # ---- Full (aggressive - behind the confirmation gate) ------------------------------------
+        # NOTE: appx debloat (Widgets/Bing removal) rides on the Appx engine that arrives with the AI
+        # add-on; it is not in this tier yet.
+        [pscustomobject]@{
+            Id = 'Privacy.DisableTelemetry'; Name = 'Turn telemetry fully off'; Category = 'Privacy'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'High'; Reversible = $true
+            Impact = 'Sets diagnostic data to 0 (off). Can interfere with Windows Update / Store / licensing over time - that is why Balanced keeps it at Required.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+            ValueName = 'AllowTelemetry'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableFeedbackNotifications'; Name = 'Disable feedback notifications'; Category = 'Privacy'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops Windows prompting you for feedback.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+            ValueName = 'DoNotShowFeedbackNotifications'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableErrorReporting'; Name = 'Disable Windows Error Reporting'; Category = 'Privacy'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true
+            Impact = 'Turns off Windows Error Reporting (no crash data sent to Microsoft).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+            ValueName = 'Disabled'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Update.DisableDeliveryOptimization'; Name = 'Disable Delivery Optimization'; Category = 'Update'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops peer-to-peer sharing of Windows/Store update files (DODownloadMode=0).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config'
+            ValueName = 'DODownloadMode'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Security.DisableWpbt'; Name = 'Disable WPBT vendor boot execution'; Category = 'Security'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true
+            Impact = 'Blocks the Windows Platform Binary Table so firmware cannot silently inject vendor software at boot.'
+            Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+            ValueName = 'DisableWpbtExecution'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Security.PreventDeviceMetadata'; Name = 'Block hardware metadata from network'; Category = 'Security'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops Windows fetching device metadata/drivers from the network unsolicited.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata'
+            ValueName = 'PreventDeviceMetadataFromNetwork'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Network.DisableThrottling'; Name = 'Disable network throttling'; Category = 'Network'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets NetworkThrottlingIndex to 0xFFFFFFFF (off) for maximum network throughput.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
+            ValueName = 'NetworkThrottlingIndex'; ValueType = 'DWord'; Data = -1
+        }
+        [pscustomobject]@{
+            Id = 'Performance.SvcHostSplitThreshold'; Name = 'Group svchost processes by RAM'; Category = 'Performance'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the svchost split threshold to total RAM (KB) so services share fewer host processes.'
+            Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Control'
+            ValueName = 'SvcHostSplitThresholdInKB'; ValueType = 'DWord'; Data = { param($hw) [int]([math]::Round($hw.RamBytes / 1KB)) }
+        }
+        [pscustomobject]@{
+            Id = 'Edge.DisableStartupBoost'; Name = 'Disable Edge startup boost'; Category = 'Edge'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops Microsoft Edge pre-launching at sign-in.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+            ValueName = 'StartupBoostEnabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Edge.DisableBackgroundMode'; Name = 'Disable Edge background running'; Category = 'Edge'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops Microsoft Edge continuing to run in the background after you close it.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+            ValueName = 'BackgroundModeEnabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{ Id = 'Services.DisableDiagTrack';  Name = 'Disable DiagTrack telemetry';       Category = 'Services'; MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'High';   Reversible = $true; Impact = 'Disables the Connected User Experiences and Telemetry (DiagTrack) service. Part of the telemetry blackout.'; Type = 'Service'; ServiceName = 'DiagTrack';         StartupType = 'Disabled' }
+        [pscustomobject]@{ Id = 'Services.DisableDmwappush'; Name = 'Disable WAP push telemetry';        Category = 'Services'; MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true; Impact = 'Disables the dmwappushservice (device-management WAP push) telemetry channel.';                     Type = 'Service'; ServiceName = 'dmwappushservice'; StartupType = 'Disabled' }
+        [pscustomobject]@{ Id = 'Services.DisableDiagHub';   Name = 'Disable diagnostics hub collector'; Category = 'Services'; MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true; Impact = 'Disables the Diagnostics Hub standard collector service.';                                             Type = 'Service'; ServiceName = 'diagnosticshub.standardcollector.service'; StartupType = 'Disabled' }
+        [pscustomobject]@{
+            Id = 'Services.SysMainConditional'; Name = 'Tune SysMain by disk/RAM'; Category = 'Services'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true
+            Impact = 'On SSD/NVMe (or low-RAM HDD) SysMain (Superfetch) is Disabled; on an HDD with plenty of RAM it is set to Manual.'
+            Type = 'Service'; ServiceName = 'SysMain'
+            StartupType = { param($hw) if ($hw.SystemDiskIsSSD) { 'Disabled' } elseif ($hw.RamGB -gt 12) { 'Manual' } else { 'Disabled' } }
+        }
     )
 }
 
@@ -600,11 +684,16 @@ function Select-Tweaks {
     $hw = Get-OptiHardware
 
     $selected = foreach ($t in (Get-TweakCatalog)) {
-        # Level / add-on membership.
+        # Level / add-on membership. A level row applies when MinLevel <= chosen level <= MaxLevel
+        # (MaxLevel defaults to Full); MaxLevel lets a Balanced choice be superseded by a Full one that
+        # targets the same setting (e.g. telemetry Required at Balanced vs Off at Full).
         if ($t.AddOn -eq 'AI')          { $include = $wantAI }
         elseif ($t.AddOn -eq 'Gaming')  { $include = $wantGaming }
         elseif ($Level -eq 'Custom')    { $include = $true }
-        else                            { $include = ($rank[$t.MinLevel] -le $rank[$Level]) }
+        else {
+            $maxL = if ($t.MaxLevel) { $t.MaxLevel } else { 'Full' }
+            $include = ($rank[$t.MinLevel] -le $rank[$Level]) -and ($rank[$Level] -le $rank[$maxL])
+        }
         if (-not $include) { continue }
 
         # Optional category filter.
@@ -623,10 +712,14 @@ function Select-Tweaks {
             if (-not $applies) { continue }
         }
 
-        # Computed value -> resolve on a copy so downstream sees a literal.
-        if ($t.Data -is [scriptblock]) {
+        # Computed value(s) -> resolve on a copy so downstream sees literals (Data for registry,
+        # StartupType for a service e.g. SysMain by disk/RAM).
+        if (($t.Data -is [scriptblock]) -or ($t.StartupType -is [scriptblock])) {
             $resolved = $t.PSObject.Copy()
-            try { $resolved.Data = (& $t.Data $hw) } catch { Write-OptiLog "Computed value failed for '$($t.Id)': $($_.Exception.Message) - skipped." 'Warning'; continue }
+            try {
+                if ($t.Data -is [scriptblock]) { $resolved.Data = (& $t.Data $hw) }
+                if ($t.StartupType -is [scriptblock]) { $resolved.StartupType = (& $t.StartupType $hw) }
+            } catch { Write-OptiLog "Computed value failed for '$($t.Id)': $($_.Exception.Message) - skipped." 'Warning'; continue }
             $resolved
         } else {
             $t
@@ -1132,6 +1225,18 @@ function Invoke-ApplyMode {
     }
 
     $isWhatIf = [bool]$WhatIfPreference
+
+    # Full is aggressive - confirm before proceeding (skipped by -Force, and not needed for a -WhatIf dry run).
+    if ($Level -eq 'Full' -and -not $Force -and -not $isWhatIf) {
+        Write-OptiLog "Full applies AGGRESSIVE changes (telemetry OFF, services disabled, security hardening) that can degrade Windows Update / Store / features over time. Balanced is recommended for most machines." 'Warning'
+        if (-not [Environment]::UserInteractive) {
+            Write-OptiLog "Full requires confirmation; re-run with -Force to proceed non-interactively. Aborted - no changes made." 'Error'
+            Set-OptiExit 2; return
+        }
+        $resp = ''
+        try { $resp = Read-Host "Type 'yes' to proceed with Full (anything else aborts)" } catch { $resp = '' }
+        if ($resp -ne 'yes') { Write-OptiLog "Full aborted by user - no changes made." 'Info'; return }
+    }
 
     # Capture + snapshot BEFORE any change (skipped for a -WhatIf dry run). A snapshot failure throws
     # up to the main handler, so we never apply without a rollback in place.
