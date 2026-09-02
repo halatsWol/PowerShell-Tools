@@ -24,7 +24,7 @@
     non-production machine, before running. Requires administrative privileges to apply or roll back.
 #>
 
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High', DefaultParameterSetName = 'Apply')]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', DefaultParameterSetName = 'Apply')]
 param (
     # --- Apply / Preview -------------------------------------------------------------------------
     [Parameter(ParameterSetName = 'Apply', Position = 0)]
@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.3.0'
+$script:ScriptVersion   = '0.4.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -663,7 +663,24 @@ function New-OptiSnapshot {
 # =================================================================================================
 # Modes
 # =================================================================================================
+function Invoke-TweakApply {
+    # Applies one tweak to the system. Returns $true on success; throws on failure. Registry only so far.
+    param ($Tweak)
+    $ConfirmPreference = 'None'   # the caller already gated this via ShouldProcess
+    $WhatIfPreference = $false
+    switch ($Tweak.Type) {
+        'Registry' {
+            if (-not (Test-Path -LiteralPath $Tweak.Path)) { New-Item -Path $Tweak.Path -Force | Out-Null }
+            New-ItemProperty -LiteralPath $Tweak.Path -Name $Tweak.ValueName -PropertyType $Tweak.ValueType -Value $Tweak.Data -Force | Out-Null
+            return $true
+        }
+        default { throw "Apply for tweak type '$($Tweak.Type)' is not implemented in this build." }
+    }
+}
+
 function Invoke-ApplyMode {
+    param ([System.Management.Automation.PSCmdlet]$Cmdlet)
+
     $rows = Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming
     $addons = @(); if ($IncludeAI -or $Level -eq 'Full') { $addons += 'AI' }; if ($IncludeGaming -or $Level -eq 'Full') { $addons += 'Gaming' }
     $suffix = if ($addons) { " (+$($addons -join ', +'))" } else { '' }
@@ -672,20 +689,49 @@ function Invoke-ApplyMode {
         Write-OptiLog "Apply - Level '$Level'$suffix : no tweaks selected; nothing to do." 'Info'
         return
     }
-    if ($WhatIfPreference) {
-        Write-OptiLog "WhatIf - Level '$Level'$suffix : would capture prior state of $($rows.Count) tweak(s), write a snapshot + undo script, then apply. No snapshot written, system unchanged." 'Info'
-        return
+
+    $isWhatIf = [bool]$WhatIfPreference
+
+    # Capture + snapshot BEFORE any change (skipped for a -WhatIf dry run). A snapshot failure throws
+    # up to the main handler, so we never apply without a rollback in place.
+    if (-not $isWhatIf) {
+        Write-OptiLog "Apply - Level '$Level'$suffix : capturing prior state of $($rows.Count) tweak(s)..." 'Info'
+        $snap = New-OptiSnapshot -Tweaks $rows -Level $Level
+        Write-OptiLog "Snapshot #$($snap.Index) written: $($snap.Folder)" 'Info'
+        foreach ($seg in $snap.Segments.Keys) {
+            $u = $snap.Segments[$seg].UndoScript
+            if ($u) { Write-OptiLog "  undo ($seg, $($snap.Segments[$seg].TweakCount) tweak(s)): $u" 'Info' }
+        }
+    } else {
+        Write-OptiLog "WhatIf - Level '$Level'$suffix : $($rows.Count) tweak(s) would be applied (no snapshot written, system unchanged)." 'Info'
     }
 
-    Write-OptiLog "Apply - Level '$Level'$suffix : capturing prior state of $($rows.Count) tweak(s)..." 'Info'
-    $snap = New-OptiSnapshot -Tweaks $rows -Level $Level
-    Write-OptiLog "Snapshot #$($snap.Index) written: $($snap.Folder)" 'Info'
-    foreach ($seg in $snap.Segments.Keys) {
-        $u = $snap.Segments[$seg].UndoScript
-        if ($u) { Write-OptiLog "  undo ($seg, $($snap.Segments[$seg].TweakCount) tweak(s)): $u" 'Info' }
+    # Apply each tweak under ShouldProcess (so -WhatIf previews per tweak and -Confirm can gate each).
+    $applied = 0; $failed = 0; $skipped = 0
+    foreach ($t in $rows) {
+        $target = Get-TweakTargetText -Tweak $t
+        $desired = if ($t.Type -eq 'Registry') { [string]$t.Data } else { '' }
+        if ($Cmdlet.ShouldProcess($target, "Set to '$desired' [$($t.Id)]")) {
+            try {
+                Invoke-TweakApply -Tweak $t | Out-Null
+                $applied++
+                Write-OptiLog "applied: $($t.Id) -> $target = $desired" 'Info'
+            } catch {
+                $failed++
+                Write-OptiLog "FAILED: $($t.Id) ($target): $($_.Exception.Message)" 'Warning'
+            }
+        } else {
+            $skipped++
+        }
     }
-    # The live apply engine sits here in the next commit.
-    Write-OptiLog "Apply engine not wired yet - the system was NOT modified. The generated undo script restores the captured (current) state, so it is a valid no-op right now." 'Info'
+
+    if ($isWhatIf) {
+        Write-OptiLog "WhatIf complete: $($rows.Count) tweak(s) would be applied. Nothing changed." 'Info'
+    } else {
+        $lvl = if ($failed -gt 0) { 'Warning' } else { 'Success' }
+        Write-OptiLog "Apply complete: $applied applied, $failed failed, $skipped skipped." $lvl
+        if ($failed -gt 0) { Set-OptiExit 1 }
+    }
 }
 
 function Invoke-PreviewMode {
@@ -757,11 +803,11 @@ try {
 
     # 5) Dispatch.
     switch ($mode) {
-        'Apply'         { Invoke-ApplyMode }
+        'Apply'         { Invoke-ApplyMode -Cmdlet $PSCmdlet }
         'Preview'       { Invoke-PreviewMode }
         'Rollback'      { Invoke-RollbackMode }
         'ListSnapshots' { Invoke-ListSnapshotsMode }
-        default         { Invoke-ApplyMode }
+        default         { Invoke-ApplyMode -Cmdlet $PSCmdlet }
     }
 
     Write-OptiLog "Done - exit code $script:ExitCode. Log: $script:LogFile" 'Success'
