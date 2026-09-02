@@ -29,12 +29,13 @@ What this project adds over TBOK:
 
 ### Available now
 
-- `-Level Minimal|Balanced|Full|Custom` selection (catalog is **seeded** — only a first slice of Minimal
-  registry tweaks is wired up so far).
+- `-Level Minimal|Balanced|Full|Custom` selection. The **Minimal** tier is complete (Explorer/UI
+  quality-of-life, consumer ads/tips off, classic right-click menu, Fast Startup off, a few safe services
+  set to Manual); Balanced and Full are still being filled in.
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
   per-key `.reg` backups, and a self-contained **undo `.ps1`**).
-- Live apply of registry tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
+- Live apply of **registry and service** tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
 - Built-in **stacked rollback**: `-Rollback` (undo the last run), `-Rollback -To <id>`, `-Rollback -All`,
   and `-ListSnapshots` — repeated runs unwind one layer at a time.
 - A **VSS System Restore point** is created before each apply (skip with `-SkipRestorePoint`), as a
@@ -45,8 +46,8 @@ What this project adds over TBOK:
 
 ### Upcoming
 
-- The full Minimal / Balanced / Full tweak catalog (services, debloat, performance, power, network,
-  security, Edge).
+- The **Balanced** and **Full** tweak catalog (service normalization, debloat, performance, power,
+  network, security, Edge).
 - `-IncludeAI` and `-IncludeGaming` add-ons (independently revertible).
 - `-AllUsers` (all profiles) and the guided `Custom` walkthrough.
 

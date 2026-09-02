@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.7.0'
+$script:ScriptVersion   = '0.8.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -336,6 +336,69 @@ function Get-TweakCatalog {
             Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'
             ValueName = 'HiberbootEnabled'; ValueType = 'DWord'; Data = 0
         }
+        # NOTE (deferred): 'Restore the full right-click menu' (a default-value write under a *created*
+        # CLSID key) needs the undo engine to track and remove created keys - a later enhancement.
+        # 'Hide the Widgets button' (TaskbarDa) is refused with UnauthorizedAccess on protected hives.
+        # Both are deferred until they can be applied+rolled back reliably.
+        [pscustomobject]@{
+            Id = 'Explorer.EnableEndTaskOnTaskbar'; Name = 'Enable "End task" on taskbar'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Adds "End task" to the taskbar right-click menu for quickly killing a hung app.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings'
+            ValueName = 'TaskbarEndTask'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.HideMeetNow'; Name = 'Hide "Meet Now"'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Removes the "Meet Now" (Skype) icon from the taskbar/notification area.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+            ValueName = 'HideSCAMeetNow'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableWelcomeExperience'; Name = 'Disable Windows welcome/tips'; Category = 'Privacy'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off the "Windows welcome experience" and post-update suggestion screens.'
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+            ValueName = 'SoftLandingEnabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableTipsSuggestions'; Name = 'Disable tips & suggestions'; Category = 'Privacy'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops Windows showing "tips, tricks, and suggestions" as you use it.'
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+            ValueName = 'SubscribedContent-338389Enabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Accessibility.DisableStickyKeysPrompt'; Name = 'Disable Sticky Keys shortcut prompt'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops the "press Shift five times" Sticky Keys pop-up (the feature can still be enabled in Settings).'
+            Type = 'Registry'; Path = 'HKCU:\Control Panel\Accessibility\StickyKeys'
+            ValueName = 'Flags'; ValueType = 'String'; Data = '506'
+        }
+        [pscustomobject]@{
+            Id = 'Services.FaxManual'; Name = 'Fax service -> Manual'; Category = 'Services'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Fax service to start on-demand instead of automatically. Zero loss unless you fax.'
+            Type = 'Service'; ServiceName = 'Fax'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Services.MapsBrokerManual'; Name = 'Downloaded Maps Manager -> Manual'; Category = 'Services'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the offline-maps service (MapsBroker) to start on-demand. Zero loss unless you use offline Maps.'
+            Type = 'Service'; ServiceName = 'MapsBroker'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Services.RetailDemoManual'; Name = 'Retail Demo service -> Manual'; Category = 'Services'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets RetailDemo (store demo mode) to start on-demand. Not used on normal machines.'
+            Type = 'Service'; ServiceName = 'RetailDemo'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Services.WMPNetworkManual'; Name = 'WMP Network Sharing -> Manual'; Category = 'Services'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the legacy Windows Media Player network sharing service to start on-demand.'
+            Type = 'Service'; ServiceName = 'WMPNetworkSvc'; StartupType = 'Manual'
+        }
     )
 }
 
@@ -500,17 +563,19 @@ function Select-Tweaks {
 # Current-state reads (the read half of the capture engine; full capture arrives in a later commit)
 # =================================================================================================
 function Get-RegistryValueState {
-    # Returns Exists / Data / Kind for a single registry value without altering anything.
+    # Returns Exists / Data / Kind for a single registry value without altering anything. The catalog
+    # uses '(default)' for a key's default value; the .NET APIs address it as the empty string.
     param ([string]$Path, [string]$ValueName)
 
+    $vn = if ($ValueName -eq '(default)') { '' } else { $ValueName }
     $res = [pscustomobject]@{ Exists = $false; Data = $null; Kind = $null }
     try {
         if (Test-Path -LiteralPath $Path) {
             $key = Get-Item -LiteralPath $Path -ErrorAction Stop
-            if ($key.GetValueNames() -contains $ValueName) {
+            if ($key.GetValueNames() -contains $vn) {
                 $res.Exists = $true
-                $res.Data   = $key.GetValue($ValueName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-                $res.Kind   = $key.GetValueKind($ValueName).ToString()
+                $res.Data   = $key.GetValue($vn, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                $res.Kind   = $key.GetValueKind($vn).ToString()
             }
         }
     } catch { }
@@ -525,7 +590,21 @@ function Get-TweakCurrentState {
             $s = Get-RegistryValueState -Path $Tweak.Path -ValueName $Tweak.ValueName
             if ($s.Exists) { return [string]$s.Data } else { return '<absent>' }
         }
+        'Service' {
+            $svc = Get-Service -Name $Tweak.ServiceName -ErrorAction SilentlyContinue
+            if ($svc) { return [string]$svc.StartType } else { return '<absent>' }
+        }
         default { return '<n/a>' }
+    }
+}
+
+function Get-TweakDesiredText {
+    # The concrete desired value a tweak sets (used for preview and the ShouldProcess message).
+    param ($Tweak)
+    switch ($Tweak.Type) {
+        'Registry' { return [string]$Tweak.Data }
+        'Service'  { return [string]$Tweak.StartupType }
+        default    { return '' }
     }
 }
 
@@ -534,6 +613,7 @@ function Get-TweakTargetText {
     param ($Tweak)
     switch ($Tweak.Type) {
         'Registry' { return "$($Tweak.Path)\$($Tweak.ValueName)" }
+        'Service'  { return "Service:$($Tweak.ServiceName)" }
         default    { return $Tweak.Id }
     }
 }
@@ -556,6 +636,17 @@ function Get-TweakCaptureRecord {
                 DesiredType = $Tweak.ValueType; DesiredData = $Tweak.Data
                 PriorExists = $state.Exists; PriorData = $state.Data; PriorKind = $state.Kind
                 KeyExisted = (Test-Path -LiteralPath $Tweak.Path)
+            }
+        }
+        'Service' {
+            $svc = Get-Service -Name $Tweak.ServiceName -ErrorAction SilentlyContinue
+            return [pscustomobject]@{
+                Id = $Tweak.Id; Category = $Tweak.Category; Type = 'Service'; Scope = $Tweak.Scope
+                AddOn = $Tweak.AddOn
+                ServiceName = $Tweak.ServiceName; DesiredStartupType = $Tweak.StartupType
+                ServiceExists = [bool]$svc
+                PriorStartupType = $(if ($svc) { [string]$svc.StartType } else { $null })
+                PriorStatus = $(if ($svc) { [string]$svc.Status } else { $null })
             }
         }
         default { throw "Capture for tweak type '$($Tweak.Type)' is not implemented in this build." }
@@ -597,23 +688,57 @@ function New-RegistryUndoLine {
     return $lines
 }
 
+function New-ServiceUndoLine {
+    # PowerShell line that restores one service's start type to its captured prior value.
+    param ($Record)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $svcLit = "'" + ([string]$Record.ServiceName -replace "'", "''") + "'"
+    if ($Record.ServiceExists -and (@('Automatic', 'Manual', 'Disabled') -contains [string]$Record.PriorStartupType)) {
+        $lines.Add("if (Get-Service -Name $svcLit -ErrorAction SilentlyContinue) { Set-Service -Name $svcLit -StartupType $($Record.PriorStartupType) -ErrorAction SilentlyContinue }")
+    } else {
+        $lines.Add("# service $svcLit was not present (or had an unsupported start type) at capture - nothing to undo")
+    }
+    return $lines
+}
+
+function New-UndoLine {
+    # Dispatches undo-line generation by record type.
+    param ($Record)
+    switch ($Record.Type) {
+        'Registry' { return (New-RegistryUndoLine -Record $Record) }
+        'Service'  { return (New-ServiceUndoLine -Record $Record) }
+        default    { $l = New-Object System.Collections.Generic.List[string]; $l.Add("# (undo for type '$($Record.Type)' not implemented)"); return $l }
+    }
+}
+
 function Restore-TweakRecord {
     # In-process twin of New-RegistryUndoLine: restores one captured record to its prior state. Used by
     # the built-in -Rollback runner (the generated .ps1 is for standalone use). Registry only so far.
     param ($Record)
     $ConfirmPreference = 'None'; $WhatIfPreference = $false
-    if ($Record.Type -ne 'Registry') { throw "Undo for type '$($Record.Type)' is not implemented in this build." }
-    $path = [string]$Record.Path
-    $name = [string]$Record.ValueName
-    if ($Record.PriorExists) {
-        if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
-        New-ItemProperty -LiteralPath $path -Name $name -PropertyType $Record.PriorKind -Value $Record.PriorData -Force | Out-Null
-    } else {
-        Remove-ItemProperty -LiteralPath $path -Name $name -Force -ErrorAction SilentlyContinue
-        if ((-not $Record.KeyExisted) -and (Test-Path -LiteralPath $path)) {
-            $k = Get-Item -LiteralPath $path
-            if ($k.ValueCount -eq 0 -and $k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+    switch ($Record.Type) {
+        'Registry' {
+            $path = [string]$Record.Path
+            $name = [string]$Record.ValueName
+            if ($Record.PriorExists) {
+                if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
+                New-ItemProperty -LiteralPath $path -Name $name -PropertyType $Record.PriorKind -Value $Record.PriorData -Force | Out-Null
+            } else {
+                Remove-ItemProperty -LiteralPath $path -Name $name -Force -ErrorAction SilentlyContinue
+                if ((-not $Record.KeyExisted) -and (Test-Path -LiteralPath $path)) {
+                    $k = Get-Item -LiteralPath $path
+                    if ($k.ValueCount -eq 0 -and $k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+                }
+            }
         }
+        'Service' {
+            if ($Record.ServiceExists -and (@('Automatic', 'Manual', 'Disabled') -contains [string]$Record.PriorStartupType)) {
+                if (Get-Service -Name $Record.ServiceName -ErrorAction SilentlyContinue) {
+                    Set-Service -Name $Record.ServiceName -StartupType $Record.PriorStartupType -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        default { throw "Undo for type '$($Record.Type)' is not implemented in this build." }
     }
 }
 
@@ -633,7 +758,7 @@ function New-UndoScriptFile {
     foreach ($r in $Records) {
         [void]$sb.AppendLine("")
         [void]$sb.AppendLine("# $($r.Id)  [$($r.Type)]  ->  $(Get-TweakTargetText -Tweak $r)")
-        foreach ($line in (New-RegistryUndoLine -Record $r)) { [void]$sb.AppendLine($line) }
+        foreach ($line in (New-UndoLine -Record $r)) { [void]$sb.AppendLine($line) }
     }
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("Write-Host 'Undo complete for snapshot $Stamp ($Segment segment).'")
@@ -822,6 +947,14 @@ function Invoke-TweakApply {
             New-ItemProperty -LiteralPath $Tweak.Path -Name $Tweak.ValueName -PropertyType $Tweak.ValueType -Value $Tweak.Data -Force | Out-Null
             return $true
         }
+        'Service' {
+            if (-not (Get-Service -Name $Tweak.ServiceName -ErrorAction SilentlyContinue)) {
+                Write-OptiLog "  (service '$($Tweak.ServiceName)' not present - skipped)" 'Info'
+                return $true
+            }
+            Set-Service -Name $Tweak.ServiceName -StartupType $Tweak.StartupType -ErrorAction Stop
+            return $true
+        }
         default { throw "Apply for tweak type '$($Tweak.Type)' is not implemented in this build." }
     }
 }
@@ -859,7 +992,7 @@ function Invoke-ApplyMode {
     $applied = 0; $failed = 0; $skipped = 0
     foreach ($t in $rows) {
         $target = Get-TweakTargetText -Tweak $t
-        $desired = if ($t.Type -eq 'Registry') { [string]$t.Data } else { '' }
+        $desired = Get-TweakDesiredText -Tweak $t
         if ($Cmdlet.ShouldProcess($target, "Set to '$desired' [$($t.Id)]")) {
             try {
                 Invoke-TweakApply -Tweak $t | Out-Null
@@ -891,7 +1024,7 @@ function Invoke-PreviewMode {
         foreach ($t in $rows) {
             $tier    = if ($t.AddOn) { "+$($t.AddOn)" } else { $t.MinLevel }
             $current = Get-TweakCurrentState -Tweak $t
-            $desired = if ($t.Type -eq 'Registry') { [string]$t.Data } else { '' }
+            $desired = Get-TweakDesiredText -Tweak $t
             $flag    = if ($current -eq $desired) { 'ok' } elseif ($current -eq '<absent>') { 'new' } else { 'change' }
             Write-Host ""
             Write-Host ("  [{0}/{1}] {2}" -f $tier, $t.Category, $t.Id) -ForegroundColor Cyan
