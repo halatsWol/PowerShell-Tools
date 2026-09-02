@@ -37,11 +37,12 @@ What this project adds over TBOK:
 - Live apply of registry tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
 - Built-in **stacked rollback**: `-Rollback` (undo the last run), `-Rollback -To <id>`, `-Rollback -All`,
   and `-ListSnapshots` — repeated runs unwind one layer at a time.
+- A **VSS System Restore point** is created before each apply (skip with `-SkipRestorePoint`), as a
+  full-system safety net alongside the surgical undo.
 - Hard guard: **Windows Defender keys/services are never touched**.
 
 ### Upcoming
 
-- VSS **System Restore point** creation.
 - The full Minimal / Balanced / Full tweak catalog (services, debloat, performance, power, network,
   security, Edge).
 - `-IncludeAI` and `-IncludeGaming` add-ons (independently revertible).

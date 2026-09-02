@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.5.0'
+$script:ScriptVersion   = '0.6.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -600,13 +600,64 @@ function Save-StackIndex {
     $State | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $script:StackIndexPath -Encoding UTF8
 }
 
+function New-OptiRestorePoint {
+    <#
+        Creates a VSS System Restore point as the coarse, full-system safety net (complementing the
+        surgical undo script). Returns the new restore point's sequence number, or $null when it was
+        skipped or could not be created - in which case the undo .ps1 + .reg backups remain the
+        deterministic rollback, so failure here is warned, never fatal. Uses Windows PowerShell 5.1's
+        *-ComputerRestore cmdlets (absent from PowerShell 7).
+    #>
+    param ([string]$Description)
+    $WhatIfPreference = $false; $ConfirmPreference = 'None'
+
+    if ($SkipRestorePoint) { Write-OptiLog "VSS restore point skipped (-SkipRestorePoint)." 'Info'; return $null }
+
+    $os = Get-OptiOSInfo
+    if (-not $os.IsClient) { Write-OptiLog "VSS restore point skipped: System Restore is unavailable on Server SKUs." 'Warning'; return $null }
+
+    $sysDrive = ($env:SystemDrive.TrimEnd('\')) + '\'
+    $freqKey  = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
+    $priorFreq = $null; $freqExisted = $false
+    $seq = $null
+    try {
+        Enable-ComputerRestore -Drive $sysDrive -ErrorAction Stop
+
+        # Defeat the once-per-24h throttle for this checkpoint (remember the prior value to restore it).
+        if (-not (Test-Path -LiteralPath $freqKey)) { New-Item -Path $freqKey -Force | Out-Null }
+        $fp = Get-ItemProperty -LiteralPath $freqKey -Name 'SystemRestorePointCreationFrequency' -ErrorAction SilentlyContinue
+        if ($fp -and ($fp.PSObject.Properties.Name -contains 'SystemRestorePointCreationFrequency')) { $priorFreq = $fp.SystemRestorePointCreationFrequency; $freqExisted = $true }
+        New-ItemProperty -LiteralPath $freqKey -Name 'SystemRestorePointCreationFrequency' -PropertyType DWord -Value 0 -Force | Out-Null
+
+        $before = (@(Get-ComputerRestorePoint -ErrorAction SilentlyContinue) | Measure-Object -Property SequenceNumber -Maximum).Maximum
+        if ($null -eq $before) { $before = 0 }
+
+        Write-OptiLog "Creating VSS restore point ('$Description') - this can take a moment..." 'Info'
+        Checkpoint-Computer -Description $Description -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
+
+        $after = (@(Get-ComputerRestorePoint -ErrorAction SilentlyContinue) | Measure-Object -Property SequenceNumber -Maximum).Maximum
+        if ($null -eq $after) { $after = 0 }
+
+        if ($after -gt $before) { $seq = [int]$after; Write-OptiLog "VSS restore point created (sequence #$seq)." 'Success' }
+        else { Write-OptiLog "Checkpoint-Computer returned without a new restore point (System Restore may be disabled by policy, or storage is low). Continuing." 'Warning' }
+    } catch {
+        Write-OptiLog "VSS restore point could not be created: $($_.Exception.Message). Continuing - the undo script and .reg backups remain your rollback." 'Warning'
+    } finally {
+        try {
+            if ($freqExisted) { New-ItemProperty -LiteralPath $freqKey -Name 'SystemRestorePointCreationFrequency' -PropertyType DWord -Value $priorFreq -Force | Out-Null }
+            else { Remove-ItemProperty -LiteralPath $freqKey -Name 'SystemRestorePointCreationFrequency' -Force -ErrorAction SilentlyContinue }
+        } catch { }
+    }
+    return $seq
+}
+
 function New-OptiSnapshot {
     <#
         Captures the prior state of every selected tweak and writes a stack layer under ProgramData:
         a snapshot folder with per-segment undo .ps1 scripts, .reg backups of the touched keys, a
         snapshot.json manifest, and an entry in stack-index.json. Does NOT modify the system.
     #>
-    param ([object[]]$Tweaks, [string]$Level)
+    param ([object[]]$Tweaks, [string]$Level, $RestorePointSeq = $null)
 
     # One folder per run (never overwritten).
     $stamp = $script:StartStamp
@@ -659,7 +710,7 @@ function New-OptiSnapshot {
         Level           = $Level
         AddOns          = @($segments.Keys | Where-Object { $_ -ne 'Level' })
         Status          = 'Active'
-        RestorePointSeq = $null
+        RestorePointSeq = $RestorePointSeq
         Created         = (Get-Date).ToString('o')
         Segments        = $segmentInfo
     }
@@ -715,8 +766,9 @@ function Invoke-ApplyMode {
     # Capture + snapshot BEFORE any change (skipped for a -WhatIf dry run). A snapshot failure throws
     # up to the main handler, so we never apply without a rollback in place.
     if (-not $isWhatIf) {
-        Write-OptiLog "Apply - Level '$Level'$suffix : capturing prior state of $($rows.Count) tweak(s)..." 'Info'
-        $snap = New-OptiSnapshot -Tweaks $rows -Level $Level
+        Write-OptiLog "Apply - Level '$Level'$suffix : preparing rollback for $($rows.Count) tweak(s)..." 'Info'
+        $rpSeq = New-OptiRestorePoint -Description "Before Optimize-Windows11 ($Level) $script:StartStamp"
+        $snap = New-OptiSnapshot -Tweaks $rows -Level $Level -RestorePointSeq $rpSeq
         Write-OptiLog "Snapshot #$($snap.Index) written: $($snap.Folder)" 'Info'
         foreach ($seg in $snap.Segments.Keys) {
             $u = $snap.Segments[$seg].UndoScript
