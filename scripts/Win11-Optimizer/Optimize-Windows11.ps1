@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.4.0'
+$script:ScriptVersion   = '0.5.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -520,6 +520,26 @@ function New-RegistryUndoLine {
     return $lines
 }
 
+function Restore-TweakRecord {
+    # In-process twin of New-RegistryUndoLine: restores one captured record to its prior state. Used by
+    # the built-in -Rollback runner (the generated .ps1 is for standalone use). Registry only so far.
+    param ($Record)
+    $ConfirmPreference = 'None'; $WhatIfPreference = $false
+    if ($Record.Type -ne 'Registry') { throw "Undo for type '$($Record.Type)' is not implemented in this build." }
+    $path = [string]$Record.Path
+    $name = [string]$Record.ValueName
+    if ($Record.PriorExists) {
+        if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
+        New-ItemProperty -LiteralPath $path -Name $name -PropertyType $Record.PriorKind -Value $Record.PriorData -Force | Out-Null
+    } else {
+        Remove-ItemProperty -LiteralPath $path -Name $name -Force -ErrorAction SilentlyContinue
+        if ((-not $Record.KeyExisted) -and (Test-Path -LiteralPath $path)) {
+            $k = Get-Item -LiteralPath $path
+            if ($k.ValueCount -eq 0 -and $k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
 function New-UndoScriptFile {
     # Writes a self-contained, idempotent undo .ps1 for one snapshot segment.
     param ($SnapshotFolder, $Stamp, $Segment, $Level, [object[]]$Records)
@@ -681,7 +701,7 @@ function Invoke-TweakApply {
 function Invoke-ApplyMode {
     param ([System.Management.Automation.PSCmdlet]$Cmdlet)
 
-    $rows = Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming
+    $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming)
     $addons = @(); if ($IncludeAI -or $Level -eq 'Full') { $addons += 'AI' }; if ($IncludeGaming -or $Level -eq 'Full') { $addons += 'Gaming' }
     $suffix = if ($addons) { " (+$($addons -join ', +'))" } else { '' }
 
@@ -735,7 +755,7 @@ function Invoke-ApplyMode {
 }
 
 function Invoke-PreviewMode {
-    $rows = Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming
+    $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming)
     Write-OptiLog "Preview - Level '$Level': $($rows.Count) tweak(s) would be evaluated (read-only; nothing changed)." 'Info'
 
     if (-not $Quiet) {
@@ -754,11 +774,107 @@ function Invoke-PreviewMode {
 }
 
 function Invoke-RollbackMode {
-    Write-OptiLog "Rollback mode. The snapshot stack and rollback runner are not implemented yet." 'Info'
+    <#
+        Unwinds snapshot layers (LIFO). Default: the newest active Level layer. -To <id>: Level layers
+        newest -> <id> inclusive. -All: every active layer, all stacks, newest first. -IncludeAI /
+        -IncludeGaming: the newest active AI / Gaming add-on layer (independent of the Level stack).
+    #>
+    $idxState = Get-StackIndex
+    $active = @($idxState.Layers | Where-Object { $_.Status -eq 'Active' })
+    if ($active.Count -eq 0) { Write-OptiLog "No active snapshot layers to roll back." 'Info'; return }
+
+    # Resolve the target layer set (newest Index first).
+    $targets = @()
+    if ($All) {
+        $targets = @($active)
+    } elseif ($IncludeAI -or $IncludeGaming) {
+        $segs = @(); if ($IncludeAI) { $segs += 'AI' }; if ($IncludeGaming) { $segs += 'Gaming' }
+        foreach ($s in $segs) {
+            $top = @($active | Where-Object { $_.Segment -eq $s } | Sort-Object Index -Descending | Select-Object -First 1)
+            if ($top.Count -eq 0) { Write-OptiLog "No active '$s' add-on layer to roll back." 'Warning' } else { $targets += $top[0] }
+        }
+    } elseif ($To) {
+        $toIdx = 0
+        if (-not [int]::TryParse($To, [ref]$toIdx)) { Write-OptiLog "-To expects a numeric snapshot id (see -ListSnapshots)." 'Error'; Set-OptiExit 2; return }
+        $lvlActive = @($active | Where-Object { $_.Segment -eq 'Level' })
+        if ($lvlActive.Index -notcontains $toIdx) { Write-OptiLog "No active Level layer with id $toIdx. Use -ListSnapshots to see available ids." 'Error'; Set-OptiExit 2; return }
+        $targets = @($lvlActive | Where-Object { $_.Index -ge $toIdx })
+    } else {
+        $top = @($active | Where-Object { $_.Segment -eq 'Level' } | Sort-Object Index -Descending | Select-Object -First 1)
+        if ($top.Count -eq 0) { Write-OptiLog "No active Level layer to roll back. Try -Rollback -All, or -IncludeAI / -IncludeGaming." 'Info'; return }
+        $targets = @($top[0])
+    }
+
+    $targets = @($targets | Sort-Object Index -Descending)
+    if ($targets.Count -eq 0) { Write-OptiLog "Nothing to roll back for the given options." 'Info'; return }
+
+    Write-OptiLog "Rolling back $($targets.Count) layer(s) newest-first: $((($targets | ForEach-Object { "#$($_.Index)/$($_.Segment)" }) -join ', '))." 'Info'
+    $failed = 0
+    foreach ($layer in $targets) {
+        $folderPath = Join-Path $script:SnapshotsRoot $layer.Folder
+        $manifestPath = Join-Path $folderPath 'snapshot.json'
+        if (-not (Test-Path -LiteralPath $manifestPath)) { Write-OptiLog "  #$($layer.Index)/$($layer.Segment): snapshot.json missing ($folderPath) - skipped." 'Warning'; $failed++; continue }
+        try { $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json } catch { Write-OptiLog "  #$($layer.Index)/$($layer.Segment): unreadable manifest - skipped." 'Warning'; $failed++; continue }
+        $segProp = $manifest.Segments.PSObject.Properties[$layer.Segment]
+        $records = @()
+        if ($segProp) { $records = @($segProp.Value.Records) }
+        Write-OptiLog "  #$($layer.Index)/$($layer.Segment): restoring $($records.Count) tweak(s)..." 'Info'
+        foreach ($r in $records) {
+            try { Restore-TweakRecord -Record $r } catch { $failed++; Write-OptiLog "    FAILED $($r.Id): $($_.Exception.Message)" 'Warning' }
+        }
+        $layer.Status = 'RolledBack'   # $layer is a reference into $idxState.Layers
+    }
+
+    # Persist status, then update manifests and archive any fully-consumed run folders.
+    Save-StackIndex -State $idxState
+    foreach ($f in (@($targets | Select-Object -ExpandProperty Folder -Unique))) {
+        $folderPath = Join-Path $script:SnapshotsRoot $f
+        $mp = Join-Path $folderPath 'snapshot.json'
+        if (-not (Test-Path -LiteralPath $mp)) { continue }
+        try {
+            $m = Get-Content -Raw -LiteralPath $mp | ConvertFrom-Json
+            $runLayers = @($idxState.Layers | Where-Object { $_.Folder -eq $f })
+            foreach ($rl in $runLayers) {
+                $sp = $m.Segments.PSObject.Properties[$rl.Segment]
+                if ($sp) { $sp.Value | Add-Member -NotePropertyName Status -NotePropertyValue $rl.Status -Force }
+            }
+            $allConsumed = (@($runLayers | Where-Object { $_.Status -eq 'Active' }).Count -eq 0)
+            $m | Add-Member -NotePropertyName Status -NotePropertyValue $(if ($allConsumed) { 'RolledBack' } else { 'Partial' }) -Force
+            $m | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $mp -Encoding UTF8
+            if ($allConsumed) {
+                $dest = Join-Path $script:RolledBackRoot $f
+                if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue }
+                Move-Item -LiteralPath $folderPath -Destination $dest -Force -ErrorAction Stop
+                foreach ($rl in $runLayers) { $rl.Folder = (Join-Path '_rolledback' $f) }
+                Save-StackIndex -State $idxState
+                Write-OptiLog "  archived fully-rolled-back snapshot -> _rolledback\$f" 'Info'
+            }
+        } catch { Write-OptiLog "  (post-rollback update for $f failed: $($_.Exception.Message))" 'Warning' }
+    }
+
+    if ($failed -gt 0) { Set-OptiExit 1; Write-OptiLog "Rollback finished with $failed error(s)." 'Warning' }
+    else { Write-OptiLog "Rollback complete." 'Success' }
 }
 
 function Invoke-ListSnapshotsMode {
-    Write-OptiLog "No snapshots exist yet (snapshot creation is not implemented in this build)." 'Info'
+    $idxState = Get-StackIndex
+    $layers = @($idxState.Layers)
+    if ($layers.Count -eq 0) { Write-OptiLog "No snapshots recorded yet." 'Info'; return }
+
+    Write-OptiLog "$($layers.Count) snapshot layer(s) recorded (id = number to pass to -Rollback -To):" 'Info'
+    if (-not $Quiet) {
+        $view = $layers | Sort-Object Index, Segment | ForEach-Object {
+            [pscustomobject]@{ Id = $_.Index; Stamp = $_.Stamp; Segment = $_.Segment; Level = $_.Level; Tweaks = $_.TweakCount; Status = $_.Status }
+        }
+        ($view | Format-Table -AutoSize | Out-String).Trim() | Write-Host
+        foreach ($seg in @('Level', 'AI', 'Gaming')) {
+            $top = @($layers | Where-Object { $_.Segment -eq $seg -and $_.Status -eq 'Active' } | Sort-Object Index -Descending | Select-Object -First 1)
+            if ($top.Count) {
+                $how = if ($seg -eq 'Level') { '-Rollback' } else { "-Rollback -Include$seg" }
+                Write-Host ("  top of {0} stack: #{1} ({2})  <- {3}" -f $seg, $top[0].Index, $top[0].Stamp, $how)
+            }
+        }
+    }
 }
 
 # =================================================================================================

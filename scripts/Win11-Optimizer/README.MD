@@ -35,12 +35,12 @@ What this project adds over TBOK:
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
   per-key `.reg` backups, and a self-contained **undo `.ps1`**).
 - Live apply of registry tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
+- Built-in **stacked rollback**: `-Rollback` (undo the last run), `-Rollback -To <id>`, `-Rollback -All`,
+  and `-ListSnapshots` — repeated runs unwind one layer at a time.
 - Hard guard: **Windows Defender keys/services are never touched**.
 
 ### Upcoming
 
-- Built-in `-Rollback` (stacked LIFO), `-Rollback -To <id>` / `-All`, and `-ListSnapshots`
-  *(for now, roll back by running the generated undo `.ps1` in the snapshot folder)*.
 - VSS **System Restore point** creation.
 - The full Minimal / Balanced / Full tweak catalog (services, debloat, performance, power, network,
   security, Edge).
@@ -59,8 +59,10 @@ What this project adds over TBOK:
 # Apply (elevated)
 .\Optimize-Windows11.ps1 -Level Minimal
 
-# Roll back the last run (until -Rollback lands): run the generated undo script
-& "$env:ProgramData\Marflow Software\Win11Optimizer\Snapshots\<timestamp>\Undo-Level_<timestamp>.ps1"
+# Roll back (elevated)
+.\Optimize-Windows11.ps1 -ListSnapshots   # see snapshot ids
+.\Optimize-Windows11.ps1 -Rollback        # undo the last run
+.\Optimize-Windows11.ps1 -Rollback -All   # undo everything, back to baseline
 ```
 
 ## Requirements
