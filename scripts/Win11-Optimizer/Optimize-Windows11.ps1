@@ -10,10 +10,11 @@
     prior state of everything it touches so any run can be rolled back - including layered runs, which
     unwind one step at a time.
 
-    This is the Phase A / commit 1 skeleton: parameter surface, elevation / OS guards, the ProgramData
-    snapshot store (created and ACL-hardened), logging and the exit-code contract. No tweaks are applied
-    yet - the tweak catalog, apply/capture engine, rollback runner and restore-point step arrive in the
-    following commits.
+    Implemented: the Minimal / Balanced / Full tiers plus the optional -IncludeAI add-on, a hardware-aware
+    data-driven tweak catalog, live apply of registry / service / power / Appx tweaks, a VSS restore point,
+    and a stacked (LIFO) rollback with per-run, per-segment undo scripts under ProgramData. Windows Defender
+    is never weakened by any level or add-on. Still to come: the -IncludeGaming add-on, -AllUsers, and the
+    guided Custom walkthrough.
 
 .NOTES
     Author: Wolfram Halatschek
@@ -84,7 +85,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.10.0'
+$script:ScriptVersion   = '0.11.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -268,9 +269,9 @@ function Protect-SnapshotStore {
 #               $null for ordinary level rows.
 #   Scope     - 'User' (HKCU) | 'Machine' (HKLM).
 #   Risk / Reversible - reporting + guided-mode.
-#   Type      - Registry | Service | ScheduledTask | Appx | Bcdedit | Powercfg (only Registry so far).
-#   Registry payload: Path / ValueName / ValueType / Data.
-# This commit seeds a representative slice of the Minimal tier; later commits flesh out every tier.
+#   Type      - Registry | Service | Powercfg | Appx (implemented); ScheduledTask | Bcdedit (future).
+#   Registry payload: Path / ValueName / ValueType / Data. Appx payload: PackageName (Get-AppxPackage -Name).
+# The Minimal / Balanced / Full tiers and the AI add-on rows are all defined below.
 function Get-TweakCatalog {
     @(
         [pscustomobject]@{
@@ -560,6 +561,54 @@ function Get-TweakCatalog {
             Type = 'Service'; ServiceName = 'SysMain'
             StartupType = { param($hw) if ($hw.SystemDiskIsSSD) { 'Disabled' } elseif ($hw.RamGB -gt 12) { 'Manual' } else { 'Disabled' } }
         }
+
+        # ---- AI add-on (-IncludeAI; auto-applied at Full) ----------------------------------------
+        # Trims the Copilot / Recall / AI surfaces. The registry rows are fully reversible; the Appx
+        # removal is best-effort - undo re-registers the app from its staged files when they are still
+        # present, otherwise it must be reinstalled from the Store. None of these touch Defender, and
+        # each AI row is captured into its own 'AI' stack so `-Rollback -IncludeAI` can peel just the
+        # add-on back off (even after a Full run that pulled it in automatically).
+        [pscustomobject]@{
+            Id = 'AI.TurnOffCopilot'; Name = 'Turn off Windows Copilot'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Windows Copilot experience for the current user (policy TurnOffWindowsCopilot).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot'
+            ValueName = 'TurnOffWindowsCopilot'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'AI.HideCopilotButton'; Name = 'Hide the Copilot taskbar button'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Removes the Copilot button from the taskbar (the feature itself is governed by the policy above).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            ValueName = 'ShowCopilotButton'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'AI.DisableRecallUser'; Name = 'Disable Recall / AI data analysis (user)'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off Windows Recall (AI snapshot analysis) for the current user (DisableAIDataAnalysis).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Policies\Microsoft\Windows\WindowsAI'
+            ValueName = 'DisableAIDataAnalysis'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'AI.DisableRecallMachine'; Name = 'Disable Recall / AI data analysis (machine)'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off Windows Recall (AI snapshot analysis) machine-wide (DisableAIDataAnalysis).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+            ValueName = 'DisableAIDataAnalysis'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'AI.DisableEdgeSidebar'; Name = 'Disable the Edge Copilot/Discover sidebar'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Microsoft Edge sidebar that hosts Copilot and Discover (HubsSidebarEnabled=0).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+            ValueName = 'HubsSidebarEnabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'AI.RemoveCopilotApp'; Name = 'Remove the Copilot app (current user)'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Medium'; Reversible = $true
+            Impact = 'Removes the Microsoft Copilot Store app for the current user. Best-effort undo: re-registered from its staged files if still present, otherwise reinstall from the Store.'
+            Type = 'Appx'; PackageName = 'Microsoft.Copilot'
+        }
     )
 }
 
@@ -768,6 +817,11 @@ function Get-TweakCurrentState {
             $he = Get-HibernateEnabled
             if ($he -eq 1) { return 'hibernate-on' } elseif ($he -eq 0) { return 'hibernate-off' } else { return '<unknown>' }
         }
+        'Appx' {
+            $n = 0
+            try { $n = @(Get-AppxPackage -Name $Tweak.PackageName -ErrorAction SilentlyContinue).Count } catch { }
+            if ($n -gt 0) { return 'installed' } else { return '<absent>' }
+        }
         default { return '<n/a>' }
     }
 }
@@ -779,6 +833,7 @@ function Get-TweakDesiredText {
         'Registry' { return [string]$Tweak.Data }
         'Service'  { return [string]$Tweak.StartupType }
         'Powercfg' { return [string]$Tweak.PowercfgAction }
+        'Appx'     { return 'removed' }
         default    { return '' }
     }
 }
@@ -790,14 +845,15 @@ function Get-TweakTargetText {
         'Registry' { return "$($Tweak.Path)\$($Tweak.ValueName)" }
         'Service'  { return "Service:$($Tweak.ServiceName)" }
         'Powercfg' { return "Powercfg:$($Tweak.PowercfgAction)" }
+        'Appx'     { return "Appx:$($Tweak.PackageName)" }
         default    { return $Tweak.Id }
     }
 }
 
 # =================================================================================================
 # Capture engine + snapshot / undo-script generation
-# (This commit captures prior state and writes the rollback artifacts; the live apply that will sit
-#  between capture and finish arrives in the next commit.)
+# Captures the prior state of every selected tweak (registry / service / power / Appx) and writes the
+# per-segment undo scripts, .reg backups and stack-index entry that make a run reversible.
 # =================================================================================================
 function Get-ServiceStartupState {
     # Returns a service's start type as one of Automatic / AutomaticDelayedStart / Manual / Disabled /
@@ -866,6 +922,22 @@ function Get-TweakCaptureRecord {
                 AddOn = $Tweak.AddOn
                 PowercfgAction = $Tweak.PowercfgAction
                 PriorHibernateEnabled = (Get-HibernateEnabled)
+            }
+        }
+        'Appx' {
+            # Record every current-user package matching the name (usually one), keeping each staged
+            # InstallLocation so undo can best-effort re-register the app after removal.
+            $pkgs = @()
+            try { $pkgs = @(Get-AppxPackage -Name $Tweak.PackageName -ErrorAction SilentlyContinue) } catch { }
+            $installed = @($pkgs | ForEach-Object {
+                [pscustomobject]@{ PackageFullName = [string]$_.PackageFullName; Name = [string]$_.Name; InstallLocation = [string]$_.InstallLocation }
+            })
+            return [pscustomobject]@{
+                Id = $Tweak.Id; Category = $Tweak.Category; Type = 'Appx'; Scope = $Tweak.Scope
+                AddOn = $Tweak.AddOn
+                PackageName = $Tweak.PackageName
+                PriorInstalled = ($installed.Count -gt 0)
+                Packages = $installed
             }
         }
         default { throw "Capture for tweak type '$($Tweak.Type)' is not implemented in this build." }
@@ -938,6 +1010,31 @@ function New-PowercfgUndoLine {
     return $lines
 }
 
+function New-AppxUndoLine {
+    # PowerShell line(s) that best-effort re-register a removed Appx package from its captured staged
+    # files. If the files are gone (fully uninstalled) the app must be reinstalled from the Store - the
+    # generated undo says so rather than failing.
+    param ($Record)
+    $lines = New-Object System.Collections.Generic.List[string]
+    if (-not $Record.PriorInstalled) {
+        $lines.Add("# Appx '$($Record.PackageName)' was not installed for this user at capture - nothing to undo.")
+        return $lines
+    }
+    foreach ($p in @($Record.Packages)) {
+        $loc = [string]$p.InstallLocation
+        if ([string]::IsNullOrEmpty($loc)) {
+            $lines.Add("# $($p.Name): no staged install location was captured - reinstall it from the Microsoft Store.")
+            continue
+        }
+        $locLit = "'" + ($loc -replace "'", "''") + "'"
+        $lines.Add("if (Test-Path -LiteralPath (Join-Path $locLit 'AppxManifest.xml')) {")
+        $lines.Add("    try { Add-AppxPackage -Register (Join-Path $locLit 'AppxManifest.xml') -DisableDevelopmentMode -ErrorAction Stop; Write-Host '  re-registered $($p.Name)' }")
+        $lines.Add("    catch { Write-Warning '  could not re-register $($p.Name) - reinstall it from the Microsoft Store.' }")
+        $lines.Add("} else { Write-Warning '  staged files for $($p.Name) are gone - reinstall it from the Microsoft Store.' }")
+    }
+    return $lines
+}
+
 function New-UndoLine {
     # Dispatches undo-line generation by record type.
     param ($Record)
@@ -945,6 +1042,7 @@ function New-UndoLine {
         'Registry' { return (New-RegistryUndoLine -Record $Record) }
         'Service'  { return (New-ServiceUndoLine -Record $Record) }
         'Powercfg' { return (New-PowercfgUndoLine -Record $Record) }
+        'Appx'     { return (New-AppxUndoLine -Record $Record) }
         default    { $l = New-Object System.Collections.Generic.List[string]; $l.Add("# (undo for type '$($Record.Type)' not implemented)"); return $l }
     }
 }
@@ -981,6 +1079,21 @@ function Restore-TweakRecord {
             # hibernation in its default/available state, so 'on' is the safe restore).
             if ($Record.PriorHibernateEnabled -eq 0) { & powercfg.exe /hibernate off | Out-Null }
             else { & powercfg.exe /hibernate on | Out-Null }
+        }
+        'Appx' {
+            # Best-effort re-registration from staged files; if they are gone the app must be reinstalled
+            # from the Store (a hard failure here must not abort the wider rollback).
+            if (-not $Record.PriorInstalled) { return }
+            foreach ($p in @($Record.Packages)) {
+                $loc = [string]$p.InstallLocation
+                $m = if ($loc) { Join-Path $loc 'AppxManifest.xml' } else { $null }
+                if ($m -and (Test-Path -LiteralPath $m)) {
+                    try { Add-AppxPackage -Register $m -DisableDevelopmentMode -ErrorAction Stop }
+                    catch { Write-OptiLog "    could not re-register $($p.Name): $($_.Exception.Message) - reinstall it from the Store." 'Warning' }
+                } else {
+                    Write-OptiLog "    staged files for $($p.Name) are gone - reinstall it from the Microsoft Store." 'Warning'
+                }
+            }
         }
         default { throw "Undo for type '$($Record.Type)' is not implemented in this build." }
     }
@@ -1207,6 +1320,15 @@ function Invoke-TweakApply {
                 'hibernate-on'  { & powercfg.exe /hibernate on  | Out-Null; return $true }
                 default         { throw "Unknown Powercfg action '$($Tweak.PowercfgAction)'." }
             }
+        }
+        'Appx' {
+            # Remove the matching package(s) for the CURRENT USER only (no -AllUsers / deprovision in v1),
+            # which leaves the staged files in place so undo can re-register the app. Idempotent: absent
+            # package = nothing to do.
+            $pkgs = @(Get-AppxPackage -Name $Tweak.PackageName -ErrorAction SilentlyContinue)
+            if ($pkgs.Count -eq 0) { Write-OptiLog "  (Appx '$($Tweak.PackageName)' not installed for this user - skipped)" 'Info'; return $true }
+            foreach ($p in $pkgs) { Remove-AppxPackage -Package $p.PackageFullName -ErrorAction Stop }
+            return $true
         }
         default { throw "Apply for tweak type '$($Tweak.Type)' is not implemented in this build." }
     }

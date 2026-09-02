@@ -35,11 +35,15 @@ What this project adds over TBOK:
   **desktop-only hibernation-off**, and **essential-service normalization**; **Full** does the aggressive
   set (telemetry fully OFF, more services disabled, WPBT/device-metadata hardening, Edge policies,
   svchost/RAM & SysMain tuning) **behind a confirmation prompt** (`-Force` to skip). Defender is never touched.
+- **`-IncludeAI` add-on** — turns off Copilot and Recall (AI data analysis), hides the Copilot taskbar
+  button, disables the Edge Copilot/Discover sidebar, and removes the Copilot app (best-effort, re-registered
+  from staged files on undo). Opt-in at any level, applied automatically at Full, and backed by its **own
+  rollback stack** so you can peel just the AI layer off with `-Rollback -IncludeAI`.
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
-  per-key `.reg` backups, and a self-contained **undo `.ps1`**).
-- Live apply of **registry, service (incl. delayed-auto) and power** tweaks with `-WhatIf` / `-Confirm`
-  support and an exit-code contract.
+  per-key `.reg` backups, and a self-contained **undo `.ps1`** per segment).
+- Live apply of **registry, service (incl. delayed-auto), power and Appx (app removal)** tweaks with
+  `-WhatIf` / `-Confirm` support and an exit-code contract.
 - Built-in **stacked rollback**: `-Rollback` (undo the last run), `-Rollback -To <id>`, `-Rollback -All`,
   and `-ListSnapshots` — repeated runs unwind one layer at a time.
 - A **VSS System Restore point** is created before each apply (skip with `-SkipRestorePoint`), as a
@@ -50,7 +54,7 @@ What this project adds over TBOK:
 
 ### Upcoming
 
-- **Appx debloat** (remove Widgets/Bing) and `-IncludeAI` / `-IncludeGaming` add-ons (independently revertible).
+- **Appx debloat** (remove Widgets/Bing) and the `-IncludeGaming` add-on (independently revertible).
 - More Full coverage (wider service map, pagefile sizing).
 - `-AllUsers` (all profiles) and the guided `Custom` walkthrough.
 
@@ -66,10 +70,14 @@ What this project adds over TBOK:
 # Apply (elevated)
 .\Optimize-Windows11.ps1 -Level Minimal
 
+# Apply with the AI add-on (Copilot/Recall off, Copilot app removed)
+.\Optimize-Windows11.ps1 -Level Balanced -IncludeAI
+
 # Roll back (elevated)
-.\Optimize-Windows11.ps1 -ListSnapshots   # see snapshot ids
-.\Optimize-Windows11.ps1 -Rollback        # undo the last run
-.\Optimize-Windows11.ps1 -Rollback -All   # undo everything, back to baseline
+.\Optimize-Windows11.ps1 -ListSnapshots      # see snapshot ids
+.\Optimize-Windows11.ps1 -Rollback           # undo the last run (Level stack)
+.\Optimize-Windows11.ps1 -Rollback -IncludeAI # peel just the AI add-on back off
+.\Optimize-Windows11.ps1 -Rollback -All      # undo everything, back to baseline
 ```
 
 ## Requirements
