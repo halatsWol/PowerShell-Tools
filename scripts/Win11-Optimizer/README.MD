@@ -39,6 +39,8 @@ What this project adds over TBOK:
   and `-ListSnapshots` — repeated runs unwind one layer at a time.
 - A **VSS System Restore point** is created before each apply (skip with `-SkipRestorePoint`), as a
   full-system safety net alongside the surgical undo.
+- **Hardware-aware selection**: tweaks can be gated by chassis (laptop/desktop), disk type or RAM, and can
+  compute their value from the machine (used more as the catalog grows).
 - Hard guard: **Windows Defender keys/services are never touched**.
 
 ### Upcoming

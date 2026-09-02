@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.6.0'
+$script:ScriptVersion   = '0.7.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -379,12 +379,73 @@ function Test-IsDefenderTarget {
 # =================================================================================================
 # Selection engine
 # =================================================================================================
+function Get-OptiHardware {
+    <#
+        One-shot (cached) read of the hardware facts the conditional/computed catalog rows need: installed
+        RAM, whether the machine is a laptop or desktop, the OS-disk media type, and the OS build. All
+        reads are best-effort with safe defaults, so a probe failure never blocks selection.
+    #>
+    if ($script:HardwareFacts) { return $script:HardwareFacts }
+    $WhatIfPreference = $false
+
+    $hw = [pscustomobject]@{
+        RamBytes = [int64]0; RamGB = 0.0
+        IsLaptop = $false; IsDesktop = $true; ChassisTypes = @()
+        OSBuild = [int][Environment]::OSVersion.Version.Build
+        SystemDiskMediaType = 'Unknown'; SystemDiskIsSSD = $false
+    }
+
+    try {
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $hw.RamBytes = [int64]$cs.TotalPhysicalMemory
+    } catch { }
+    if ($hw.RamBytes -le 0) {
+        try { $hw.RamBytes = [int64]((Get-CimInstance -ClassName Win32_PhysicalMemory -ErrorAction SilentlyContinue | Measure-Object -Property Capacity -Sum).Sum) } catch { }
+    }
+    if ($hw.RamBytes -gt 0) { $hw.RamGB = [math]::Round($hw.RamBytes / 1GB, 2) }
+
+    # Laptop detection: a laptop chassis type, or the presence of a battery.
+    $laptopChassis = @(8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32)
+    try {
+        $types = @()
+        foreach ($e in @(Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue)) {
+            if ($e.ChassisTypes) { $types += @($e.ChassisTypes | ForEach-Object { [int]$_ }) }
+        }
+        $hw.ChassisTypes = $types
+        if (@($types | Where-Object { $laptopChassis -contains $_ }).Count -gt 0) { $hw.IsLaptop = $true }
+    } catch { }
+    try { if (@(Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue).Count -gt 0) { $hw.IsLaptop = $true } } catch { }
+    $hw.IsDesktop = -not $hw.IsLaptop
+
+    # OS-disk media type (SSD / NVMe / HDD).
+    try {
+        $sysLetter = $env:SystemDrive.TrimEnd(':', '\')
+        $diskNum = (Get-Partition -DriveLetter $sysLetter -ErrorAction SilentlyContinue).DiskNumber
+        if ($null -ne $diskNum) {
+            $pd = Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { [int]$_.DeviceId -eq [int]$diskNum } | Select-Object -First 1
+            if ($pd) {
+                $bus = [string]$pd.BusType; $media = [string]$pd.MediaType
+                if ($bus -eq 'NVMe') { $hw.SystemDiskMediaType = 'NVMe'; $hw.SystemDiskIsSSD = $true }
+                elseif ($media -eq 'SSD') { $hw.SystemDiskMediaType = 'SSD'; $hw.SystemDiskIsSSD = $true }
+                elseif ($media -eq 'HDD') { $hw.SystemDiskMediaType = 'HDD' }
+                elseif ($media) { $hw.SystemDiskMediaType = $media }
+            }
+        }
+    } catch { }
+
+    $script:HardwareFacts = $hw
+    return $hw
+}
+
 function Select-Tweaks {
     <#
-        Resolves the effective tweak set for the requested Level / Categories / add-ons, then runs every
-        row through the Defender guard (blocked rows are dropped with a warning). Levels are cumulative;
-        add-on rows are included only when their add-on is requested or the Level is Full. Custom (guided
-        mode, later commit) previews the whole catalog.
+        Resolves the effective tweak set for the requested Level / Categories / add-ons. Levels are
+        cumulative; add-on rows are included only when their add-on is requested or the Level is Full;
+        Custom (guided mode, later commit) previews the whole catalog. Each candidate then passes:
+          1. the Defender guard (a protected target is dropped with a warning),
+          2. its optional hardware `Condition` (a scriptblock given the hardware facts; false => dropped),
+          3. computed-`Data` resolution (a scriptblock `Data` is evaluated to a concrete value on a copy,
+             so apply/preview/capture see a literal).
     #>
     param (
         [string]$Level,
@@ -396,6 +457,7 @@ function Select-Tweaks {
     $rank = @{ Minimal = 1; Balanced = 2; Full = 3 }
     $wantAI     = $IncludeAI.IsPresent     -or ($Level -in @('Full', 'Custom'))
     $wantGaming = $IncludeGaming.IsPresent -or ($Level -in @('Full', 'Custom'))
+    $hw = Get-OptiHardware
 
     $selected = foreach ($t in (Get-TweakCatalog)) {
         # Level / add-on membership.
@@ -403,16 +465,31 @@ function Select-Tweaks {
         elseif ($t.AddOn -eq 'Gaming')  { $include = $wantGaming }
         elseif ($Level -eq 'Custom')    { $include = $true }
         else                            { $include = ($rank[$t.MinLevel] -le $rank[$Level]) }
+        if (-not $include) { continue }
 
         # Optional category filter.
-        if ($include -and $Categories) { $include = ($Categories -contains $t.Category) }
+        if ($Categories -and (-not ($Categories -contains $t.Category))) { continue }
 
-        if ($include) {
-            if (Test-IsDefenderTarget -Tweak $t) {
-                Write-OptiLog "Skipping '$($t.Id)': targets a protected Windows Defender key/service and is never applied." 'Warning'
-            } else {
-                $t
-            }
+        # Defender guard.
+        if (Test-IsDefenderTarget -Tweak $t) {
+            Write-OptiLog "Skipping '$($t.Id)': targets a protected Windows Defender key/service and is never applied." 'Warning'
+            continue
+        }
+
+        # Hardware condition.
+        if ($t.Condition) {
+            $applies = $false
+            try { $applies = [bool](& $t.Condition $hw) } catch { Write-OptiLog "Condition check failed for '$($t.Id)': $($_.Exception.Message) - skipped." 'Warning' }
+            if (-not $applies) { continue }
+        }
+
+        # Computed value -> resolve on a copy so downstream sees a literal.
+        if ($t.Data -is [scriptblock]) {
+            $resolved = $t.PSObject.Copy()
+            try { $resolved.Data = (& $t.Data $hw) } catch { Write-OptiLog "Computed value failed for '$($t.Id)': $($_.Exception.Message) - skipped." 'Warning'; continue }
+            $resolved
+        } else {
+            $t
         }
     }
 
