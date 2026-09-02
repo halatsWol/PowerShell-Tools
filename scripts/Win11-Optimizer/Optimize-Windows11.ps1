@@ -84,7 +84,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.8.0'
+$script:ScriptVersion   = '0.9.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -399,6 +399,83 @@ function Get-TweakCatalog {
             Impact = 'Sets the legacy Windows Media Player network sharing service to start on-demand.'
             Type = 'Service'; ServiceName = 'WMPNetworkSvc'; StartupType = 'Manual'
         }
+
+        # ---- Balanced ----------------------------------------------------------------------------
+        [pscustomobject]@{
+            Id = 'Performance.SystemResponsiveness'; Name = 'Tune multimedia responsiveness'; Category = 'Performance'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Lowers the multimedia scheduler reserve from 20 to 10 (Microsoft-documented value) for a touch more responsiveness.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
+            ValueName = 'SystemResponsiveness'; ValueType = 'DWord'; Data = 10
+        }
+        [pscustomobject]@{
+            Id = 'Network.IRPStackSize'; Name = 'Increase network IRP stack size'; Category = 'Network'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Raises the LanmanServer IRP stack size to 30 to avoid file-sharing stalls on busy networks.'
+            Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+            ValueName = 'IRPStackSize'; ValueType = 'DWord'; Data = 30
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableBingSearch'; Name = 'Disable Bing in Start search'; Category = 'Privacy'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops the Start menu / search box from sending queries to Bing.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
+            ValueName = 'BingSearchEnabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableSearchSuggestions'; Name = 'Disable web search suggestions'; Category = 'Privacy'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off web/search-box suggestions in the Start menu.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
+            ValueName = 'DisableSearchBoxSuggestions'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableTailoredExperiences'; Name = 'Disable tailored experiences'; Category = 'Privacy'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops Windows using your diagnostic data to tailor tips, ads and recommendations.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy'
+            ValueName = 'TailoredExperiencesWithDiagnosticDataEnabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.ReduceTelemetry'; Name = 'Reduce telemetry to Required (not off)'; Category = 'Privacy'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets diagnostic data to the Required level (1) - NOT off - so Windows Update and the Store keep working. Full turns it fully off.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+            ValueName = 'AllowTelemetry'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.DisableTaskbarAnimations'; Name = 'Disable taskbar animations'; Category = 'Explorer'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off taskbar animations for a snappier feel (purely cosmetic).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            ValueName = 'TaskbarAnimations'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Power.HibernationOff'; Name = 'Disable hibernation (desktops only)'; Category = 'Power'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'On desktops, disables hibernation and reclaims hiberfil.sys. Skipped on laptops so low-battery hibernate still protects unsaved work.'
+            Condition = { param($hw) $hw.IsDesktop }
+            Type = 'Powercfg'; PowercfgAction = 'hibernate-off'
+        }
+
+        # Essential-service baseline normalization: set core services back to their correct Windows
+        # default start type. Idempotent (only changes a service that actually differs) and only ever
+        # moves a service TOWARD its running baseline - never disables/weakens one (the Defender guard
+        # still blocks any weakening of a protected service).
+        [pscustomobject]@{ Id = 'Services.NormEventLog';   Name = 'Normalize EventLog';          Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Windows Event Log service is Automatic (no change if already correct).';       Type = 'Service'; ServiceName = 'EventLog';           StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormRpcSs';      Name = 'Normalize RPC';               Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Remote Procedure Call service is Automatic (no change if already correct).';       Type = 'Service'; ServiceName = 'RpcSs';              StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormDhcp';       Name = 'Normalize DHCP client';       Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the DHCP Client service is Automatic (no change if already correct).';                 Type = 'Service'; ServiceName = 'Dhcp';               StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormDnscache';   Name = 'Normalize DNS client';        Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the DNS Client service is Automatic (no change if already correct).';                  Type = 'Service'; ServiceName = 'Dnscache';           StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormBFE';        Name = 'Normalize Base Filtering';    Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Base Filtering Engine (firewall core) is Automatic (no change if already correct).'; Type = 'Service'; ServiceName = 'BFE';                StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormMpsSvc';     Name = 'Normalize Windows Firewall';  Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Windows Firewall service is Automatic (no change if already correct).';            Type = 'Service'; ServiceName = 'mpssvc';             StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormWinmgmt';    Name = 'Normalize WMI';               Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the WMI (Windows Management Instrumentation) service is Automatic (no change if already correct).'; Type = 'Service'; ServiceName = 'Winmgmt';        StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormSchedule';   Name = 'Normalize Task Scheduler';    Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Task Scheduler service is Automatic (no change if already correct).';              Type = 'Service'; ServiceName = 'Schedule';           StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormLanmanWks';  Name = 'Normalize Workstation';       Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Workstation (SMB client) service is Automatic (no change if already correct).';     Type = 'Service'; ServiceName = 'LanmanWorkstation';  StartupType = 'Automatic' }
+        [pscustomobject]@{ Id = 'Services.NormThemes';     Name = 'Normalize Themes';            Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Themes service is Automatic (no change if already correct).';                      Type = 'Service'; ServiceName = 'Themes';              StartupType = 'Automatic' }
+        # (SecurityHealthService is intentionally NOT normalized: Windows protects it so even an admin
+        #  gets Access Denied configuring it - it is left entirely to Windows to manage.)
+        [pscustomobject]@{ Id = 'Services.NormWscSvc';     Name = 'Normalize Security Center';   Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Security Center service is Delayed-Auto (its default). Strengthens, never weakens.'; Type = 'Service'; ServiceName = 'wscsvc';              StartupType = 'AutomaticDelayedStart' }
+        [pscustomobject]@{ Id = 'Services.NormWSearch';    Name = 'Normalize Windows Search';    Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures Windows Search is Delayed-Auto (its default; no change if already correct).';           Type = 'Service'; ServiceName = 'WSearch';             StartupType = 'AutomaticDelayedStart' }
     )
 }
 
@@ -591,8 +668,12 @@ function Get-TweakCurrentState {
             if ($s.Exists) { return [string]$s.Data } else { return '<absent>' }
         }
         'Service' {
-            $svc = Get-Service -Name $Tweak.ServiceName -ErrorAction SilentlyContinue
-            if ($svc) { return [string]$svc.StartType } else { return '<absent>' }
+            $st = Get-ServiceStartupState -Name $Tweak.ServiceName
+            if ($null -ne $st) { return $st } else { return '<absent>' }
+        }
+        'Powercfg' {
+            $he = Get-HibernateEnabled
+            if ($he -eq 1) { return 'hibernate-on' } elseif ($he -eq 0) { return 'hibernate-off' } else { return '<unknown>' }
         }
         default { return '<n/a>' }
     }
@@ -604,6 +685,7 @@ function Get-TweakDesiredText {
     switch ($Tweak.Type) {
         'Registry' { return [string]$Tweak.Data }
         'Service'  { return [string]$Tweak.StartupType }
+        'Powercfg' { return [string]$Tweak.PowercfgAction }
         default    { return '' }
     }
 }
@@ -614,6 +696,7 @@ function Get-TweakTargetText {
     switch ($Tweak.Type) {
         'Registry' { return "$($Tweak.Path)\$($Tweak.ValueName)" }
         'Service'  { return "Service:$($Tweak.ServiceName)" }
+        'Powercfg' { return "Powercfg:$($Tweak.PowercfgAction)" }
         default    { return $Tweak.Id }
     }
 }
@@ -623,6 +706,41 @@ function Get-TweakTargetText {
 # (This commit captures prior state and writes the rollback artifacts; the live apply that will sit
 #  between capture and finish arrives in the next commit.)
 # =================================================================================================
+function Get-ServiceStartupState {
+    # Returns a service's start type as one of Automatic / AutomaticDelayedStart / Manual / Disabled /
+    # (Boot|System), or $null when the service is absent. ServiceController.StartType cannot tell
+    # delayed-auto from plain auto, so the DelayedAutostart registry flag is consulted.
+    param ([string]$Name)
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $svc) { return $null }
+    $st = [string]$svc.StartType
+    if ($st -eq 'Automatic') {
+        $da = (Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name 'DelayedAutostart' -ErrorAction SilentlyContinue).DelayedAutostart
+        if ($da -eq 1) { return 'AutomaticDelayedStart' }
+    }
+    return $st
+}
+
+function Set-ServiceStartupState {
+    # Sets a service's start type, including delayed-auto (which Set-Service alone cannot do in 5.1).
+    param ([string]$Name, [string]$Type)
+    if ($Type -eq 'AutomaticDelayedStart') {
+        Set-Service -Name $Name -StartupType Automatic -ErrorAction Stop
+        New-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name 'DelayedAutostart' -PropertyType DWord -Value 1 -Force -ErrorAction SilentlyContinue | Out-Null
+    } else {
+        Set-Service -Name $Name -StartupType $Type -ErrorAction Stop
+        if ($Type -eq 'Automatic') {
+            New-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name 'DelayedAutostart' -PropertyType DWord -Value 0 -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+    }
+}
+
+function Get-HibernateEnabled {
+    # 1 if hibernation is enabled, 0 if disabled, $null if unknown.
+    $he = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -Name 'HibernateEnabled' -ErrorAction SilentlyContinue).HibernateEnabled
+    if ($null -ne $he) { return [int]$he } else { return $null }
+}
+
 function Get-TweakCaptureRecord {
     # Records the live prior state of a tweak so an undo can restore it exactly. Read-only.
     param ($Tweak)
@@ -645,8 +763,16 @@ function Get-TweakCaptureRecord {
                 AddOn = $Tweak.AddOn
                 ServiceName = $Tweak.ServiceName; DesiredStartupType = $Tweak.StartupType
                 ServiceExists = [bool]$svc
-                PriorStartupType = $(if ($svc) { [string]$svc.StartType } else { $null })
+                PriorStartupType = $(if ($svc) { Get-ServiceStartupState -Name $Tweak.ServiceName } else { $null })
                 PriorStatus = $(if ($svc) { [string]$svc.Status } else { $null })
+            }
+        }
+        'Powercfg' {
+            return [pscustomobject]@{
+                Id = $Tweak.Id; Category = $Tweak.Category; Type = 'Powercfg'; Scope = $Tweak.Scope
+                AddOn = $Tweak.AddOn
+                PowercfgAction = $Tweak.PowercfgAction
+                PriorHibernateEnabled = (Get-HibernateEnabled)
             }
         }
         default { throw "Capture for tweak type '$($Tweak.Type)' is not implemented in this build." }
@@ -689,15 +815,33 @@ function New-RegistryUndoLine {
 }
 
 function New-ServiceUndoLine {
-    # PowerShell line that restores one service's start type to its captured prior value.
+    # PowerShell line(s) that restore one service's start type to its captured prior value (delayed-auto aware).
     param ($Record)
     $lines = New-Object System.Collections.Generic.List[string]
-    $svcLit = "'" + ([string]$Record.ServiceName -replace "'", "''") + "'"
-    if ($Record.ServiceExists -and (@('Automatic', 'Manual', 'Disabled') -contains [string]$Record.PriorStartupType)) {
-        $lines.Add("if (Get-Service -Name $svcLit -ErrorAction SilentlyContinue) { Set-Service -Name $svcLit -StartupType $($Record.PriorStartupType) -ErrorAction SilentlyContinue }")
+    $name = [string]$Record.ServiceName
+    $svcLit = "'" + ($name -replace "'", "''") + "'"
+    $regLit = "'HKLM:\SYSTEM\CurrentControlSet\Services\" + ($name -replace "'", "''") + "'"
+    $sp = [string]$Record.PriorStartupType
+    if ($Record.ServiceExists -and (@('Automatic', 'AutomaticDelayedStart', 'Manual', 'Disabled') -contains $sp)) {
+        if ($sp -eq 'AutomaticDelayedStart') {
+            $lines.Add("if (Get-Service -Name $svcLit -ErrorAction SilentlyContinue) { Set-Service -Name $svcLit -StartupType Automatic -ErrorAction SilentlyContinue; New-ItemProperty -LiteralPath $regLit -Name DelayedAutostart -PropertyType DWord -Value 1 -Force -ErrorAction SilentlyContinue | Out-Null }")
+        } elseif ($sp -eq 'Automatic') {
+            $lines.Add("if (Get-Service -Name $svcLit -ErrorAction SilentlyContinue) { Set-Service -Name $svcLit -StartupType Automatic -ErrorAction SilentlyContinue; New-ItemProperty -LiteralPath $regLit -Name DelayedAutostart -PropertyType DWord -Value 0 -Force -ErrorAction SilentlyContinue | Out-Null }")
+        } else {
+            $lines.Add("if (Get-Service -Name $svcLit -ErrorAction SilentlyContinue) { Set-Service -Name $svcLit -StartupType $sp -ErrorAction SilentlyContinue }")
+        }
     } else {
         $lines.Add("# service $svcLit was not present (or had an unsupported start type) at capture - nothing to undo")
     }
+    return $lines
+}
+
+function New-PowercfgUndoLine {
+    # PowerShell line that restores hibernation to its captured prior state.
+    param ($Record)
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ($Record.PriorHibernateEnabled -eq 0) { $lines.Add("& powercfg.exe /hibernate off | Out-Null") }
+    else { $lines.Add("& powercfg.exe /hibernate on | Out-Null") }
     return $lines
 }
 
@@ -707,6 +851,7 @@ function New-UndoLine {
     switch ($Record.Type) {
         'Registry' { return (New-RegistryUndoLine -Record $Record) }
         'Service'  { return (New-ServiceUndoLine -Record $Record) }
+        'Powercfg' { return (New-PowercfgUndoLine -Record $Record) }
         default    { $l = New-Object System.Collections.Generic.List[string]; $l.Add("# (undo for type '$($Record.Type)' not implemented)"); return $l }
     }
 }
@@ -732,11 +877,17 @@ function Restore-TweakRecord {
             }
         }
         'Service' {
-            if ($Record.ServiceExists -and (@('Automatic', 'Manual', 'Disabled') -contains [string]$Record.PriorStartupType)) {
+            if ($Record.ServiceExists -and (@('Automatic', 'AutomaticDelayedStart', 'Manual', 'Disabled') -contains [string]$Record.PriorStartupType)) {
                 if (Get-Service -Name $Record.ServiceName -ErrorAction SilentlyContinue) {
-                    Set-Service -Name $Record.ServiceName -StartupType $Record.PriorStartupType -ErrorAction SilentlyContinue
+                    try { Set-ServiceStartupState -Name $Record.ServiceName -Type $Record.PriorStartupType } catch { }
                 }
             }
+        }
+        'Powercfg' {
+            # Default to re-enabling hibernation unless it was explicitly off at capture (absent value =
+            # hibernation in its default/available state, so 'on' is the safe restore).
+            if ($Record.PriorHibernateEnabled -eq 0) { & powercfg.exe /hibernate off | Out-Null }
+            else { & powercfg.exe /hibernate on | Out-Null }
         }
         default { throw "Undo for type '$($Record.Type)' is not implemented in this build." }
     }
@@ -948,12 +1099,21 @@ function Invoke-TweakApply {
             return $true
         }
         'Service' {
-            if (-not (Get-Service -Name $Tweak.ServiceName -ErrorAction SilentlyContinue)) {
+            $cur = Get-ServiceStartupState -Name $Tweak.ServiceName
+            if ($null -eq $cur) {
                 Write-OptiLog "  (service '$($Tweak.ServiceName)' not present - skipped)" 'Info'
                 return $true
             }
-            Set-Service -Name $Tweak.ServiceName -StartupType $Tweak.StartupType -ErrorAction Stop
+            if ($cur -eq $Tweak.StartupType) { return $true }   # normalization is idempotent: only change where it differs
+            Set-ServiceStartupState -Name $Tweak.ServiceName -Type $Tweak.StartupType
             return $true
+        }
+        'Powercfg' {
+            switch ($Tweak.PowercfgAction) {
+                'hibernate-off' { & powercfg.exe /hibernate off | Out-Null; return $true }
+                'hibernate-on'  { & powercfg.exe /hibernate on  | Out-Null; return $true }
+                default         { throw "Unknown Powercfg action '$($Tweak.PowercfgAction)'." }
+            }
         }
         default { throw "Apply for tweak type '$($Tweak.Type)' is not implemented in this build." }
     }
