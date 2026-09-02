@@ -1,0 +1,78 @@
+# Win11-Optimizer
+
+`Optimize-Windows11.ps1` — a flexible Windows 11 optimizer for PowerShell, with tiered intensity and a
+restorable rollback.
+
+> ## ⚠️ WORK IN PROGRESS — DO NOT USE ON A REAL / PRODUCTION MACHINE
+>
+> This script is **unfinished and under active development**. It changes system and user settings and
+> **can break Windows, degrade features over time, or cause data loss**. The built-in rollback is not
+> complete yet. **Only run it on a disposable VM or a machine you have a full snapshot/backup of.**
+> Review the code before running. Use entirely at your own risk.
+
+## About
+
+A PowerShell reimagining of [TBOK-Win11Optimizer](https://github.com/TheBeardofKnowledge/TBOK-Win11Optimizer)
+(a one-click Windows 11 optimizer `.bat` for IT/MSP use). Per its own README, TBOK draws on
+[Chris Titus Tech's WinUtil](https://github.com/ChrisTitusTech/winutil), **Belim's FlyByOOBE**, and
+**CrapFixer**.
+
+What this project adds over TBOK:
+
+- **Tiered intensity** (`-Level Minimal | Balanced | Full`, plus a guided `Custom`) so you don't have to
+  apply everything — doing too much (especially disabling telemetry) can break Windows over time.
+- **A real, stacked rollback** — a VSS restore point plus a generated undo script that records the prior
+  state of everything a run touches, so any run can be reverted (repeated runs unwind one step at a time).
+- **Defender is never weakened** by any level.
+
+## Features
+
+### Available now
+
+- `-Level Minimal|Balanced|Full|Custom` selection (catalog is **seeded** — only a first slice of Minimal
+  registry tweaks is wired up so far).
+- `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
+- Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
+  per-key `.reg` backups, and a self-contained **undo `.ps1`**).
+- Live apply of registry tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
+- Hard guard: **Windows Defender keys/services are never touched**.
+
+### Upcoming
+
+- Built-in `-Rollback` (stacked LIFO), `-Rollback -To <id>` / `-All`, and `-ListSnapshots`
+  *(for now, roll back by running the generated undo `.ps1` in the snapshot folder)*.
+- VSS **System Restore point** creation.
+- The full Minimal / Balanced / Full tweak catalog (services, debloat, performance, power, network,
+  security, Edge).
+- `-IncludeAI` and `-IncludeGaming` add-ons (independently revertible).
+- `-AllUsers` (all profiles) and the guided `Custom` walkthrough.
+
+## Usage
+
+```powershell
+# See what a level would change (read-only)
+.\Optimize-Windows11.ps1 -Preview -Level Minimal
+
+# Dry run
+.\Optimize-Windows11.ps1 -Level Minimal -WhatIf
+
+# Apply (elevated)
+.\Optimize-Windows11.ps1 -Level Minimal
+
+# Roll back the last run (until -Rollback lands): run the generated undo script
+& "$env:ProgramData\Marflow Software\Win11Optimizer\Snapshots\<timestamp>\Undo-Level_<timestamp>.ps1"
+```
+
+## Requirements
+
+- Windows 11, Windows PowerShell **5.1**, run **as Administrator**.
+
+## Author
+
+- **Author:** Wolfram Halatschek · **Contact:** dev@kMarflow.com
+
+## Warnings
+
+- **ALWAYS REVIEW AND UNDERSTAND THE CODE BEFORE EXECUTING.**
+- **DO NOT USE ON PRODUCTION SYSTEMS — THIS IS UNFINISHED SOFTWARE.**
+- Provided as-is, not supported by Microsoft.
