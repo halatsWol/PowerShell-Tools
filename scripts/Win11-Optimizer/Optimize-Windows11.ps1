@@ -10,11 +10,11 @@
     prior state of everything it touches so any run can be rolled back - including layered runs, which
     unwind one step at a time.
 
-    Implemented: the Minimal / Balanced / Full tiers plus the optional -IncludeAI / -IncludeGaming add-ons,
-    -AllUsers fan-out of user-scope tweaks across every profile (including the Default template), a
-    hardware-aware data-driven tweak catalog, live apply of registry / service / power / Appx tweaks, a VSS
-    restore point, and a stacked (LIFO) rollback with per-run, per-segment undo scripts under ProgramData.
-    Windows Defender is never weakened by any level or add-on. Still to come: the guided Custom walkthrough.
+    Implemented: the Minimal / Balanced / Full tiers, a guided Custom walkthrough, the optional
+    -IncludeAI / -IncludeGaming add-ons, -AllUsers fan-out of user-scope tweaks across every profile
+    (including the Default template), a hardware-aware data-driven tweak catalog, live apply of registry /
+    service / power / Appx tweaks, a VSS restore point, and a stacked (LIFO) rollback with per-run,
+    per-segment undo scripts under ProgramData. Windows Defender is never weakened by any level or add-on.
 
 .NOTES
     Author: Wolfram Halatschek
@@ -85,7 +85,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.13.0'
+$script:ScriptVersion   = '0.14.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -1581,20 +1581,129 @@ function Invoke-TweakApply {
     }
 }
 
+function Read-OptiChoice {
+    # Prompts for a single-letter choice from $Choices (case-insensitive), returning the upper-cased key.
+    # Empty input (or no console) yields $Default, so a redirected/exhausted stdin degrades to the default.
+    param ([string]$Prompt, [string[]]$Choices, [string]$Default)
+    $set = @($Choices | ForEach-Object { $_.ToUpper() })
+    for ($i = 0; $i -lt 20; $i++) {
+        $ans = ''
+        try { $ans = Read-Host $Prompt } catch { return $Default }
+        if ([string]::IsNullOrWhiteSpace($ans)) { return $Default }
+        $a = $ans.Trim().Substring(0, 1).ToUpper()
+        if ($set -contains $a) { return $a }
+        Write-Host "    (please answer one of: $($set -join ', '))" -ForegroundColor DarkYellow
+    }
+    return $Default
+}
+
+function Invoke-CustomWalkthrough {
+    <#
+        Guided Custom mode: walks each category, shows every tweak's impact/risk, and asks how far to go
+        (Skip / Minimal / Balanced / Full); then offers the AI and Gaming add-ons; then summarises and asks
+        for a final confirmation. Builds the selection by reusing Select-Tweaks per category (so the
+        membership, Defender guard and computed-value logic are shared). Returns the chosen rows, or an
+        empty set if the session is non-interactive or the user backs out.
+    #>
+    param ([switch]$IsWhatIf)
+
+    $stdinRedir = $false
+    try { $stdinRedir = [Console]::IsInputRedirected } catch { }
+    if (-not (([Environment]::UserInteractive) -or $stdinRedir)) {
+        Write-OptiLog "Custom (guided) mode needs an interactive session. Re-run in a normal PowerShell window, or choose -Level Minimal|Balanced|Full." 'Error'
+        Set-OptiExit 2
+        return @()
+    }
+
+    $catalog = Get-TweakCatalog
+    $rank = @{ Minimal = 1; Balanced = 2; Full = 3 }
+
+    Write-Host ""
+    Write-Host "== Guided Custom setup ==" -ForegroundColor Cyan
+    Write-Host "For each category, choose how far to go. Nothing is applied until you confirm at the end."
+    Write-Host "  [S]kip   [M]inimal (safest)   [B]alanced (recommended)   [F]ull (aggressive)"
+    Write-Host ""
+
+    $orderPref = @('Explorer', 'Performance', 'Privacy', 'Network', 'Power', 'Services', 'Security', 'Update', 'Edge')
+    $present = @($catalog | Where-Object { -not $_.AddOn } | Select-Object -ExpandProperty Category -Unique)
+    $cats = @($orderPref | Where-Object { $present -contains $_ }) + @($present | Where-Object { $orderPref -notcontains $_ })
+
+    $selected = @()
+    foreach ($cat in $cats) {
+        $catRows = @($catalog | Where-Object { -not $_.AddOn -and $_.Category -eq $cat })
+        $tiers = @('Minimal', 'Balanced', 'Full' | Where-Object { $t = $_; @($catRows | Where-Object { $_.MinLevel -eq $t }).Count -gt 0 })
+        Write-Host ("-- {0} --  (available at: {1})" -f $cat, ($tiers -join ', ')) -ForegroundColor Cyan
+        foreach ($lvl in @('Minimal', 'Balanced', 'Full')) {
+            foreach ($r in @($catRows | Where-Object { $_.MinLevel -eq $lvl })) {
+                Write-Host ("    [{0}] {1} - {2} (risk {3})" -f $lvl.Substring(0, 1), $r.Name, $r.Impact, $r.Risk)
+            }
+        }
+        $choice = Read-OptiChoice -Prompt ("  {0}: [S]kip / [M]inimal / [B]alanced / [F]ull? (Enter = Balanced)" -f $cat) -Choices @('S', 'M', 'B', 'F') -Default 'B'
+        Write-Host ""
+        if ($choice -eq 'S') { continue }
+        $lvl = switch ($choice) { 'M' { 'Minimal' } 'B' { 'Balanced' } 'F' { 'Full' } }
+        $selected += @(Select-Tweaks -Level $lvl -Categories @($cat))
+    }
+
+    foreach ($addon in @('AI', 'Gaming')) {
+        $aRows = @($catalog | Where-Object { $_.AddOn -eq $addon })
+        if ($aRows.Count -eq 0) { continue }
+        Write-Host ("-- {0} add-on --" -f $addon) -ForegroundColor Cyan
+        foreach ($r in $aRows) { Write-Host ("    {0} - {1}" -f $r.Name, $r.Impact) }
+        $ans = Read-OptiChoice -Prompt ("  Include the {0} add-on? [y/N]" -f $addon) -Choices @('Y', 'N') -Default 'N'
+        Write-Host ""
+        if ($ans -eq 'Y') {
+            if ($addon -eq 'AI') { $selected += @(Select-Tweaks -Level Minimal -IncludeAI -Categories @('AI')) }
+            else { $selected += @(Select-Tweaks -Level Minimal -IncludeGaming -Categories @('Gaming')) }
+        }
+    }
+
+    $selected = @($selected)
+    if ($selected.Count -eq 0) { Write-OptiLog "Custom: nothing selected - no changes to make." 'Info'; return @() }
+
+    Write-Host ("== Custom selection: {0} tweak(s) ==" -f $selected.Count) -ForegroundColor Cyan
+    foreach ($t in $selected) {
+        $tier = if ($t.AddOn) { "+$($t.AddOn)" } else { $t.MinLevel }
+        Write-Host ("    [{0}/{1}] {2}" -f $tier, $t.Category, $t.Id)
+    }
+    $high = @($selected | Where-Object { $_.Risk -eq 'High' })
+    if ($high.Count -gt 0) { Write-Host ("  NOTE: {0} of these are HIGH-risk (aggressive) change(s)." -f $high.Count) -ForegroundColor Yellow }
+    Write-Host ""
+
+    if ($IsWhatIf) { return $selected }   # dry run: the -WhatIf path reports what would apply, no confirm needed
+
+    $ans = ''
+    try { $ans = Read-Host "Apply these $($selected.Count) change(s)? Type 'yes' to proceed" } catch { $ans = '' }
+    if ($ans -ne 'yes') { Write-OptiLog "Custom aborted before applying - no changes made." 'Info'; return @() }
+    return $selected
+}
+
 function Invoke-ApplyMode {
     param ([System.Management.Automation.PSCmdlet]$Cmdlet)
 
-    $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming)
-    $addons = @(); if ($IncludeAI -or $Level -eq 'Full') { $addons += 'AI' }; if ($IncludeGaming -or $Level -eq 'Full') { $addons += 'Gaming' }
-    $tags = @(); if ($addons) { $tags += ($addons | ForEach-Object { "+$_" }) }; if ($AllUsers) { $tags += 'all-users' }
+    $isWhatIf = [bool]$WhatIfPreference
+
+    # Custom runs the guided walkthrough (which builds its own selection and asks its own confirmation);
+    # every other level selects declaratively from the catalog.
+    if ($Level -eq 'Custom') {
+        $rows = @(Invoke-CustomWalkthrough -IsWhatIf:$isWhatIf)
+    } else {
+        $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming)
+    }
+
+    $tags = @()
+    if ($Level -eq 'Custom') { $tags += 'custom' }
+    else {
+        if ($IncludeAI -or $Level -eq 'Full') { $tags += '+AI' }
+        if ($IncludeGaming -or $Level -eq 'Full') { $tags += '+Gaming' }
+    }
+    if ($AllUsers) { $tags += 'all-users' }
     $suffix = if ($tags) { " ($($tags -join ', '))" } else { '' }
 
     if ($rows.Count -eq 0) {
         Write-OptiLog "Apply - Level '$Level'$suffix : no tweaks selected; nothing to do." 'Info'
         return
     }
-
-    $isWhatIf = [bool]$WhatIfPreference
 
     # Full is aggressive - confirm before proceeding (skipped by -Force, and not needed for a -WhatIf dry run).
     if ($Level -eq 'Full' -and -not $Force -and -not $isWhatIf) {

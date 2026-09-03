@@ -29,12 +29,16 @@ What this project adds over TBOK:
 
 ### Available now
 
-- `-Level Minimal|Balanced|Full|Custom` selection. **Minimal**, **Balanced** and **Full** are implemented —
+- `-Level Minimal|Balanced|Full|Custom` selection.
   Minimal: Explorer/UI quality-of-life, consumer ads/tips off, Fast Startup off, a few safe services to
   Manual; Balanced adds responsiveness/network tuning, Bing/web-search off, **telemetry reduced (not off)**,
   **desktop-only hibernation-off**, and **essential-service normalization**; **Full** does the aggressive
   set (telemetry fully OFF, more services disabled, WPBT/device-metadata hardening, Edge policies,
   svchost/RAM & SysMain tuning) **behind a confirmation prompt** (`-Force` to skip). Defender is never touched.
+- **`-Level Custom`** — a guided, interactive walkthrough: for each category it shows every tweak's impact
+  and asks how far to go (**Skip / Minimal / Balanced / Full**), then offers the AI and Gaming add-ons, then
+  summarises and asks you to confirm before anything is applied. Works with `-AllUsers` and the usual
+  rollback.
 - **`-IncludeAI` add-on** — turns off Copilot and Recall (AI data analysis), hides the Copilot taskbar
   button, disables the Edge Copilot/Discover sidebar, and removes the Copilot app (best-effort, re-registered
   from staged files on undo). Opt-in at any level, applied automatically at Full, and backed by its **own
@@ -66,7 +70,7 @@ What this project adds over TBOK:
 
 - **Appx debloat** (remove Widgets/Bing).
 - More Full coverage (wider service map, pagefile sizing).
-- The guided `Custom` walkthrough.
+- Comment-based help and an Invoke-ScriptAnalyzer / PS 5.1 polish pass.
 
 ## Usage
 
@@ -85,6 +89,9 @@ What this project adds over TBOK:
 
 # Apply user-scope tweaks to every profile (and the Default template for new users)
 .\Optimize-Windows11.ps1 -Level Minimal -AllUsers
+
+# Guided, interactive setup (choose intensity per category, confirm before applying)
+.\Optimize-Windows11.ps1 -Level Custom
 
 # Roll back (elevated)
 .\Optimize-Windows11.ps1 -ListSnapshots          # see snapshot ids
