@@ -85,7 +85,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.14.0'
+$script:ScriptVersion   = '0.15.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -400,6 +400,41 @@ function Get-TweakCatalog {
             Impact = 'Sets the legacy Windows Media Player network sharing service to start on-demand.'
             Type = 'Service'; ServiceName = 'WMPNetworkSvc'; StartupType = 'Manual'
         }
+        [pscustomobject]@{
+            Id = 'Explorer.SeparateProcess'; Name = 'Open each Explorer window in its own process'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Runs each File Explorer window in a separate process, so one hung window does not take the others (or the desktop) down with it.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            ValueName = 'SeparateProcess'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.DisableFolderTypeDiscovery'; Name = 'Stop content-based folder view scanning'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; NoAllUsers = $true
+            Impact = "Stops Explorer scanning a folder's contents to auto-pick a view (Automatic Folder Type Discovery); all folders use the General template for a consistent, faster open. Lives in the per-user UsrClass hive, so it applies to the current user only (not fanned out by -AllUsers)."
+            Type = 'Registry'; Path = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell'
+            ValueName = 'FolderType'; ValueType = 'String'; Data = 'NotSpecified'
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.QuickAccessNoRecentFiles'; Name = 'Hide recent files in Quick Access'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Hides recently used files in Quick Access / Home, cutting the scan Explorer does when it opens.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer'
+            ValueName = 'ShowRecent'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.QuickAccessNoFrequentFolders'; Name = 'Hide frequent folders in Quick Access'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Hides frequently used folders in Quick Access / Home.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer'
+            ValueName = 'ShowFrequent'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.CompactView'; Name = 'Use compact view spacing'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Uses the denser "compact view" row spacing in File Explorer, fitting more items per screen (list-friendly).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            ValueName = 'UseCompactMode'; ValueType = 'DWord'; Data = 1
+        }
 
         # ---- Balanced ----------------------------------------------------------------------------
         [pscustomobject]@{
@@ -453,8 +488,8 @@ function Get-TweakCatalog {
         }
         [pscustomobject]@{
             Id = 'Power.HibernationOff'; Name = 'Disable hibernation (desktops only)'; Category = 'Power'
-            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
-            Impact = 'On desktops, disables hibernation and reclaims hiberfil.sys. Skipped on laptops so low-battery hibernate still protects unsaved work.'
+            MinLevel = 'Balanced'; MaxLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'On desktops, disables hibernation and reclaims hiberfil.sys. Skipped on laptops so low-battery hibernate still protects unsaved work. Full disables it on laptops too.'
             Condition = { param($hw) $hw.IsDesktop }
             Type = 'Powercfg'; PowercfgAction = 'hibernate-off'
         }
@@ -560,6 +595,12 @@ function Get-TweakCatalog {
             Impact = 'On SSD/NVMe (or low-RAM HDD) SysMain (Superfetch) is Disabled; on an HDD with plenty of RAM it is set to Manual.'
             Type = 'Service'; ServiceName = 'SysMain'
             StartupType = { param($hw) if ($hw.SystemDiskIsSSD) { 'Disabled' } elseif ($hw.RamGB -gt 12) { 'Manual' } else { 'Disabled' } }
+        }
+        [pscustomobject]@{
+            Id = 'Power.HibernationOffFull'; Name = 'Disable hibernation (all machines, incl. notebooks)'; Category = 'Power'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true
+            Impact = 'At Full, disables hibernation on ALL machines including notebooks and reclaims hiberfil.sys. On a laptop this means a low battery will no longer hibernate to protect unsaved work.'
+            Type = 'Powercfg'; PowercfgAction = 'hibernate-off'
         }
 
         # ---- AI add-on (-IncludeAI; auto-applied at Full) ----------------------------------------
@@ -926,7 +967,11 @@ function Expand-AllUsersRows {
 
     $out = @()
     foreach ($t in $Rows) {
-        if ($t.Scope -ne 'User' -or $t.Type -ne 'Registry') { $out += $t; continue }
+        $noAU = (($t.PSObject.Properties.Name -contains 'NoAllUsers') -and $t.NoAllUsers)
+        if ($t.Scope -ne 'User' -or $t.Type -ne 'Registry' -or $noAU) {
+            if ($noAU) { Write-OptiLog "  ($($t.Id) applies to the current user only - not fanned out to other profiles.)" 'Info' }
+            $out += $t; continue
+        }
         $sub = ConvertTo-HiveSubPath -Path $t.Path
         foreach ($p in $profiles) {
             if ($WhatIf) {
@@ -1218,8 +1263,8 @@ function New-PowercfgUndoLine {
     # PowerShell line that restores hibernation to its captured prior state.
     param ($Record)
     $lines = New-Object System.Collections.Generic.List[string]
-    if ($Record.PriorHibernateEnabled -eq 0) { $lines.Add("& powercfg.exe /hibernate off | Out-Null") }
-    else { $lines.Add("& powercfg.exe /hibernate on | Out-Null") }
+    if ($Record.PriorHibernateEnabled -eq 0) { $lines.Add("& powercfg.exe /hibernate off 2>&1 | Out-Null") }
+    else { $lines.Add("& powercfg.exe /hibernate on 2>&1 | Out-Null") }
     return $lines
 }
 
@@ -1296,8 +1341,8 @@ function Restore-TweakRecord {
         'Powercfg' {
             # Default to re-enabling hibernation unless it was explicitly off at capture (absent value =
             # hibernation in its default/available state, so 'on' is the safe restore).
-            if ($Record.PriorHibernateEnabled -eq 0) { & powercfg.exe /hibernate off | Out-Null }
-            else { & powercfg.exe /hibernate on | Out-Null }
+            if ($Record.PriorHibernateEnabled -eq 0) { & powercfg.exe /hibernate off 2>&1 | Out-Null }
+            else { & powercfg.exe /hibernate on 2>&1 | Out-Null }
         }
         'Appx' {
             # Best-effort re-registration from staged files; if they are gone the app must be reinstalled
@@ -1563,8 +1608,8 @@ function Invoke-TweakApply {
         }
         'Powercfg' {
             switch ($Tweak.PowercfgAction) {
-                'hibernate-off' { & powercfg.exe /hibernate off | Out-Null; return $true }
-                'hibernate-on'  { & powercfg.exe /hibernate on  | Out-Null; return $true }
+                'hibernate-off' { & powercfg.exe /hibernate off 2>&1 | Out-Null; return $true }
+                'hibernate-on'  { & powercfg.exe /hibernate on  2>&1 | Out-Null; return $true }
                 default         { throw "Unknown Powercfg action '$($Tweak.PowercfgAction)'." }
             }
         }
