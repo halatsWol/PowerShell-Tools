@@ -16,6 +16,76 @@
     service / power / Appx tweaks, a VSS restore point, and a stacked (LIFO) rollback with per-run,
     per-segment undo scripts under ProgramData. Windows Defender is never weakened by any level or add-on.
 
+.PARAMETER Level
+    Intensity to apply: Minimal (safest), Balanced (default, recommended), Full (aggressive; behind a
+    confirmation prompt), or Custom (an interactive, per-category guided walkthrough). Levels are
+    cumulative: Full includes Balanced includes Minimal.
+
+.PARAMETER IncludeAI
+    Also apply the AI add-on (turn off Copilot and Recall, remove the Copilot app). Automatic at Full;
+    opt-in at other levels. Captured into its own rollback stack (see -Rollback -IncludeAI).
+
+.PARAMETER IncludeGaming
+    Also apply the Gaming add-on (Hardware-Accelerated GPU Scheduling, game task priorities, Game DVR off).
+    Automatic at Full; opt-in at other levels. Captured into its own rollback stack.
+
+.PARAMETER Categories
+    Restrict the run to one or more tweak categories (e.g. Explorer, Privacy, Services). Applies to Apply
+    and -Preview.
+
+.PARAMETER AllUsers
+    Apply the user-scope (HKCU) tweaks to every user profile - loaded live where present, or by loading each
+    profile's NTUSER.DAT on demand - plus the Default profile template so new users inherit them. Machine
+    tweaks still apply once.
+
+.PARAMETER SkipRestorePoint
+    Skip creating the VSS System Restore point before applying (the surgical undo script + snapshot remain).
+
+.PARAMETER NoRollbackScript
+    Do not emit the standalone undo .ps1 files (the JSON snapshot and in-process -Rollback still work).
+
+.PARAMETER Force
+    Skip the Full-tier confirmation prompt (required to run Full non-interactively).
+
+.PARAMETER Preview
+    Read-only: list the selected tweaks and their current on-machine values without changing anything.
+
+.PARAMETER Rollback
+    Undo previously applied runs. On its own, undoes the newest Level layer; combine with -To, -All,
+    -IncludeAI or -IncludeGaming.
+
+.PARAMETER To
+    With -Rollback: unwind Level layers from newest back to the given snapshot id (inclusive). See
+    -ListSnapshots for ids.
+
+.PARAMETER All
+    With -Rollback: undo every active layer across all stacks (return to baseline).
+
+.PARAMETER ListSnapshots
+    List the recorded snapshot layers (ids, timestamps, tweak counts, status) and the top of each stack.
+
+.PARAMETER NoProtectSnapshots
+    Skip ACL-hardening of the ProgramData snapshot store.
+
+.PARAMETER Quiet
+    Suppress console output (the run log file is still written).
+
+.EXAMPLE
+    .\Optimize-Windows11.ps1 -Preview -Level Balanced
+    Show what Balanced would change, read-only.
+
+.EXAMPLE
+    .\Optimize-Windows11.ps1 -Level Minimal -AllUsers
+    Apply the Minimal tier to every user profile and the Default template.
+
+.EXAMPLE
+    .\Optimize-Windows11.ps1 -Level Full -Force
+    Apply the aggressive Full tier (and the AI/Gaming add-ons) without the interactive prompt.
+
+.EXAMPLE
+    .\Optimize-Windows11.ps1 -Rollback -All
+    Undo every applied run, back to baseline.
+
 .NOTES
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
@@ -197,6 +267,7 @@ function Initialize-SnapshotStore {
         degrades to console-only logging rather than failing.
     #>
     [CmdletBinding()]
+    [OutputType([bool])]
     param ([switch]$ReadOnlyMode)
 
     $WhatIfPreference = $false   # store + log setup is infrastructure, not a -WhatIf target
@@ -1072,7 +1143,7 @@ function ConvertTo-HiveSubPath {
 function Expand-AllUsersRows {
     # Fans out User-scope registry rows across all profiles for -AllUsers (loading unloaded hives unless
     # this is a -WhatIf dry run). Machine-scope and Appx rows pass through unchanged.
-    param ([object[]]$Rows, [switch]$WhatIf)
+    param ([object[]]$Rows, [switch]$DryRun)
 
     $profiles = @(Get-OptiUserProfiles)
     $names = ($profiles | ForEach-Object { if ($_.IsDefault) { 'Default(template)' } else { Split-Path $_.ProfilePath -Leaf } }) -join ', '
@@ -1087,7 +1158,7 @@ function Expand-AllUsersRows {
         }
         $sub = ConvertTo-HiveSubPath -Path $t.Path
         foreach ($p in $profiles) {
-            if ($WhatIf) {
+            if ($DryRun) {
                 $base = if ($p.IsLoaded) { "Registry::HKEY_USERS\$($p.Sid)" } else { "Registry::HKEY_USERS\(NTUSER.DAT@$($p.ProfilePath))" }
             } else {
                 $base = Get-OptiHiveBase -Sid $p.Sid -NtuserDat $p.NtuserDat
@@ -1774,7 +1845,6 @@ function Invoke-CustomWalkthrough {
     }
 
     $catalog = Get-TweakCatalog
-    $rank = @{ Minimal = 1; Balanced = 2; Full = 3 }
 
     Write-Host ""
     Write-Host "== Guided Custom setup ==" -ForegroundColor Cyan
@@ -1879,7 +1949,7 @@ function Invoke-ApplyMode {
     # -AllUsers: fan out user-scope registry rows across every profile (loads unloaded hives on demand,
     # released by Clear-OptiMounts in the finally below). Machine/service/power/Appx rows are untouched.
     if ($AllUsers) {
-        $rows = @(Expand-AllUsersRows -Rows $rows -WhatIf:$isWhatIf)
+        $rows = @(Expand-AllUsersRows -Rows $rows -DryRun:$isWhatIf)
         if ($rows.Count -eq 0) { Write-OptiLog "Apply - Level '$Level'$suffix : no applicable tweaks after profile expansion." 'Info'; return }
     }
 

@@ -25,6 +25,38 @@ What this project adds over TBOK:
   state of everything a run touches, so any run can be reverted (repeated runs unwind one step at a time).
 - **Defender is never weakened** by any level.
 
+## How this differs from TBOK (and why)
+
+TBOK is an excellent, fast, one-click tool. This project intentionally makes **different trade-offs**,
+because the biggest real-world risk with an optimizer is not "too little speed" — it's **breaking Windows
+or letting it degrade over time**. Every difference below exists to keep the machine healthy and every
+change reversible.
+
+- **Services: normalized, not mass-disabled.** TBOK sets **200+ services** to Manual/Disabled. We do
+  *not*. Aggressive service disabling is the single most common way these tools break Windows: features
+  silently stop working, Windows Update or the Store fail weeks later, and the cause is hard to trace. We
+  touch only a small, well-understood set (a few safe services to Manual, and the telemetry services at
+  Full) and otherwise **normalize** core services *toward* their correct Windows defaults — never below.
+- **Telemetry is reduced, not blacked out, by default.** Fully zeroing telemetry and killing DiagTrack can,
+  over time, interfere with Windows Update, the Store, licensing and staged feature rollouts. **Balanced
+  keeps diagnostic data at "Required" (1)**; only **Full** — behind a confirmation prompt — turns it fully
+  off. TBOK blacks it out unconditionally.
+- **Windows Defender is never touched.** No level or add-on weakens Defender AV, real-time protection,
+  tamper protection, SmartScreen or the security services — this is a hard, code-enforced guard. (The only
+  Defender item that will ever be touchable is sample submission, opt-in, and it is not implemented yet.)
+- **The power plan and boot config are left alone.** We deliberately **never create/activate the
+  Ultimate-Performance plan** and make **no `bcdedit` boot-parameter changes** (HPET/`useplatformclock`,
+  F8 menu). These are contentious and can hurt as often as help.
+- **Everything is tiered and reversible.** TBOK is all-or-nothing; we offer **Minimal / Balanced / Full /
+  guided Custom**, per-run **stacked rollback** with generated undo scripts, a **VSS restore point**, and
+  independently revertible **AI / Gaming** add-ons.
+- **We also skip a few TBOK items on purpose:** its OOBE-bypass keys (an imaging-time concern), obscure
+  firmware/feature-flag overrides, and leaving the System Restore throttle permanently at 0 (we set it only
+  for our own checkpoint and put it back).
+
+**Still coming from TBOK's feature set:** Appx debloat (Widgets/Bing), pagefile sizing, a scheduled-task
+engine (e.g. Office telemetry tasks), and an opt-in `bcdedit` engine.
+
 ## Features
 
 ### Available now
