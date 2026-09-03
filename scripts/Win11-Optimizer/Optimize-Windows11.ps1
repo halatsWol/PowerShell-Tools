@@ -85,7 +85,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.15.0'
+$script:ScriptVersion   = '0.16.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -435,6 +435,55 @@ function Get-TweakCatalog {
             Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
             ValueName = 'UseCompactMode'; ValueType = 'DWord'; Data = 1
         }
+        [pscustomobject]@{
+            Id = 'Explorer.DisableFeeds'; Name = 'Disable News & Interests / feeds'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off the News & Interests / feeds widget on the taskbar (EnableFeeds policy).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Policies\Microsoft\Windows\Windows Feeds'
+            ValueName = 'EnableFeeds'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.HideChatButton'; Name = 'Hide the Chat (Teams) taskbar button'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Removes the Chat / Microsoft Teams consumer button from the taskbar.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            ValueName = 'TaskbarMn'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Explorer.DetailedCopyDialog'; Name = 'Detailed file-operation dialog'; Category = 'Explorer'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Always shows the detailed copy/move dialog (with the throughput graph) by default.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\OperationStatusManager'
+            ValueName = 'EnthusiastMode'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Performance.VisualFxBestPerformance'; Name = 'Visual effects: adjust for best performance'; Category = 'Performance'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the visual-effects mode to "adjust for best performance" (VisualFXSetting=3).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
+            ValueName = 'VisualFXSetting'; ValueType = 'DWord'; Data = 3
+        }
+        [pscustomobject]@{
+            Id = 'Performance.DisableWindowAnimations'; Name = 'Disable window minimize/maximize animations'; Category = 'Performance'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off the window minimize/maximize animation for snappier windowing.'
+            Type = 'Registry'; Path = 'HKCU:\Control Panel\Desktop\WindowMetrics'
+            ValueName = 'MinAnimate'; ValueType = 'String'; Data = '0'
+        }
+        [pscustomobject]@{
+            Id = 'Performance.DisableAeroPeek'; Name = 'Disable Aero Peek'; Category = 'Performance'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off the Aero Peek desktop-preview effect.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\DWM'
+            ValueName = 'EnableAeroPeek'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Privacy.DisableAdvertisingIdPolicy'; Name = 'Disable advertising ID (machine policy)'; Category = 'Privacy'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the advertising ID for all users via group policy (complements the per-user setting).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo'
+            ValueName = 'DisabledByGroupPolicy'; ValueType = 'DWord'; Data = 1
+        }
 
         # ---- Balanced ----------------------------------------------------------------------------
         [pscustomobject]@{
@@ -492,6 +541,39 @@ function Get-TweakCatalog {
             Impact = 'On desktops, disables hibernation and reclaims hiberfil.sys. Skipped on laptops so low-battery hibernate still protects unsaved work. Full disables it on laptops too.'
             Condition = { param($hw) $hw.IsDesktop }
             Type = 'Powercfg'; PowercfgAction = 'hibernate-off'
+        }
+
+        # Consumer-content / suggested-apps cleanup: stop Windows silently installing suggested apps and
+        # showing Start / Explorer / setup suggestions and ads. All per-user, fully reversible.
+        [pscustomobject]@{ Id = 'Privacy.NoSilentInstalledApps'; Name = 'Stop silently installed suggested apps'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Stops Windows silently installing "suggested" apps in the background.'; Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; ValueName = 'SilentInstalledAppsEnabled'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoContentDelivery';     Name = 'Disable content-delivery suggestions'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Turns off the content-delivery engine behind Start / Settings / lock-screen suggestions.'; Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; ValueName = 'ContentDeliveryAllowed'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoOemPreinstalled';     Name = 'Disable OEM pre-installed suggestions'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Stops OEM pre-installed app suggestions.'; Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; ValueName = 'OemPreInstalledAppsEnabled'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoPreinstalledApps';    Name = 'Disable pre-installed app suggestions'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Stops Windows pre-installing suggested apps for the account.'; Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; ValueName = 'PreInstalledAppsEnabled'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoStartSuggestions';    Name = 'Disable Start-menu suggestions'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Turns off suggested apps / ads in the Start menu (SystemPaneSuggestions).'; Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; ValueName = 'SystemPaneSuggestionsEnabled'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoStartAppPromo';       Name = 'Disable Start app promotions'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Turns off promoted-app content in Start (SubscribedContent-338388).'; Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; ValueName = 'SubscribedContent-338388Enabled'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoStartIrisRecommend';  Name = 'Disable Start recommendations'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Turns off the "recommended" recommendation content in Start (Iris).'; Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; ValueName = 'Start_IrisRecommendations'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoSyncProviderAds';     Name = 'Disable Explorer sync-provider ads'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Stops the OneDrive / "sync provider" promotional notifications shown in File Explorer.'; Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; ValueName = 'ShowSyncProviderNotifications'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Privacy.NoScoobePrompts';       Name = 'Disable post-update setup prompts'; Category = 'Privacy'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; Impact = 'Turns off the "finish setting up your device" prompts after updates (SCOOBE).'; Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement'; ValueName = 'ScoobeSystemSettingEnabled'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{
+            Id = 'Performance.DisableBackgroundApps'; Name = 'Disable background apps (global)'; Category = 'Performance'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Stops UWP / Store apps running in the background for the current user, freeing CPU and RAM.'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications'
+            ValueName = 'GlobalUserDisabled'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Performance.VerboseStatus'; Name = 'Verbose startup/shutdown messages'; Category = 'Performance'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Shows detailed status messages during startup/shutdown (handy for diagnosing slow boots).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+            ValueName = 'VerboseStatus'; ValueType = 'DWord'; Data = 1
+        }
+        [pscustomobject]@{
+            Id = 'Performance.WaitToKillServiceTimeout'; Name = 'Trim service shutdown wait'; Category = 'Performance'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the service shutdown wait to 5000 ms so shutdown / restart does not hang on a slow service.'
+            Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Control'
+            ValueName = 'WaitToKillServiceTimeout'; ValueType = 'String'; Data = '5000'
         }
 
         # Essential-service baseline normalization: set core services back to their correct Windows
@@ -602,6 +684,16 @@ function Get-TweakCatalog {
             Impact = 'At Full, disables hibernation on ALL machines including notebooks and reclaims hiberfil.sys. On a laptop this means a low battery will no longer hibernate to protect unsaved work.'
             Type = 'Powercfg'; PowercfgAction = 'hibernate-off'
         }
+        [pscustomobject]@{
+            Id = 'Explorer.AutoEndTasks'; Name = 'Auto-end hung tasks on shutdown'; Category = 'Explorer'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'User'; Risk = 'Medium'; Reversible = $true
+            Impact = 'Automatically ends unresponsive apps at logoff/shutdown instead of waiting. Faster shutdown, but an app with unsaved work will not get a chance to prompt.'
+            Type = 'Registry'; Path = 'HKCU:\Control Panel\Desktop'
+            ValueName = 'AutoEndTasks'; ValueType = 'String'; Data = '1'
+        }
+        [pscustomobject]@{ Id = 'Edge.HideFirstRun';        Name = 'Skip Edge first-run experience'; Category = 'Edge'; MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Skips the Microsoft Edge first-run / welcome experience.'; Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'; ValueName = 'HideFirstRunExperience'; ValueType = 'DWord'; Data = 1 }
+        [pscustomobject]@{ Id = 'Edge.DisableShopping';     Name = 'Disable Edge shopping assistant'; Category = 'Edge'; MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Turns off the Edge shopping / price-comparison assistant.'; Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'; ValueName = 'EdgeShoppingAssistantEnabled'; ValueType = 'DWord'; Data = 0 }
+        [pscustomobject]@{ Id = 'Edge.DisableUserFeedback'; Name = 'Disable Edge feedback prompts'; Category = 'Edge'; MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Turns off the Microsoft Edge user-feedback prompts.'; Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'; ValueName = 'UserFeedbackAllowed'; ValueType = 'DWord'; Data = 0 }
 
         # ---- AI add-on (-IncludeAI; auto-applied at Full) ----------------------------------------
         # Trims the Copilot / Recall / AI surfaces. The registry rows are fully reversible; the Appx
@@ -649,6 +741,27 @@ function Get-TweakCatalog {
             MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Medium'; Reversible = $true
             Impact = 'Removes the Microsoft Copilot Store app for the current user. Best-effort undo: re-registered from its staged files if still present, otherwise reinstall from the Store.'
             Type = 'Appx'; PackageName = 'Microsoft.Copilot'
+        }
+        [pscustomobject]@{
+            Id = 'AI.DisableCopilotRuntime'; Name = 'Disable the Copilot runtime'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Blocks the Windows Copilot runtime from loading (AllowCopilotRuntime=0).'
+            Type = 'Registry'; Path = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsCopilot'
+            ValueName = 'AllowCopilotRuntime'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'AI.DisableRecallEnablement'; Name = 'Block Recall from being enabled'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Prevents Windows Recall from being enabled machine-wide (AllowRecallEnablement=0).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+            ValueName = 'AllowRecallEnablement'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'AI.DisableCrossDeviceResume'; Name = 'Disable cross-device resume'; Category = 'AI'
+            MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off the phone/PC cross-device resume hand-off (IsResumeAllowed=0).'
+            Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CrossDeviceResume\Configuration'
+            ValueName = 'IsResumeAllowed'; ValueType = 'DWord'; Data = 0
         }
 
         # ---- Gaming add-on (-IncludeGaming; auto-applied at Full) --------------------------------

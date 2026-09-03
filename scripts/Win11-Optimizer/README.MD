@@ -30,13 +30,15 @@ What this project adds over TBOK:
 ### Available now
 
 - `-Level Minimal|Balanced|Full|Custom` selection.
-  Minimal: Explorer/UI quality-of-life (incl. no content-scan folder views, compact view, separate Explorer
-  process, Quick Access recents off), consumer ads/tips off, Fast Startup off, a few safe services to Manual;
-  Balanced adds responsiveness/network tuning, Bing/web-search off, **telemetry reduced (not off)**,
-  **desktop-only hibernation-off**, and **essential-service normalization**; **Full** does the aggressive
-  set (telemetry fully OFF, more services disabled, **hibernation off on all machines incl. notebooks**,
-  WPBT/device-metadata hardening, Edge policies, svchost/RAM & SysMain tuning) **behind a confirmation
-  prompt** (`-Force` to skip). Defender is never touched.
+  Minimal: Explorer/UI quality-of-life (no content-scan folder views, compact view, separate Explorer
+  process, Quick Access recents off, feeds/Chat button off, visual-effects-for-performance), consumer
+  ads/tips off, advertising ID off, Fast Startup off, a few safe services to Manual; Balanced adds
+  responsiveness/network tuning, Bing/web-search off, the **suggested-apps / Start-ads cleanup**,
+  background apps off, **telemetry reduced (not off)**, **desktop-only hibernation-off**, and
+  **essential-service normalization**; **Full** does the aggressive set (telemetry fully OFF, more
+  services disabled, **hibernation off on all machines incl. notebooks**, WPBT/device-metadata hardening,
+  Edge policies, svchost/RAM & SysMain tuning) **behind a confirmation prompt** (`-Force` to skip).
+  Defender is never touched.
 - **`-Level Custom`** — a guided, interactive walkthrough: for each category it shows every tweak's impact
   and asks how far to go (**Skip / Minimal / Balanced / Full**), then offers the AI and Gaming add-ons, then
   summarises and asks you to confirm before anything is applied. Works with `-AllUsers` and the usual
