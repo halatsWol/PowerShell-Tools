@@ -44,6 +44,11 @@ What this project adds over TBOK:
   fully reversible, applied on laptops and desktops alike. Opt-in at any level, automatic at Full, with its
   **own rollback stack** (`-Rollback -IncludeGaming`). It deliberately does **not** touch the power plan
   (Ultimate-Performance is never set) or boot parameters.
+- **`-AllUsers`** — applies the user-scope (HKCU) tweaks to **every** user profile, not just the current
+  one: profiles are patched live where loaded, or by loading their `NTUSER.DAT` on demand, plus the
+  **Default profile template** so newly created users inherit them. Each profile's prior state is captured,
+  so rollback reverts every profile (re-loading hives as needed). Machine/service/power tweaks still apply
+  once; Appx removal stays current-user for now.
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
   per-key `.reg` backups, and a self-contained **undo `.ps1`** per segment).
@@ -61,7 +66,7 @@ What this project adds over TBOK:
 
 - **Appx debloat** (remove Widgets/Bing).
 - More Full coverage (wider service map, pagefile sizing).
-- `-AllUsers` (all profiles) and the guided `Custom` walkthrough.
+- The guided `Custom` walkthrough.
 
 ## Usage
 
@@ -77,6 +82,9 @@ What this project adds over TBOK:
 
 # Apply with add-ons (Copilot/Recall off, Copilot app removed; gaming priorities/HAGS/Game DVR off)
 .\Optimize-Windows11.ps1 -Level Balanced -IncludeAI -IncludeGaming
+
+# Apply user-scope tweaks to every profile (and the Default template for new users)
+.\Optimize-Windows11.ps1 -Level Minimal -AllUsers
 
 # Roll back (elevated)
 .\Optimize-Windows11.ps1 -ListSnapshots          # see snapshot ids

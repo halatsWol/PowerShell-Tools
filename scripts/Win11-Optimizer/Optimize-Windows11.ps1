@@ -11,10 +11,10 @@
     unwind one step at a time.
 
     Implemented: the Minimal / Balanced / Full tiers plus the optional -IncludeAI / -IncludeGaming add-ons,
-    a hardware-aware data-driven tweak catalog, live apply of registry / service / power / Appx tweaks, a VSS
+    -AllUsers fan-out of user-scope tweaks across every profile (including the Default template), a
+    hardware-aware data-driven tweak catalog, live apply of registry / service / power / Appx tweaks, a VSS
     restore point, and a stacked (LIFO) rollback with per-run, per-segment undo scripts under ProgramData.
-    Windows Defender is never weakened by any level or add-on. Still to come: -AllUsers and the guided Custom
-    walkthrough.
+    Windows Defender is never weakened by any level or add-on. Still to come: the guided Custom walkthrough.
 
 .NOTES
     Author: Wolfram Halatschek
@@ -85,7 +85,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.12.0'
+$script:ScriptVersion   = '0.13.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -834,7 +834,123 @@ function Select-Tweaks {
 }
 
 # =================================================================================================
-# Current-state reads (the read half of the capture engine; full capture arrives in a later commit)
+# Multi-user (-AllUsers) engine: profile enumeration, hive mount cache, per-profile fan-out
+# =================================================================================================
+# With -AllUsers, each User-scope (HKCU) registry tweak is expanded to one row per user profile - real
+# profiles (loaded live, or loaded on demand from their NTUSER.DAT) plus the Default profile template so
+# newly created users inherit it. Machine-scope tweaks apply once; Appx removal stays current-user in this
+# build. Hives loaded on demand are cached here and unloaded together by Clear-OptiMounts.
+$script:HiveMounts = @{}   # sid -> @{ Base; MountName; NeedsUnload }
+
+function Get-OptiUserProfiles {
+    # Real user profiles under ProfileList (SID S-1-5-21-*, NTUSER.DAT present) plus the Default template.
+    $WhatIfPreference = $false
+    $result = @()
+    $plKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
+    try {
+        foreach ($sub in @(Get-ChildItem -LiteralPath $plKey -ErrorAction SilentlyContinue)) {
+            $sid = Split-Path $sub.Name -Leaf
+            if ($sid -notmatch '^S-1-5-21-') { continue }   # interactive users only (skips system SIDs)
+            if ($sid -match '\.bak$') { continue }
+            $pip = (Get-ItemProperty -LiteralPath $sub.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
+            if (-not $pip) { continue }
+            $dat = Join-Path $pip 'NTUSER.DAT'
+            if (-not (Test-Path -LiteralPath $dat)) { continue }
+            $loaded = $false
+            try { $loaded = [bool](Test-Path -LiteralPath "Registry::HKEY_USERS\$sid") } catch { }
+            $result += [pscustomobject]@{ Sid = $sid; ProfilePath = $pip; NtuserDat = $dat; IsLoaded = $loaded; IsDefault = $false }
+        }
+    } catch { Write-OptiLog "  (profile enumeration warning: $($_.Exception.Message))" 'Warning' }
+
+    $defRoot = $null
+    try { $defRoot = (Get-ItemProperty -LiteralPath $plKey -Name 'Default' -ErrorAction SilentlyContinue).Default } catch { }
+    if (-not $defRoot) { $defRoot = Join-Path $env:SystemDrive 'Users\Default' }
+    $defDat = Join-Path $defRoot 'NTUSER.DAT'
+    if (Test-Path -LiteralPath $defDat) {
+        $result += [pscustomobject]@{ Sid = 'Default'; ProfilePath = $defRoot; NtuserDat = $defDat; IsLoaded = $false; IsDefault = $true }
+    }
+    return @($result)
+}
+
+function Get-OptiHiveBase {
+    # Registry provider base path for a profile's hive (e.g. 'Registry::HKEY_USERS\<sid>'), loading it from
+    # NTUSER.DAT on demand when not already loaded. On-demand mounts are cached and released together by
+    # Clear-OptiMounts. Returns $null on a load failure.
+    param ([string]$Sid, [string]$NtuserDat)
+    $WhatIfPreference = $false
+    if ($Sid -ne 'Default' -and (Test-Path -LiteralPath "Registry::HKEY_USERS\$Sid")) {
+        return "Registry::HKEY_USERS\$Sid"   # live hive (logged-in / current user): never file-load
+    }
+    if ($script:HiveMounts.ContainsKey($Sid)) { return $script:HiveMounts[$Sid].Base }
+    if (-not (Test-Path -LiteralPath $NtuserDat)) { return $null }
+    $mountName = 'OptiW11_{0}_{1}' -f $PID, ($Sid -replace '[^A-Za-z0-9]', '_')
+    if ($mountName.Length -gt 240) { $mountName = $mountName.Substring(0, 240) }
+    & reg.exe load "HKU\$mountName" "$NtuserDat" > $null 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $base = "Registry::HKEY_USERS\$mountName"
+    $script:HiveMounts[$Sid] = @{ Base = $base; MountName = $mountName; NeedsUnload = $true }
+    return $base
+}
+
+function Clear-OptiMounts {
+    # Unloads every on-demand hive (GC first so the registry provider releases its handles before unload).
+    $WhatIfPreference = $false
+    if ($script:HiveMounts.Count -eq 0) { return }
+    [gc]::Collect(); [gc]::WaitForPendingFinalizers(); [gc]::Collect()
+    foreach ($k in @($script:HiveMounts.Keys)) {
+        $m = $script:HiveMounts[$k]
+        if (-not $m.NeedsUnload) { continue }
+        for ($i = 0; $i -lt 5; $i++) {
+            & reg.exe unload "HKU\$($m.MountName)" > $null 2>&1
+            if ($LASTEXITCODE -eq 0) { break }
+            [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Milliseconds 200
+        }
+    }
+    $script:HiveMounts = @{}
+}
+
+function ConvertTo-HiveSubPath {
+    # Strips an HKCU: prefix, returning the path relative to the user-hive root (e.g. 'Software\...').
+    param ([string]$Path)
+    return ($Path -replace '^HKCU:\\', '')
+}
+
+function Expand-AllUsersRows {
+    # Fans out User-scope registry rows across all profiles for -AllUsers (loading unloaded hives unless
+    # this is a -WhatIf dry run). Machine-scope and Appx rows pass through unchanged.
+    param ([object[]]$Rows, [switch]$WhatIf)
+
+    $profiles = @(Get-OptiUserProfiles)
+    $names = ($profiles | ForEach-Object { if ($_.IsDefault) { 'Default(template)' } else { Split-Path $_.ProfilePath -Leaf } }) -join ', '
+    Write-OptiLog ("-AllUsers: fanning out user-scope tweaks across {0} profile(s): {1}." -f $profiles.Count, $names) 'Info'
+
+    $out = @()
+    foreach ($t in $Rows) {
+        if ($t.Scope -ne 'User' -or $t.Type -ne 'Registry') { $out += $t; continue }
+        $sub = ConvertTo-HiveSubPath -Path $t.Path
+        foreach ($p in $profiles) {
+            if ($WhatIf) {
+                $base = if ($p.IsLoaded) { "Registry::HKEY_USERS\$($p.Sid)" } else { "Registry::HKEY_USERS\(NTUSER.DAT@$($p.ProfilePath))" }
+            } else {
+                $base = Get-OptiHiveBase -Sid $p.Sid -NtuserDat $p.NtuserDat
+                if (-not $base) { Write-OptiLog "  (could not load hive for '$($p.ProfilePath)' - $($t.Id) skipped for it)" 'Warning'; continue }
+            }
+            $row = $t.PSObject.Copy()
+            $label = if ($p.IsDefault) { 'Default(template)' } else { Split-Path $p.ProfilePath -Leaf }
+            $row | Add-Member -NotePropertyName IsUserHive    -NotePropertyValue $true            -Force
+            $row | Add-Member -NotePropertyName HiveSid       -NotePropertyValue $p.Sid           -Force
+            $row | Add-Member -NotePropertyName HiveNtuserDat -NotePropertyValue $p.NtuserDat     -Force
+            $row | Add-Member -NotePropertyName HiveSubPath   -NotePropertyValue $sub             -Force
+            $row | Add-Member -NotePropertyName ProfileLabel  -NotePropertyValue $label           -Force
+            $row.Path = ($base.TrimEnd('\') + '\' + $sub)
+            $out += $row
+        }
+    }
+    return @($out)
+}
+
+# =================================================================================================
+# Current-state reads (read half of the capture engine)
 # =================================================================================================
 function Get-RegistryValueState {
     # Returns Exists / Data / Kind for a single registry value without altering anything. The catalog
@@ -897,7 +1013,12 @@ function Get-TweakTargetText {
     # Short human description of what a tweak touches.
     param ($Tweak)
     switch ($Tweak.Type) {
-        'Registry' { return "$($Tweak.Path)\$($Tweak.ValueName)" }
+        'Registry' {
+            if (($Tweak.PSObject.Properties.Name -contains 'IsUserHive') -and $Tweak.IsUserHive) {
+                return "[$($Tweak.ProfileLabel)] HKU:\$($Tweak.HiveSubPath)\$($Tweak.ValueName)"
+            }
+            return "$($Tweak.Path)\$($Tweak.ValueName)"
+        }
         'Service'  { return "Service:$($Tweak.ServiceName)" }
         'Powercfg' { return "Powercfg:$($Tweak.PowercfgAction)" }
         'Appx'     { return "Appx:$($Tweak.PackageName)" }
@@ -951,14 +1072,25 @@ function Get-TweakCaptureRecord {
     switch ($Tweak.Type) {
         'Registry' {
             $state = Get-RegistryValueState -Path $Tweak.Path -ValueName $Tweak.ValueName
-            return [pscustomobject]@{
+            $rec = [pscustomobject]@{
                 Id = $Tweak.Id; Category = $Tweak.Category; Type = 'Registry'; Scope = $Tweak.Scope
                 AddOn = $Tweak.AddOn
                 Path = $Tweak.Path; ValueName = $Tweak.ValueName
                 DesiredType = $Tweak.ValueType; DesiredData = $Tweak.Data
                 PriorExists = $state.Exists; PriorData = $state.Data; PriorKind = $state.Kind
                 KeyExisted = (Test-Path -LiteralPath $Tweak.Path)
+                IsUserHive = $false
             }
+            if (($Tweak.PSObject.Properties.Name -contains 'IsUserHive') -and $Tweak.IsUserHive) {
+                # Per-profile row: store SID + NTUSER.DAT + sub-path so rollback re-targets the right hive
+                # (the concrete Path above points at a transient mount that will not exist next run).
+                $rec.IsUserHive = $true
+                $rec | Add-Member -NotePropertyName HiveSid       -NotePropertyValue $Tweak.HiveSid       -Force
+                $rec | Add-Member -NotePropertyName HiveNtuserDat -NotePropertyValue $Tweak.HiveNtuserDat -Force
+                $rec | Add-Member -NotePropertyName HiveSubPath   -NotePropertyValue $Tweak.HiveSubPath   -Force
+                $rec | Add-Member -NotePropertyName ProfileLabel  -NotePropertyValue $Tweak.ProfileLabel  -Force
+            }
+            return $rec
         }
         'Service' {
             $svc = Get-Service -Name $Tweak.ServiceName -ErrorAction SilentlyContinue
@@ -1011,26 +1143,52 @@ function ConvertTo-RegLiteral {
     }
 }
 
+function Get-RegistryRestoreLines {
+    # Core restore lines for one registry value, given a PowerShell path EXPRESSION ($PathExpr - a quoted
+    # literal like 'HKCU:\...' or a variable like $__p) and a quoted value-name literal. Shared by the
+    # literal-path and per-profile (user-hive) undo emitters.
+    param ($PathExpr, $NameLit, $Record)
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ($Record.PriorExists) {
+        $valLit = ConvertTo-RegLiteral -Kind $Record.PriorKind -Data $Record.PriorData
+        $lines.Add("if (-not (Test-Path -LiteralPath $PathExpr)) { New-Item -Path $PathExpr -Force | Out-Null }")
+        $lines.Add("New-ItemProperty -LiteralPath $PathExpr -Name $NameLit -PropertyType $($Record.PriorKind) -Value $valLit -Force | Out-Null")
+    } else {
+        $lines.Add("Remove-ItemProperty -LiteralPath $PathExpr -Name $NameLit -Force -ErrorAction SilentlyContinue")
+        if (-not $Record.KeyExisted) {
+            $lines.Add("if (Test-Path -LiteralPath $PathExpr) { `$k = Get-Item -LiteralPath $PathExpr; if (`$k.ValueCount -eq 0 -and `$k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $PathExpr -Force -ErrorAction SilentlyContinue } }")
+        }
+    }
+    return $lines
+}
+
 function New-RegistryUndoLine {
-    # PowerShell lines that restore one registry value to its captured prior state.
+    # PowerShell lines that restore one registry value to its captured prior state. For a per-profile
+    # (user-hive) record the value is restored inside that profile's hive, loading it from NTUSER.DAT on
+    # demand (via the Mount/Dismount helpers that New-UndoScriptFile embeds) and unloading it afterward.
     param ($Record)
     $lines = New-Object System.Collections.Generic.List[string]
     if ($Record.Type -ne 'Registry') {
         $lines.Add("# (skip: undo for type '$($Record.Type)' is not implemented in this build)")
         return $lines
     }
-    $pathLit = "'" + ([string]$Record.Path -replace "'", "''") + "'"
     $nameLit = "'" + ([string]$Record.ValueName -replace "'", "''") + "'"
-    if ($Record.PriorExists) {
-        $valLit = ConvertTo-RegLiteral -Kind $Record.PriorKind -Data $Record.PriorData
-        $lines.Add("if (-not (Test-Path -LiteralPath $pathLit)) { New-Item -Path $pathLit -Force | Out-Null }")
-        $lines.Add("New-ItemProperty -LiteralPath $pathLit -Name $nameLit -PropertyType $($Record.PriorKind) -Value $valLit -Force | Out-Null")
-    } else {
-        $lines.Add("Remove-ItemProperty -LiteralPath $pathLit -Name $nameLit -Force -ErrorAction SilentlyContinue")
-        if (-not $Record.KeyExisted) {
-            $lines.Add("if (Test-Path -LiteralPath $pathLit) { `$k = Get-Item -LiteralPath $pathLit; if (`$k.ValueCount -eq 0 -and `$k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $pathLit -Force -ErrorAction SilentlyContinue } }")
-        }
+
+    if (($Record.PSObject.Properties.Name -contains 'IsUserHive') -and $Record.IsUserHive) {
+        $sidLit = "'" + ([string]$Record.HiveSid -replace "'", "''") + "'"
+        $datLit = "'" + ([string]$Record.HiveNtuserDat -replace "'", "''") + "'"
+        $subLit = "'" + ([string]$Record.HiveSubPath -replace "'", "''") + "'"
+        $lines.Add("`$__m = Mount-OptiUndoHive -Sid $sidLit -NtuserDat $datLit")
+        $lines.Add("if (`$__m) {")
+        $lines.Add("    `$__p = `$__m.Base + '\' + $subLit")
+        foreach ($l in (Get-RegistryRestoreLines -PathExpr '$__p' -NameLit $nameLit -Record $Record)) { $lines.Add("    $l") }
+        $lines.Add("    Dismount-OptiUndoHive -Mount `$__m")
+        $lines.Add("} else { Write-Warning '  hive unavailable for profile [$($Record.ProfileLabel)] - skipped' }")
+        return $lines
     }
+
+    $pathLit = "'" + ([string]$Record.Path -replace "'", "''") + "'"
+    foreach ($l in (Get-RegistryRestoreLines -PathExpr $pathLit -NameLit $nameLit -Record $Record)) { $lines.Add($l) }
     return $lines
 }
 
@@ -1110,6 +1268,12 @@ function Restore-TweakRecord {
     switch ($Record.Type) {
         'Registry' {
             $path = [string]$Record.Path
+            if (($Record.PSObject.Properties.Name -contains 'IsUserHive') -and $Record.IsUserHive) {
+                # Re-target the profile's hive (loading it on demand); the stored Path is a stale mount.
+                $base = Get-OptiHiveBase -Sid $Record.HiveSid -NtuserDat $Record.HiveNtuserDat
+                if (-not $base) { Write-OptiLog "    (hive for [$($Record.ProfileLabel)] unavailable - $($Record.Id) not restored)" 'Warning'; return }
+                $path = ($base.TrimEnd('\') + '\' + $Record.HiveSubPath)
+            }
             $name = [string]$Record.ValueName
             if ($Record.PriorExists) {
                 if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
@@ -1166,6 +1330,34 @@ function New-UndoScriptFile {
     [void]$sb.AppendLine("  Run in an ELEVATED Windows PowerShell (HKLM changes require administrator).")
     [void]$sb.AppendLine("#>")
     [void]$sb.AppendLine("`$ErrorActionPreference = 'Continue'")
+
+    # When any record targets a per-profile hive, embed the mount/unmount helpers it needs.
+    $hasUserHive = @($Records | Where-Object { ($_.PSObject.Properties.Name -contains 'IsUserHive') -and $_.IsUserHive }).Count -gt 0
+    if ($hasUserHive) {
+        $helper = @'
+
+function Mount-OptiUndoHive {
+    param($Sid, $NtuserDat)
+    if ($Sid -ne 'Default' -and (Test-Path -LiteralPath "Registry::HKEY_USERS\$Sid")) {
+        return @{ Base = "Registry::HKEY_USERS\$Sid"; Name = $null }
+    }
+    if (-not (Test-Path -LiteralPath $NtuserDat)) { return $null }
+    $n = 'OptiUndo_' + ($Sid -replace '[^A-Za-z0-9]', '_')
+    & reg.exe load "HKU\$n" "$NtuserDat" > $null 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return @{ Base = "Registry::HKEY_USERS\$n"; Name = $n }
+}
+function Dismount-OptiUndoHive {
+    param($Mount)
+    if ($Mount -and $Mount.Name) {
+        [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+        & reg.exe unload "HKU\$($Mount.Name)" > $null 2>&1
+    }
+}
+'@
+        [void]$sb.AppendLine($helper)
+    }
+
     [void]$sb.AppendLine("Write-Host 'Undoing Optimize-Windows11 snapshot $Stamp ($Segment segment)...'")
     foreach ($r in $Records) {
         [void]$sb.AppendLine("")
@@ -1394,7 +1586,8 @@ function Invoke-ApplyMode {
 
     $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming)
     $addons = @(); if ($IncludeAI -or $Level -eq 'Full') { $addons += 'AI' }; if ($IncludeGaming -or $Level -eq 'Full') { $addons += 'Gaming' }
-    $suffix = if ($addons) { " (+$($addons -join ', +'))" } else { '' }
+    $tags = @(); if ($addons) { $tags += ($addons | ForEach-Object { "+$_" }) }; if ($AllUsers) { $tags += 'all-users' }
+    $suffix = if ($tags) { " ($($tags -join ', '))" } else { '' }
 
     if ($rows.Count -eq 0) {
         Write-OptiLog "Apply - Level '$Level'$suffix : no tweaks selected; nothing to do." 'Info'
@@ -1413,6 +1606,14 @@ function Invoke-ApplyMode {
         $resp = ''
         try { $resp = Read-Host "Type 'yes' to proceed with Full (anything else aborts)" } catch { $resp = '' }
         if ($resp -ne 'yes') { Write-OptiLog "Full aborted by user - no changes made." 'Info'; return }
+    }
+
+  try {
+    # -AllUsers: fan out user-scope registry rows across every profile (loads unloaded hives on demand,
+    # released by Clear-OptiMounts in the finally below). Machine/service/power/Appx rows are untouched.
+    if ($AllUsers) {
+        $rows = @(Expand-AllUsersRows -Rows $rows -WhatIf:$isWhatIf)
+        if ($rows.Count -eq 0) { Write-OptiLog "Apply - Level '$Level'$suffix : no applicable tweaks after profile expansion." 'Info'; return }
     }
 
     # Capture + snapshot BEFORE any change (skipped for a -WhatIf dry run). A snapshot failure throws
@@ -1456,6 +1657,9 @@ function Invoke-ApplyMode {
         Write-OptiLog "Apply complete: $applied applied, $failed failed, $skipped skipped." $lvl
         if ($failed -gt 0) { Set-OptiExit 1 }
     }
+  } finally {
+    if ($AllUsers) { Clear-OptiMounts }
+  }
 }
 
 function Invoke-PreviewMode {
@@ -1528,6 +1732,7 @@ function Invoke-RollbackMode {
         }
         $layer.Status = 'RolledBack'   # $layer is a reference into $idxState.Layers
     }
+    Clear-OptiMounts   # release any per-profile hives loaded on demand during restore
 
     # Persist status, then update manifests and archive any fully-consumed run folders.
     Save-StackIndex -State $idxState
@@ -1633,6 +1838,7 @@ try {
     Write-OptiLog "Done - exit code $script:ExitCode. Log: $script:LogFile" 'Success'
 } catch {
     Write-OptiLog "Unhandled error: $($_.Exception.Message)" 'Error'
+    if ($_.ScriptStackTrace) { Write-OptiLog "  at: $(($_.ScriptStackTrace -split "`r?`n") -join ' <- ')" 'Error' }
     Set-OptiExit 2
 }
 
