@@ -39,6 +39,11 @@ What this project adds over TBOK:
   button, disables the Edge Copilot/Discover sidebar, and removes the Copilot app (best-effort, re-registered
   from staged files on undo). Opt-in at any level, applied automatically at Full, and backed by its **own
   rollback stack** so you can peel just the AI layer off with `-Rollback -IncludeAI`.
+- **`-IncludeGaming` add-on** — enables Hardware-Accelerated GPU Scheduling, raises the games task
+  CPU/GPU/scheduling/storage-I/O priorities, and turns off Game DVR background recording. All registry,
+  fully reversible, applied on laptops and desktops alike. Opt-in at any level, automatic at Full, with its
+  **own rollback stack** (`-Rollback -IncludeGaming`). It deliberately does **not** touch the power plan
+  (Ultimate-Performance is never set) or boot parameters.
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
   per-key `.reg` backups, and a self-contained **undo `.ps1`** per segment).
@@ -54,7 +59,7 @@ What this project adds over TBOK:
 
 ### Upcoming
 
-- **Appx debloat** (remove Widgets/Bing) and the `-IncludeGaming` add-on (independently revertible).
+- **Appx debloat** (remove Widgets/Bing).
 - More Full coverage (wider service map, pagefile sizing).
 - `-AllUsers` (all profiles) and the guided `Custom` walkthrough.
 
@@ -70,14 +75,15 @@ What this project adds over TBOK:
 # Apply (elevated)
 .\Optimize-Windows11.ps1 -Level Minimal
 
-# Apply with the AI add-on (Copilot/Recall off, Copilot app removed)
-.\Optimize-Windows11.ps1 -Level Balanced -IncludeAI
+# Apply with add-ons (Copilot/Recall off, Copilot app removed; gaming priorities/HAGS/Game DVR off)
+.\Optimize-Windows11.ps1 -Level Balanced -IncludeAI -IncludeGaming
 
 # Roll back (elevated)
-.\Optimize-Windows11.ps1 -ListSnapshots      # see snapshot ids
-.\Optimize-Windows11.ps1 -Rollback           # undo the last run (Level stack)
-.\Optimize-Windows11.ps1 -Rollback -IncludeAI # peel just the AI add-on back off
-.\Optimize-Windows11.ps1 -Rollback -All      # undo everything, back to baseline
+.\Optimize-Windows11.ps1 -ListSnapshots          # see snapshot ids
+.\Optimize-Windows11.ps1 -Rollback               # undo the last run (Level stack)
+.\Optimize-Windows11.ps1 -Rollback -IncludeAI     # peel just the AI add-on back off
+.\Optimize-Windows11.ps1 -Rollback -IncludeGaming # peel just the Gaming add-on back off
+.\Optimize-Windows11.ps1 -Rollback -All          # undo everything, back to baseline
 ```
 
 ## Requirements

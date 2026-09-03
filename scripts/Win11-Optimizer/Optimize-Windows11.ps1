@@ -10,11 +10,11 @@
     prior state of everything it touches so any run can be rolled back - including layered runs, which
     unwind one step at a time.
 
-    Implemented: the Minimal / Balanced / Full tiers plus the optional -IncludeAI add-on, a hardware-aware
-    data-driven tweak catalog, live apply of registry / service / power / Appx tweaks, a VSS restore point,
-    and a stacked (LIFO) rollback with per-run, per-segment undo scripts under ProgramData. Windows Defender
-    is never weakened by any level or add-on. Still to come: the -IncludeGaming add-on, -AllUsers, and the
-    guided Custom walkthrough.
+    Implemented: the Minimal / Balanced / Full tiers plus the optional -IncludeAI / -IncludeGaming add-ons,
+    a hardware-aware data-driven tweak catalog, live apply of registry / service / power / Appx tweaks, a VSS
+    restore point, and a stacked (LIFO) rollback with per-run, per-segment undo scripts under ProgramData.
+    Windows Defender is never weakened by any level or add-on. Still to come: -AllUsers and the guided Custom
+    walkthrough.
 
 .NOTES
     Author: Wolfram Halatschek
@@ -85,7 +85,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.11.0'
+$script:ScriptVersion   = '0.12.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -608,6 +608,61 @@ function Get-TweakCatalog {
             MinLevel = $null; AddOn = 'AI'; Scope = 'User'; Risk = 'Medium'; Reversible = $true
             Impact = 'Removes the Microsoft Copilot Store app for the current user. Best-effort undo: re-registered from its staged files if still present, otherwise reinstall from the Store.'
             Type = 'Appx'; PackageName = 'Microsoft.Copilot'
+        }
+
+        # ---- Gaming add-on (-IncludeGaming; auto-applied at Full) --------------------------------
+        # All registry, all reversible; applies on laptops and desktops alike (no chassis gate). Captured
+        # into its own 'Gaming' stack so `-Rollback -IncludeGaming` peels just this add-on back off. No
+        # power-plan change (the Ultimate-Performance plan is deliberately never created/activated), no
+        # boot-parameter (bcdedit) changes, and nothing here touches Defender.
+        [pscustomobject]@{
+            Id = 'Gaming.GpuHardwareScheduling'; Name = 'Enable Hardware-Accelerated GPU Scheduling'; Category = 'Gaming'
+            MinLevel = $null; AddOn = 'Gaming'; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true
+            Impact = 'Turns on HAGS so the GPU manages its own scheduling. Needs a supported GPU/driver and a reboot to take effect.'
+            Type = 'Registry'; Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers'
+            ValueName = 'HwSchMode'; ValueType = 'DWord'; Data = 2
+        }
+        [pscustomobject]@{
+            Id = 'Gaming.GamesTaskGpuPriority'; Name = 'Raise game GPU priority'; Category = 'Gaming'
+            MinLevel = $null; AddOn = 'Gaming'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the multimedia scheduler GPU priority for games to 8 (high).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'
+            ValueName = 'GPU Priority'; ValueType = 'DWord'; Data = 8
+        }
+        [pscustomobject]@{
+            Id = 'Gaming.GamesTaskPriority'; Name = 'Raise game CPU priority'; Category = 'Gaming'
+            MinLevel = $null; AddOn = 'Gaming'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the multimedia scheduler CPU priority for games to 6 (high).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'
+            ValueName = 'Priority'; ValueType = 'DWord'; Data = 6
+        }
+        [pscustomobject]@{
+            Id = 'Gaming.GamesTaskSchedulingCategory'; Name = 'Set game scheduling category to High'; Category = 'Gaming'
+            MinLevel = $null; AddOn = 'Gaming'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Raises the games task Scheduling Category to High so games get more CPU time under load.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'
+            ValueName = 'Scheduling Category'; ValueType = 'String'; Data = 'High'
+        }
+        [pscustomobject]@{
+            Id = 'Gaming.GamesTaskSfioPriority'; Name = 'Set game storage I/O priority to High'; Category = 'Gaming'
+            MinLevel = $null; AddOn = 'Gaming'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Raises the games task SFIO (storage I/O) priority to High.'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'
+            ValueName = 'SFIO Priority'; ValueType = 'String'; Data = 'High'
+        }
+        [pscustomobject]@{
+            Id = 'Gaming.DisableGameDVR'; Name = 'Disable Game DVR (user)'; Category = 'Gaming'
+            MinLevel = $null; AddOn = 'Gaming'; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            Impact = 'Turns off background game recording (Game DVR) for the current user to cut capture overhead.'
+            Type = 'Registry'; Path = 'HKCU:\System\GameConfigStore'
+            ValueName = 'GameDVR_Enabled'; ValueType = 'DWord'; Data = 0
+        }
+        [pscustomobject]@{
+            Id = 'Gaming.DisableGameDVRPolicy'; Name = 'Disable Game DVR (machine policy)'; Category = 'Gaming'
+            MinLevel = $null; AddOn = 'Gaming'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables Game DVR / recording machine-wide via policy (AllowGameDVR=0).'
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR'
+            ValueName = 'AllowGameDVR'; ValueType = 'DWord'; Data = 0
         }
     )
 }
