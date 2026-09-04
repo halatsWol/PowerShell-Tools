@@ -51,12 +51,17 @@ change reversible.
   guided Custom**, per-run **stacked rollback** with generated undo scripts, a **VSS restore point**, and
   independently revertible **AI / Gaming** add-ons.
 - **We also skip a few TBOK items on purpose:** its OOBE-bypass keys (an imaging-time concern), obscure
-  firmware/feature-flag overrides, and leaving the System Restore throttle permanently at 0 (we set it only
-  for our own checkpoint and put it back).
+  firmware/feature-flag overrides, leaving the System Restore throttle permanently at 0 (we set it only for
+  our own checkpoint and put it back), **mass Appx debloat** (removing Widgets/Bing packages — we already
+  hide/disable them via reversible registry policy, without uninstalling anything), and an **opt-in
+  `bcdedit` engine** (boot-parameter changes are contentious and hard to reason about).
+- **Pagefile: normalized, never forced to a fixed size.** TBOK can pin a fixed pagefile; we only ensure the
+  Windows default (**automatically managed for all drives**) — a no-op on a healthy machine that simply
+  reverts a manual/fixed pagefile back to managed.
 
-**Still coming from TBOK's feature set:** Appx debloat (Widgets/Bing), pagefile sizing, and an opt-in
-`bcdedit` engine. (The scheduled-task engine — Office telemetry at Balanced, Windows telemetry/CEIP tasks
-at Full — has landed.)
+**From TBOK's feature set, now landed:** the scheduled-task engine (Office telemetry at Balanced, Windows
+telemetry/CEIP tasks at Full) and pagefile normalization. Appx mass-debloat and a `bcdedit` engine are
+**deliberately not planned** (see above).
 
 ## Features
 
@@ -68,7 +73,8 @@ at Full — has landed.)
   off in Start, consumer ads/tips off, advertising ID off, Fast Startup off, a few safe services to Manual;
   Balanced adds responsiveness/network tuning, the **suggested-apps / Start-ads cleanup**,
   background apps off, **telemetry reduced (not off)**, **Office telemetry scheduled tasks off**,
-  **desktop-only hibernation-off**, and **essential-service normalization**; **Full** does the aggressive
+  **desktop-only hibernation-off**, **pagefile normalized to Windows-managed**, and
+  **essential-service normalization**; **Full** does the aggressive
   set (telemetry fully OFF, **Windows telemetry/CEIP scheduled tasks off**, more services disabled,
   **hibernation off on all machines incl. notebooks**, WPBT/device-metadata hardening, Edge policies,
   svchost/RAM & SysMain tuning) **behind a confirmation prompt** (`-Force` to skip).
@@ -94,8 +100,9 @@ at Full — has landed.)
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
   per-key `.reg` backups, and a self-contained **undo `.ps1`** per segment).
-- Live apply of **registry, service (incl. delayed-auto), power, Appx (app removal) and scheduled-task
-  (disable-only, re-enabled on undo)** tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
+- Live apply of **registry, service (incl. delayed-auto), power, Appx (app removal), scheduled-task
+  (disable-only, re-enabled on undo) and pagefile (normalize to Windows-managed)** tweaks with `-WhatIf` /
+  `-Confirm` support and an exit-code contract.
 - Built-in **stacked rollback**: `-Rollback` (undo the last run), `-Rollback -To <id>`, `-Rollback -All`,
   and `-ListSnapshots` — repeated runs unwind one layer at a time.
 - A **VSS System Restore point** is created before each apply (skip with `-SkipRestorePoint`), as a
@@ -106,8 +113,7 @@ at Full — has landed.)
 
 ### Upcoming
 
-- **Appx debloat** (remove Widgets/Bing).
-- More Full coverage (wider service map, pagefile sizing).
+- More Full coverage (wider service map).
 
 ## Usage
 

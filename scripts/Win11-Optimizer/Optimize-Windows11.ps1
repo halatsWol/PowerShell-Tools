@@ -13,7 +13,7 @@
     Implemented: the Minimal / Balanced / Full tiers, a guided Custom walkthrough, the optional
     -IncludeAI / -IncludeGaming add-ons, -AllUsers fan-out of user-scope tweaks across every profile
     (including the Default template), a hardware-aware data-driven tweak catalog, live apply of registry /
-    service / power / Appx / scheduled-task tweaks, a VSS restore point, and a stacked (LIFO) rollback with per-run,
+    service / power / Appx / scheduled-task / pagefile tweaks, a VSS restore point, and a stacked (LIFO) rollback with per-run,
     per-segment undo scripts under ProgramData. Windows Defender is never weakened by any level or add-on.
 
 .PARAMETER Level
@@ -155,7 +155,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.17.0'
+$script:ScriptVersion   = '0.18.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -733,6 +733,14 @@ function Get-TweakCatalog {
             Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\DiskDiagnostic\'; TaskName = 'Microsoft-Windows-DiskDiagnosticDataCollector'
         }
 
+        # ---- Memory management -------------------------------------------------------------------
+        [pscustomobject]@{
+            Id = 'Performance.PagefileSystemManaged'; Name = 'Let Windows manage the pagefile'; Category = 'Performance'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Ensures the pagefile is Windows-managed (Automatically manage paging file size for all drives - the Windows default). No-op if already managed; reverts a manual/fixed pagefile back to managed. Takes effect after a reboot.'
+            Type = 'Pagefile'; PagefileAction = 'SystemManaged'
+        }
+
         # ---- Full (aggressive - behind the confirmation gate) ------------------------------------
         # NOTE: appx debloat (Widgets/Bing removal) rides on the Appx engine that arrives with the AI
         # add-on; it is not in this tier yet.
@@ -1299,6 +1307,10 @@ function Get-TweakCurrentState {
             try { $task = Get-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction SilentlyContinue } catch { }
             if ($task) { return [string]$task.State } else { return '<absent>' }
         }
+        'Pagefile' {
+            $auto = Get-PagefileAutoManaged
+            if ($auto -eq $true) { return 'windows-managed' } elseif ($auto -eq $false) { return 'manual/fixed' } else { return '<unknown>' }
+        }
         default { return '<n/a>' }
     }
 }
@@ -1312,6 +1324,7 @@ function Get-TweakDesiredText {
         'Powercfg'      { return [string]$Tweak.PowercfgAction }
         'Appx'          { return 'removed' }
         'ScheduledTask' { return 'Disabled' }
+        'Pagefile'      { return 'windows-managed' }
         default         { return '' }
     }
 }
@@ -1330,13 +1343,14 @@ function Get-TweakTargetText {
         'Powercfg'      { return "Powercfg:$($Tweak.PowercfgAction)" }
         'Appx'          { return "Appx:$($Tweak.PackageName)" }
         'ScheduledTask' { return "Task:$($Tweak.TaskPath)$($Tweak.TaskName)" }
+        'Pagefile'      { return "Pagefile:auto-managed" }
         default         { return $Tweak.Id }
     }
 }
 
 # =================================================================================================
 # Capture engine + snapshot / undo-script generation
-# Captures the prior state of every selected tweak (registry / service / power / Appx / scheduled-task) and writes the
+# Captures the prior state of every selected tweak (registry / service / power / Appx / scheduled-task / pagefile) and writes the
 # per-segment undo scripts, .reg backups and stack-index entry that make a run reversible.
 # =================================================================================================
 function Get-ServiceStartupState {
@@ -1372,6 +1386,24 @@ function Get-HibernateEnabled {
     # 1 if hibernation is enabled, 0 if disabled, $null if unknown.
     $he = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -Name 'HibernateEnabled' -ErrorAction SilentlyContinue).HibernateEnabled
     if ($null -ne $he) { return [int]$he } else { return $null }
+}
+
+$script:PagefileRegPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management'
+
+function Get-PagefileAutoManaged {
+    # $true when Windows is automatically managing the pagefile for all drives (the default), $false when
+    # a manual/fixed pagefile is configured, $null if it cannot be read.
+    try { return [bool](Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).AutomaticManagedPagefile } catch { return $null }
+}
+
+function Set-PagefileAutoManaged {
+    # Turns the 'Automatically manage paging file size for all drives' flag on/off. Needs elevation and
+    # SeCreatePagefilePrivilege; the WMI path with -EnableAllPrivileges is the reliable one on PowerShell
+    # 5.1. Takes effect on the next reboot.
+    param ([bool]$Enabled)
+    $cs = Get-WmiObject -Class Win32_ComputerSystem -EnableAllPrivileges -ErrorAction Stop
+    $cs.AutomaticManagedPagefile = $Enabled
+    [void]$cs.Put()
 }
 
 function Get-TweakCaptureRecord {
@@ -1444,6 +1476,20 @@ function Get-TweakCaptureRecord {
                 TaskPath = $Tweak.TaskPath; TaskName = $Tweak.TaskName
                 TaskExists = [bool]$task
                 PriorState = $(if ($task) { [string]$task.State } else { $null })
+            }
+        }
+        'Pagefile' {
+            # Capture both the auto-manage flag and the raw PagingFiles value so a manual config can be
+            # reconstituted exactly on undo (the flag alone would not restore the fixed sizes).
+            $pf = Get-RegistryValueState -Path $script:PagefileRegPath -ValueName 'PagingFiles'
+            return [pscustomobject]@{
+                Id = $Tweak.Id; Category = $Tweak.Category; Type = 'Pagefile'; Scope = $Tweak.Scope
+                AddOn = $Tweak.AddOn
+                PagefileAction = $Tweak.PagefileAction
+                PriorAutoManaged = (Get-PagefileAutoManaged)
+                PriorPagingFilesExists = $pf.Exists
+                PriorPagingFiles = $pf.Data
+                PriorPagingFilesKind = $pf.Kind
             }
         }
         default { throw "Capture for tweak type '$($Tweak.Type)' is not implemented in this build." }
@@ -1582,6 +1628,27 @@ function New-ScheduledTaskUndoLine {
     return $lines
 }
 
+function New-PagefileUndoLine {
+    # PowerShell line(s) that restore the captured pagefile config (auto-manage flag, plus the raw
+    # PagingFiles value when the prior config was manual). The flag change needs a reboot to take effect.
+    param ($Record)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $regLit = "'" + ($script:PagefileRegPath -replace "'", "''") + "'"
+    if ($Record.PriorAutoManaged -eq $true) {
+        $lines.Add("try { `$cs = Get-WmiObject -Class Win32_ComputerSystem -EnableAllPrivileges -ErrorAction Stop; `$cs.AutomaticManagedPagefile = `$true; [void]`$cs.Put() } catch { Write-Warning '  could not restore Windows-managed pagefile.' }")
+    } elseif ($Record.PriorAutoManaged -eq $false) {
+        $lines.Add("try { `$cs = Get-WmiObject -Class Win32_ComputerSystem -EnableAllPrivileges -ErrorAction Stop; `$cs.AutomaticManagedPagefile = `$false; [void]`$cs.Put() } catch { Write-Warning '  could not restore manual pagefile flag.' }")
+        if ($Record.PriorPagingFilesExists) {
+            $items = @(@($Record.PriorPagingFiles) | ForEach-Object { "'" + ([string]$_ -replace "'", "''") + "'" })
+            $arrLit = '@(' + ($items -join ', ') + ')'
+            $lines.Add("New-ItemProperty -LiteralPath $regLit -Name 'PagingFiles' -PropertyType MultiString -Value ([string[]]$arrLit) -Force | Out-Null")
+        }
+    } else {
+        $lines.Add("# pagefile auto-manage state was unknown at capture - nothing to undo")
+    }
+    return $lines
+}
+
 function New-UndoLine {
     # Dispatches undo-line generation by record type.
     param ($Record)
@@ -1591,6 +1658,7 @@ function New-UndoLine {
         'Powercfg'      { return (New-PowercfgUndoLine -Record $Record) }
         'Appx'          { return (New-AppxUndoLine -Record $Record) }
         'ScheduledTask' { return (New-ScheduledTaskUndoLine -Record $Record) }
+        'Pagefile'      { return (New-PagefileUndoLine -Record $Record) }
         default         { $l = New-Object System.Collections.Generic.List[string]; $l.Add("# (undo for type '$($Record.Type)' not implemented)"); return $l }
     }
 }
@@ -1656,6 +1724,21 @@ function Restore-TweakRecord {
                     try { Enable-ScheduledTask -TaskPath $Record.TaskPath -TaskName $Record.TaskName -ErrorAction Stop | Out-Null } catch { }
                 }
             }
+        }
+        'Pagefile' {
+            # Restore the exact prior pagefile config. If it was already auto-managed, just re-assert that.
+            # If it was manual, turn auto-manage off and put the captured PagingFiles value back (auto=off
+            # first, so PagingFiles becomes authoritative), reconstituting the fixed config on reboot.
+            try {
+                if ($Record.PriorAutoManaged -eq $true) {
+                    Set-PagefileAutoManaged -Enabled $true
+                } elseif ($Record.PriorAutoManaged -eq $false) {
+                    Set-PagefileAutoManaged -Enabled $false
+                    if ($Record.PriorPagingFilesExists) {
+                        New-ItemProperty -LiteralPath $script:PagefileRegPath -Name 'PagingFiles' -PropertyType MultiString -Value ([string[]]$Record.PriorPagingFiles) -Force | Out-Null
+                    }
+                }
+            } catch { Write-OptiLog "    could not restore prior pagefile config: $($_.Exception.Message)" 'Warning' }
         }
         default { throw "Undo for type '$($Record.Type)' is not implemented in this build." }
     }
@@ -1926,6 +2009,15 @@ function Invoke-TweakApply {
             if (-not $task) { Write-OptiLog "  (scheduled task '$($Tweak.TaskPath)$($Tweak.TaskName)' not present - skipped)" 'Info'; return $true }
             if ([string]$task.State -eq 'Disabled') { return $true }
             Disable-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction Stop | Out-Null
+            return $true
+        }
+        'Pagefile' {
+            # Only 'SystemManaged' is supported: ensure Windows manages the pagefile for all drives.
+            # Idempotent (already-managed = nothing to do); the change takes effect on the next reboot.
+            if ($Tweak.PagefileAction -ne 'SystemManaged') { throw "Unknown Pagefile action '$($Tweak.PagefileAction)'." }
+            if ((Get-PagefileAutoManaged) -eq $true) { Write-OptiLog "  (pagefile is already Windows-managed - nothing to do)" 'Info'; return $true }
+            Set-PagefileAutoManaged -Enabled $true
+            Write-OptiLog "  (pagefile set to Windows-managed - a reboot is required for it to take effect)" 'Info'
             return $true
         }
         default { throw "Apply for tweak type '$($Tweak.Type)' is not implemented in this build." }
