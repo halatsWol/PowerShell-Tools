@@ -63,9 +63,9 @@ engine (e.g. Office telemetry tasks), and an opt-in `bcdedit` engine.
 
 - `-Level Minimal|Balanced|Full|Custom` selection.
   Minimal: Explorer/UI quality-of-life (no content-scan folder views, compact view, separate Explorer
-  process, Quick Access recents off, feeds/Chat button off, visual-effects-for-performance), consumer
-  ads/tips off, advertising ID off, Fast Startup off, a few safe services to Manual; Balanced adds
-  responsiveness/network tuning, Bing/web-search off, the **suggested-apps / Start-ads cleanup**,
+  process, Quick Access recents off, feeds/Chat button off, visual-effects-for-performance), Bing/web-search
+  off in Start, consumer ads/tips off, advertising ID off, Fast Startup off, a few safe services to Manual;
+  Balanced adds responsiveness/network tuning, the **suggested-apps / Start-ads cleanup**,
   background apps off, **telemetry reduced (not off)**, **desktop-only hibernation-off**, and
   **essential-service normalization**; **Full** does the aggressive set (telemetry fully OFF, more
   services disabled, **hibernation off on all machines incl. notebooks**, WPBT/device-metadata hardening,

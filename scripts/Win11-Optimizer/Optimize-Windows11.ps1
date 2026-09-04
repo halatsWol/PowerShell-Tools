@@ -155,7 +155,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.16.0'
+$script:ScriptVersion   = '0.16.1'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -573,14 +573,14 @@ function Get-TweakCatalog {
         }
         [pscustomobject]@{
             Id = 'Privacy.DisableBingSearch'; Name = 'Disable Bing in Start search'; Category = 'Privacy'
-            MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
             Impact = 'Stops the Start menu / search box from sending queries to Bing.'
             Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
             ValueName = 'BingSearchEnabled'; ValueType = 'DWord'; Data = 0
         }
         [pscustomobject]@{
             Id = 'Privacy.DisableSearchSuggestions'; Name = 'Disable web search suggestions'; Category = 'Privacy'
-            MinLevel = 'Balanced'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
             Impact = 'Turns off web/search-box suggestions in the Start menu.'
             Type = 'Registry'; Path = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
             ValueName = 'DisableSearchBoxSuggestions'; ValueType = 'DWord'; Data = 1
