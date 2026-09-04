@@ -54,8 +54,9 @@ change reversible.
   firmware/feature-flag overrides, and leaving the System Restore throttle permanently at 0 (we set it only
   for our own checkpoint and put it back).
 
-**Still coming from TBOK's feature set:** Appx debloat (Widgets/Bing), pagefile sizing, a scheduled-task
-engine (e.g. Office telemetry tasks), and an opt-in `bcdedit` engine.
+**Still coming from TBOK's feature set:** Appx debloat (Widgets/Bing), pagefile sizing, and an opt-in
+`bcdedit` engine. (The scheduled-task engine — Office telemetry at Balanced, Windows telemetry/CEIP tasks
+at Full — has landed.)
 
 ## Features
 
@@ -66,10 +67,11 @@ engine (e.g. Office telemetry tasks), and an opt-in `bcdedit` engine.
   process, Quick Access recents off, feeds/Chat button off, visual-effects-for-performance), Bing/web-search
   off in Start, consumer ads/tips off, advertising ID off, Fast Startup off, a few safe services to Manual;
   Balanced adds responsiveness/network tuning, the **suggested-apps / Start-ads cleanup**,
-  background apps off, **telemetry reduced (not off)**, **desktop-only hibernation-off**, and
-  **essential-service normalization**; **Full** does the aggressive set (telemetry fully OFF, more
-  services disabled, **hibernation off on all machines incl. notebooks**, WPBT/device-metadata hardening,
-  Edge policies, svchost/RAM & SysMain tuning) **behind a confirmation prompt** (`-Force` to skip).
+  background apps off, **telemetry reduced (not off)**, **Office telemetry scheduled tasks off**,
+  **desktop-only hibernation-off**, and **essential-service normalization**; **Full** does the aggressive
+  set (telemetry fully OFF, **Windows telemetry/CEIP scheduled tasks off**, more services disabled,
+  **hibernation off on all machines incl. notebooks**, WPBT/device-metadata hardening, Edge policies,
+  svchost/RAM & SysMain tuning) **behind a confirmation prompt** (`-Force` to skip).
   Defender is never touched.
 - **`-Level Custom`** — a guided, interactive walkthrough: for each category it shows every tweak's impact
   and asks how far to go (**Skip / Minimal / Balanced / Full**), then offers the AI and Gaming add-ons, then
@@ -92,8 +94,8 @@ engine (e.g. Office telemetry tasks), and an opt-in `bcdedit` engine.
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest,
   per-key `.reg` backups, and a self-contained **undo `.ps1`** per segment).
-- Live apply of **registry, service (incl. delayed-auto), power and Appx (app removal)** tweaks with
-  `-WhatIf` / `-Confirm` support and an exit-code contract.
+- Live apply of **registry, service (incl. delayed-auto), power, Appx (app removal) and scheduled-task
+  (disable-only, re-enabled on undo)** tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
 - Built-in **stacked rollback**: `-Rollback` (undo the last run), `-Rollback -To <id>`, `-Rollback -All`,
   and `-ListSnapshots` — repeated runs unwind one layer at a time.
 - A **VSS System Restore point** is created before each apply (skip with `-SkipRestorePoint`), as a

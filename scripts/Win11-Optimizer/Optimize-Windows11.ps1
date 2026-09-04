@@ -13,7 +13,7 @@
     Implemented: the Minimal / Balanced / Full tiers, a guided Custom walkthrough, the optional
     -IncludeAI / -IncludeGaming add-ons, -AllUsers fan-out of user-scope tweaks across every profile
     (including the Default template), a hardware-aware data-driven tweak catalog, live apply of registry /
-    service / power / Appx tweaks, a VSS restore point, and a stacked (LIFO) rollback with per-run,
+    service / power / Appx / scheduled-task tweaks, a VSS restore point, and a stacked (LIFO) rollback with per-run,
     per-segment undo scripts under ProgramData. Windows Defender is never weakened by any level or add-on.
 
 .PARAMETER Level
@@ -155,7 +155,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.16.1'
+$script:ScriptVersion   = '0.17.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -666,6 +666,73 @@ function Get-TweakCatalog {
         [pscustomobject]@{ Id = 'Services.NormWscSvc';     Name = 'Normalize Security Center';   Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures the Security Center service is Delayed-Auto (its default). Strengthens, never weakens.'; Type = 'Service'; ServiceName = 'wscsvc';              StartupType = 'AutomaticDelayedStart' }
         [pscustomobject]@{ Id = 'Services.NormWSearch';    Name = 'Normalize Windows Search';    Category = 'Services'; MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; Impact = 'Ensures Windows Search is Delayed-Auto (its default; no change if already correct).';           Type = 'Service'; ServiceName = 'WSearch';             StartupType = 'AutomaticDelayedStart' }
 
+        # ---- Scheduled tasks (telemetry / CEIP) --------------------------------------------------
+        # Disabled, never deleted, and each is re-enabled on rollback only if it was enabled at capture.
+        # Absent tasks (e.g. Office not installed) are skipped. Tiering mirrors the telemetry policy:
+        # Office telemetry agents at Balanced (privacy, not core Windows), the Windows telemetry/CEIP
+        # tasks only at Full - the same gate as turning diagnostic data fully off. Defender/Update/
+        # System-Restore tasks are never touched.
+        [pscustomobject]@{
+            Id = 'Tasks.OfficeTelemetryLogon'; Name = 'Disable Office telemetry agent (logon)'; Category = 'ScheduledTasks'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Office telemetry agent that runs at logon. Skipped if Office is not installed.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Office\'; TaskName = 'OfficeTelemetryAgentLogOn'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.OfficeTelemetryFallback'; Name = 'Disable Office telemetry agent (fallback)'; Category = 'ScheduledTasks'
+            MinLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Office telemetry agent fallback task. Skipped if Office is not installed.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Office\'; TaskName = 'OfficeTelemetryAgentFallBack'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.CompatAppraiser'; Name = 'Disable Compatibility Appraiser'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Medium'; Reversible = $true
+            Impact = 'Disables the Windows telemetry Compatibility Appraiser task (feeds diagnostic/compat data). Aggressive - only at Full, matching the telemetry-off policy.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\Application Experience\'; TaskName = 'Microsoft Compatibility Appraiser'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.ProgramDataUpdater'; Name = 'Disable ProgramDataUpdater'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Application Experience ProgramDataUpdater telemetry task.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\Application Experience\'; TaskName = 'ProgramDataUpdater'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.CeipConsolidator'; Name = 'Disable CEIP Consolidator'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Customer Experience Improvement Program Consolidator task.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\Customer Experience Improvement Program\'; TaskName = 'Consolidator'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.CeipUsb'; Name = 'Disable CEIP USB data task'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the CEIP USB (UsbCeip) data-collection task.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\Customer Experience Improvement Program\'; TaskName = 'UsbCeip'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.AutochkProxy'; Name = 'Disable Autochk Proxy (CEIP)'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Autochk Proxy task that collects CEIP/SQM data.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\Autochk\'; TaskName = 'Proxy'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.FeedbackDmClient'; Name = 'Disable feedback DmClient'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Feedback/Siuf DmClient diagnostic-upload task.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\Feedback\Siuf\'; TaskName = 'DmClient'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.FeedbackDmClientScenario'; Name = 'Disable feedback DmClient (scenario)'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the Feedback/Siuf DmClientOnScenarioDownload diagnostic task.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\Feedback\Siuf\'; TaskName = 'DmClientOnScenarioDownload'
+        }
+        [pscustomobject]@{
+            Id = 'Tasks.DiskDiagnosticCollector'; Name = 'Disable disk SMART data upload'; Category = 'ScheduledTasks'
+            MinLevel = 'Full'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Disables the DiskDiagnostic DATA COLLECTOR (sends SMART data to Microsoft). The disk-failure RESOLVER that warns you of a failing disk is deliberately left enabled.'
+            Type = 'ScheduledTask'; TaskPath = '\Microsoft\Windows\DiskDiagnostic\'; TaskName = 'Microsoft-Windows-DiskDiagnosticDataCollector'
+        }
+
         # ---- Full (aggressive - behind the confirmation gate) ------------------------------------
         # NOTE: appx debloat (Widgets/Bing removal) rides on the Appx engine that arrives with the AI
         # add-on; it is not in this tier yet.
@@ -923,6 +990,11 @@ function Test-IsDefenderTarget {
                 (@('Disabled', 'Manual') -contains [string]$Tweak.StartupType)) {
                 return $true
             }
+            return $false
+        }
+        'ScheduledTask' {
+            # Never disable a Defender scheduled task (defence in depth - the catalog has none).
+            if ([string]$Tweak.TaskPath -match '\\Windows Defender') { return $true }
             return $false
         }
         default { return $false }
@@ -1222,6 +1294,11 @@ function Get-TweakCurrentState {
             try { $n = @(Get-AppxPackage -Name $Tweak.PackageName -ErrorAction SilentlyContinue).Count } catch { }
             if ($n -gt 0) { return 'installed' } else { return '<absent>' }
         }
+        'ScheduledTask' {
+            $task = $null
+            try { $task = Get-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction SilentlyContinue } catch { }
+            if ($task) { return [string]$task.State } else { return '<absent>' }
+        }
         default { return '<n/a>' }
     }
 }
@@ -1232,9 +1309,10 @@ function Get-TweakDesiredText {
     switch ($Tweak.Type) {
         'Registry' { return [string]$Tweak.Data }
         'Service'  { return [string]$Tweak.StartupType }
-        'Powercfg' { return [string]$Tweak.PowercfgAction }
-        'Appx'     { return 'removed' }
-        default    { return '' }
+        'Powercfg'      { return [string]$Tweak.PowercfgAction }
+        'Appx'          { return 'removed' }
+        'ScheduledTask' { return 'Disabled' }
+        default         { return '' }
     }
 }
 
@@ -1248,16 +1326,17 @@ function Get-TweakTargetText {
             }
             return "$($Tweak.Path)\$($Tweak.ValueName)"
         }
-        'Service'  { return "Service:$($Tweak.ServiceName)" }
-        'Powercfg' { return "Powercfg:$($Tweak.PowercfgAction)" }
-        'Appx'     { return "Appx:$($Tweak.PackageName)" }
-        default    { return $Tweak.Id }
+        'Service'       { return "Service:$($Tweak.ServiceName)" }
+        'Powercfg'      { return "Powercfg:$($Tweak.PowercfgAction)" }
+        'Appx'          { return "Appx:$($Tweak.PackageName)" }
+        'ScheduledTask' { return "Task:$($Tweak.TaskPath)$($Tweak.TaskName)" }
+        default         { return $Tweak.Id }
     }
 }
 
 # =================================================================================================
 # Capture engine + snapshot / undo-script generation
-# Captures the prior state of every selected tweak (registry / service / power / Appx) and writes the
+# Captures the prior state of every selected tweak (registry / service / power / Appx / scheduled-task) and writes the
 # per-segment undo scripts, .reg backups and stack-index entry that make a run reversible.
 # =================================================================================================
 function Get-ServiceStartupState {
@@ -1354,6 +1433,17 @@ function Get-TweakCaptureRecord {
                 PackageName = $Tweak.PackageName
                 PriorInstalled = ($installed.Count -gt 0)
                 Packages = $installed
+            }
+        }
+        'ScheduledTask' {
+            $task = $null
+            try { $task = Get-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction SilentlyContinue } catch { }
+            return [pscustomobject]@{
+                Id = $Tweak.Id; Category = $Tweak.Category; Type = 'ScheduledTask'; Scope = $Tweak.Scope
+                AddOn = $Tweak.AddOn
+                TaskPath = $Tweak.TaskPath; TaskName = $Tweak.TaskName
+                TaskExists = [bool]$task
+                PriorState = $(if ($task) { [string]$task.State } else { $null })
             }
         }
         default { throw "Capture for tweak type '$($Tweak.Type)' is not implemented in this build." }
@@ -1477,21 +1567,37 @@ function New-AppxUndoLine {
     return $lines
 }
 
+function New-ScheduledTaskUndoLine {
+    # PowerShell line(s) that re-enable one scheduled task - but only if it was enabled at capture, so an
+    # undo never turns on a task the user already had off.
+    param ($Record)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $pathLit = "'" + ([string]$Record.TaskPath -replace "'", "''") + "'"
+    $nameLit = "'" + ([string]$Record.TaskName -replace "'", "''") + "'"
+    if ($Record.TaskExists -and (@('Ready', 'Running', 'Queued') -contains [string]$Record.PriorState)) {
+        $lines.Add("if (Get-ScheduledTask -TaskPath $pathLit -TaskName $nameLit -ErrorAction SilentlyContinue) { Enable-ScheduledTask -TaskPath $pathLit -TaskName $nameLit -ErrorAction SilentlyContinue | Out-Null }")
+    } else {
+        $lines.Add("# scheduled task $pathLit$nameLit was disabled or absent at capture - nothing to undo")
+    }
+    return $lines
+}
+
 function New-UndoLine {
     # Dispatches undo-line generation by record type.
     param ($Record)
     switch ($Record.Type) {
-        'Registry' { return (New-RegistryUndoLine -Record $Record) }
-        'Service'  { return (New-ServiceUndoLine -Record $Record) }
-        'Powercfg' { return (New-PowercfgUndoLine -Record $Record) }
-        'Appx'     { return (New-AppxUndoLine -Record $Record) }
-        default    { $l = New-Object System.Collections.Generic.List[string]; $l.Add("# (undo for type '$($Record.Type)' not implemented)"); return $l }
+        'Registry'      { return (New-RegistryUndoLine -Record $Record) }
+        'Service'       { return (New-ServiceUndoLine -Record $Record) }
+        'Powercfg'      { return (New-PowercfgUndoLine -Record $Record) }
+        'Appx'          { return (New-AppxUndoLine -Record $Record) }
+        'ScheduledTask' { return (New-ScheduledTaskUndoLine -Record $Record) }
+        default         { $l = New-Object System.Collections.Generic.List[string]; $l.Add("# (undo for type '$($Record.Type)' not implemented)"); return $l }
     }
 }
 
 function Restore-TweakRecord {
     # In-process twin of New-RegistryUndoLine: restores one captured record to its prior state. Used by
-    # the built-in -Rollback runner (the generated .ps1 is for standalone use). Registry only so far.
+    # the built-in -Rollback runner (the generated .ps1 is for standalone use).
     param ($Record)
     $ConfirmPreference = 'None'; $WhatIfPreference = $false
     switch ($Record.Type) {
@@ -1540,6 +1646,14 @@ function Restore-TweakRecord {
                     catch { Write-OptiLog "    could not re-register $($p.Name): $($_.Exception.Message) - reinstall it from the Store." 'Warning' }
                 } else {
                     Write-OptiLog "    staged files for $($p.Name) are gone - reinstall it from the Microsoft Store." 'Warning'
+                }
+            }
+        }
+        'ScheduledTask' {
+            # Re-enable only if the task was enabled at capture (never turn on one the user had off).
+            if ($Record.TaskExists -and (@('Ready', 'Running', 'Queued') -contains [string]$Record.PriorState)) {
+                if (Get-ScheduledTask -TaskPath $Record.TaskPath -TaskName $Record.TaskName -ErrorAction SilentlyContinue) {
+                    try { Enable-ScheduledTask -TaskPath $Record.TaskPath -TaskName $Record.TaskName -ErrorAction Stop | Out-Null } catch { }
                 }
             }
         }
@@ -1770,7 +1884,7 @@ function New-OptiSnapshot {
 # Modes
 # =================================================================================================
 function Invoke-TweakApply {
-    # Applies one tweak to the system. Returns $true on success; throws on failure. Registry only so far.
+    # Applies one tweak to the system. Returns $true on success; throws on failure.
     param ($Tweak)
     $ConfirmPreference = 'None'   # the caller already gated this via ShouldProcess
     $WhatIfPreference = $false
@@ -1804,6 +1918,14 @@ function Invoke-TweakApply {
             $pkgs = @(Get-AppxPackage -Name $Tweak.PackageName -ErrorAction SilentlyContinue)
             if ($pkgs.Count -eq 0) { Write-OptiLog "  (Appx '$($Tweak.PackageName)' not installed for this user - skipped)" 'Info'; return $true }
             foreach ($p in $pkgs) { Remove-AppxPackage -Package $p.PackageFullName -ErrorAction Stop }
+            return $true
+        }
+        'ScheduledTask' {
+            # Disable the task (never delete). Idempotent: absent task = nothing to do; already-disabled = done.
+            $task = Get-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction SilentlyContinue
+            if (-not $task) { Write-OptiLog "  (scheduled task '$($Tweak.TaskPath)$($Tweak.TaskName)' not present - skipped)" 'Info'; return $true }
+            if ([string]$task.State -eq 'Disabled') { return $true }
+            Disable-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction Stop | Out-Null
             return $true
         }
         default { throw "Apply for tweak type '$($Tweak.Type)' is not implemented in this build." }
@@ -1852,7 +1974,7 @@ function Invoke-CustomWalkthrough {
     Write-Host "  [S]kip   [M]inimal (safest)   [B]alanced (recommended)   [F]ull (aggressive)"
     Write-Host ""
 
-    $orderPref = @('Explorer', 'Performance', 'Privacy', 'Network', 'Power', 'Services', 'Security', 'Update', 'Edge')
+    $orderPref = @('Explorer', 'Performance', 'Privacy', 'Network', 'Power', 'Services', 'ScheduledTasks', 'Security', 'Update', 'Edge')
     $present = @($catalog | Where-Object { -not $_.AddOn } | Select-Object -ExpandProperty Category -Unique)
     $cats = @($orderPref | Where-Object { $present -contains $_ }) + @($present | Where-Object { $orderPref -notcontains $_ })
 
