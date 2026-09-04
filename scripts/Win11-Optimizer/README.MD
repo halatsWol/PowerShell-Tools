@@ -145,8 +145,8 @@ controlled or bare-metal test, so treat the figures as **relative trends, not pr
 sample CPU, free RAM (WMI `FreePhysicalMemory`, cross-checked against the hypervisor's
 `Guest/RAM/Usage/Free` — the two agreed to within ~1%), process count and disk-time every 10 s for 12 min.
 The table below is the **steady 10-minute window** (after a ~2-minute post-logon ramp), **averaged over 3
-runs each** (Minimal has 1 usable run and Full 2 — the rest were lost to VM reboot/monitor timeouts).
-`Full` already includes the AI + Gaming add-ons.
+runs each** (some runs needed retries after VM reboot/monitor flakiness). `Full` already includes the
+AI + Gaming add-ons.
 
 Steady-state, lower is better:
 
@@ -154,11 +154,11 @@ Steady-state, lower is better:
 |--------------------------|------:|--------------:|----------:|-------------:|
 | Baseline (no optimization) |  58 |          2474 |       147 |          108 |
 | AI + Gaming only         |    61 |          2416 |       146 |           46 |
-| Minimal ‡                |    62 |          2619 |       146 |          113 |
+| Minimal                  |    62 |          2485 |       145 |          132† |
 | Minimal + AI + Gaming    |    54 |          2448 |       144 |          140† |
 | Balanced                 |    48 |          2395 |       141 |           54 |
 | Balanced + AI + Gaming   |    40 |          2199 |       137 |           47 |
-| Full                     |    32 |          2193 |       125 |           16 |
+| Full                     |    32 |          2197 |       126 |           25 |
 
 Improvement vs baseline (steady state):
 
@@ -180,9 +180,9 @@ Takeaways:
   activity (Game DVR off).
 
 † Disk-time is very spiky run-to-run (a single background task can spike it past 100%); only large gaps are
-meaningful. ‡ Minimal is a single run and its numbers are within noise. Boot time showed **no reliable
-trend** on this VM (run-to-run variance dwarfed any difference) and is omitted. Overall run-to-run variance
-was high — baseline steady-CPU alone ranged 48–72% across its three runs — so read every number as a trend.
+meaningful. Boot time showed **no reliable trend** on this VM (run-to-run variance dwarfed any difference)
+and is omitted. Overall run-to-run variance was high — baseline steady-CPU alone ranged 48–72% across its
+three runs — so read every number as a trend.
 
 ## Requirements
 
