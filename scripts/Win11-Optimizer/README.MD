@@ -149,48 +149,54 @@ telemetry/CEIP tasks at Full) and pagefile normalization. Appx mass-debloat and 
 A rough, **indicative** benchmark on a single VirtualBox VM (Windows 11, 8 GB RAM). This is not a
 controlled or bare-metal test, so treat the figures as **relative trends, not precise numbers**.
 
-**Method:** for each configuration — restore a clean snapshot → apply → cold reboot → then, from logon,
-sample CPU, free RAM (WMI `FreePhysicalMemory`, cross-checked against the hypervisor's
-`Guest/RAM/Usage/Free` — the two agreed to within ~1%), process count and disk-time every 10 s for 12 min.
-The table below is the **steady 10-minute window** (after a ~2-minute post-logon ramp), **averaged over 3
-runs each** (some runs needed retries after VM reboot/monitor flakiness). `Full` already includes the
-AI + Gaming add-ons.
+**Method:** for each configuration — restore a clean snapshot → apply → **cold reboot** → then, from logon,
+sample for **20 minutes** every 10 s: CPU, RAM used (WMI `TotalVisibleMemorySize − FreePhysicalMemory`),
+process count and disk-time **inside** the guest, plus **host-side** hypervisor metrics via
+`VBoxManage metrics` (the VM's CPU load and guest RAM as VirtualBox sees them — measured *outside* the guest,
+so immune to in-guest counter noise). Boot time is the Windows **event-100** (Diagnostics-Performance)
+`MainPathBootTime` for that cold boot. The tables are the **steady window** (after a ~2-minute post-logon
+ramp), **averaged over 3 runs each**. `Full` already includes the AI + Gaming add-ons.
 
 Steady-state, lower is better:
 
-| Configuration            | CPU % | RAM used (MB) | Processes | Disk-time %† |
-|--------------------------|------:|--------------:|----------:|-------------:|
-| Baseline (no optimization) |  58 |          2474 |       147 |          108 |
-| AI + Gaming only         |    61 |          2416 |       146 |           46 |
-| Minimal                  |    62 |          2485 |       145 |          132† |
-| Minimal + AI + Gaming    |    54 |          2448 |       144 |          140† |
-| Balanced                 |    48 |          2395 |       141 |           54 |
-| Balanced + AI + Gaming   |    40 |          2199 |       137 |           47 |
-| Full                     |    32 |          2197 |       126 |           25 |
+| Configuration              | CPU % | RAM used (MB) | Procs | Disk-time %† | Host VM-CPU %‡ | Boot (s)§ |
+|----------------------------|------:|--------------:|------:|-------------:|---------------:|----------:|
+| Baseline (no optimization) |    69 |          2641 |   147 |           89 |           14.8 |        40 |
+| AI + Gaming only           |    65 |          2509 |   143 |           67 |           13.8 |        52 |
+| Minimal                    |    56 |          2416 |   141 |           30 |           13.3 |        36 |
+| Minimal + AI + Gaming      |    64 |          2592 |   145 |          198 |           14.1 |        44 |
+| Balanced                   |    55 |          2412 |   142 |           69 |           11.9 |        41 |
+| Balanced + AI + Gaming     |    58 |          2441 |   141 |           80 |           12.5 |        42 |
+| Full                       |    50 |          2439 |   134 |          151 |           11.6 |        48 |
 
 Improvement vs baseline (steady state):
 
-| Configuration          | CPU  | RAM  | Processes |
-|------------------------|-----:|-----:|----------:|
-| Balanced               | −18% |  −3% |       −4% |
-| Balanced + AI + Gaming | −31% | −11% |       −7% |
-| Full                   | −45% | −11% |      −15% |
+| Configuration          | CPU (in-guest) | Host VM-CPU | RAM | Processes |
+|------------------------|---------------:|------------:|----:|----------:|
+| Minimal                |           −20% |        −10% | −9% |       −4% |
+| Balanced               |           −20% |        −20% | −9% |       −3% |
+| Balanced + AI + Gaming |           −16% |        −16% | −8% |       −4% |
+| Full                   |           −28% |        −22% | −8% |       −9% |
 
 Takeaways:
 
-- **Full** gives the largest steady-state reduction: ~45% less CPU, ~11% less RAM, ~15% fewer processes,
-  and by far the lowest disk activity.
-- **Balanced** already roughly halves background CPU (~18%) while staying far less aggressive.
-- The **AI + Gaming add-ons add real headroom on top of a tier** — Balanced + AI + Gaming cut steady CPU a
-  further ~13 points and RAM ~200 MB versus Balanced alone.
-- **Minimal** and **AI + Gaming only** sit within the VM's run-to-run noise for CPU/RAM (they are UI /
-  privacy / quality-of-life changes, not resource reducers); AI + Gaming only did noticeably cut disk
-  activity (Game DVR off).
+- **Full** gives the largest reduction — ~28% less in-guest CPU, **~22% less hypervisor CPU**, ~9% fewer
+  processes. The host-side number matters most: because it's measured outside the guest, it confirms the CPU
+  drop is real and not a guest-counter artifact.
+- **Balanced** cuts CPU ~20% (in-guest *and* hypervisor) while staying far less aggressive — the best
+  effort-to-safety trade-off.
+- **RAM** moves only ~8–9% across the board (~200 MB); these tweaks are mostly CPU/background reducers, not
+  memory savers.
+- The **AI + Gaming add-ons did *not* separate from their base tier this run** — Balanced + AI + Gaming read
+  slightly *higher* CPU than Balanced alone, which is inside the run-to-run noise (see below). Their value is
+  privacy/UX and Game-DVR-off, not a reliable steady-CPU win.
 
-† Disk-time is very spiky run-to-run (a single background task can spike it past 100%); only large gaps are
-meaningful. Boot time showed **no reliable trend** on this VM (run-to-run variance dwarfed any difference)
-and is omitted. Overall run-to-run variance was high — baseline steady-CPU alone ranged 48–72% across its
-three runs — so read every number as a trend.
+† Disk-time is extremely spiky run-to-run (a single background task spikes it past 100%, e.g. Minimal+AI+Gaming
+198%, Full 151%); treat it as noise, not signal. ‡ Host VM-CPU is VirtualBox's `CPU/Load` for the VM process
+(% of host CPU it consumes). §Boot is event-100 `MainPathBootTime`; it showed **no reliable trend** (Minimal
+36 s fastest, AI+Gaming 52 s slowed by a single 81 s outlier) — reported per request but not a dependable
+metric here. **Run-to-run variance is high** — baseline steady-CPU alone ranged 63–73% across its three runs —
+so every figure is a **trend, not a precise number**, on a loaded workstation host (not bare metal).
 
 ## Requirements
 
