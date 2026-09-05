@@ -42,6 +42,8 @@ TBOK is an excellent, fast, one-click tool. This project intentionally makes **d
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest, per-key `.reg` backups, and a self-contained **undo `.ps1`** per segment).
 - Live apply of **registry, service (incl. delayed-auto), power, Appx (app removal), scheduled-task (disable-only, re-enabled on undo) and pagefile (normalize to Windows-managed)** tweaks with `-WhatIf` / `-Confirm` support and an exit-code contract.
+- **Reduce-only, never-worse.** Tweaks that could otherwise override a setting you have *already* made more minimal are applied reduce-only: collapsing the taskbar search to an icon will not un-hide a search box you keep hidden, and Balanced will not raise telemetry above a level you have already lowered. `-Preview` shows these as `keep (reduce-only)`.
+- **Resilient to ACL-locked keys.** A registry value that is access-denied even for an elevated session (some managed-policy keys carry restrictive ACLs) is reported and skipped as `access-denied`, not counted as a run failure — one locked key no longer fails the whole run.
 - Built-in **stacked rollback**: `-Rollback` (undo the last run), `-Rollback -To <id>`, `-Rollback -All`, and `-ListSnapshots` — repeated runs unwind one layer at a time.
 - A **VSS System Restore point** is created before each apply (skip with `-SkipRestorePoint`), as a full-system safety net alongside the surgical undo.
 - **Hardware-aware selection**: tweaks can be gated by chassis (laptop/desktop), disk type or RAM, and can compute their value from the machine (used more as the catalog grows).

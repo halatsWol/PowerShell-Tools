@@ -155,7 +155,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.18.0'
+$script:ScriptVersion   = '0.19.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -361,8 +361,8 @@ function Get-TweakCatalog {
         }
         [pscustomobject]@{
             Id = 'Explorer.TaskbarSearchIcon'; Name = 'Collapse taskbar search to an icon'; Category = 'Explorer'
-            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
-            Impact = 'Shrinks the taskbar search box to a single icon to reclaim taskbar space.'
+            MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true; ReduceOnly = $true
+            Impact = 'Shrinks the taskbar search box to a single icon to reclaim taskbar space. Reduce-only: if you already hide search (or show only the icon), it is left as-is - never made more visible.'
             Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
             ValueName = 'SearchboxTaskbarMode'; ValueType = 'DWord'; Data = 1
         }
@@ -594,8 +594,8 @@ function Get-TweakCatalog {
         }
         [pscustomobject]@{
             Id = 'Privacy.ReduceTelemetry'; Name = 'Reduce telemetry to Required (not off)'; Category = 'Privacy'
-            MinLevel = 'Balanced'; MaxLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
-            Impact = 'Sets diagnostic data to the Required level (1) - NOT off - so Windows Update and the Store keep working. Full turns it fully off instead.'
+            MinLevel = 'Balanced'; MaxLevel = 'Balanced'; AddOn = $null; Scope = 'Machine'; Risk = 'Low'; Reversible = $true; ReduceOnly = $true
+            Impact = 'Sets diagnostic data to the Required level (1) - NOT off - so Windows Update and the Store keep working. Full turns it fully off instead. Reduce-only: if you have already set telemetry to 0 (Security/off), Balanced leaves it there rather than raising it to Required.'
             Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
             ValueName = 'AllowTelemetry'; ValueType = 'DWord'; Data = 1
         }
@@ -1967,30 +1967,58 @@ function New-OptiSnapshot {
 # Modes
 # =================================================================================================
 function Invoke-TweakApply {
-    # Applies one tweak to the system. Returns $true on success; throws on failure.
+    # Applies one tweak to the system. Returns a status string:
+    #   'Applied'      - a change was made
+    #   'NoChange'     - idempotent no-op (already at target, or the target isn't present on this machine)
+    #   'ReduceOnly'   - skipped because the user's current value is already at/beyond our target (reduce-only)
+    #   'AccessDenied' - a registry write was refused by the key's ACL; left unchanged (a SOFT skip, not a
+    #                    run failure - some HKCU\...\Policies keys are locked even for an elevated session)
+    # Throws on any other (hard) failure.
     param ($Tweak)
     $ConfirmPreference = 'None'   # the caller already gated this via ShouldProcess
     $WhatIfPreference = $false
     switch ($Tweak.Type) {
         'Registry' {
-            if (-not (Test-Path -LiteralPath $Tweak.Path)) { New-Item -Path $Tweak.Path -Force | Out-Null }
-            New-ItemProperty -LiteralPath $Tweak.Path -Name $Tweak.ValueName -PropertyType $Tweak.ValueType -Value $Tweak.Data -Force | Out-Null
-            return $true
+            # Reduce-only guard: never raise a DWord above a value the user has already set more-minimal.
+            # For these tweaks lower = more minimal (0 = hidden/off), so apply only when the value is absent
+            # or currently HIGHER than our target; if it's already <= target, leave the user's choice alone.
+            if (($Tweak.PSObject.Properties.Name -contains 'ReduceOnly') -and $Tweak.ReduceOnly -and $Tweak.ValueType -eq 'DWord') {
+                $cur = $null
+                try { $cur = (Get-ItemProperty -LiteralPath $Tweak.Path -Name $Tweak.ValueName -ErrorAction Stop).$($Tweak.ValueName) } catch { $cur = $null }
+                if ($null -ne $cur -and [int]$cur -le [int]$Tweak.Data) { return 'ReduceOnly' }
+            }
+            try {
+                if (-not (Test-Path -LiteralPath $Tweak.Path)) { New-Item -Path $Tweak.Path -Force -ErrorAction Stop | Out-Null }
+                New-ItemProperty -LiteralPath $Tweak.Path -Name $Tweak.ValueName -PropertyType $Tweak.ValueType -Value $Tweak.Data -Force -ErrorAction Stop | Out-Null
+            } catch {
+                # A registry write refused by the key's ACL surfaces as a terminating ProviderInvocationException
+                # that WRAPS the real UnauthorizedAccessException/SecurityException - walk the inner chain (and
+                # fall back to the message) so an ACL-locked policy key is a soft skip, not a run failure.
+                $ex = $_.Exception; $denied = $false
+                while ($ex) {
+                    if (($ex -is [System.UnauthorizedAccessException]) -or ($ex -is [System.Security.SecurityException])) { $denied = $true; break }
+                    $ex = $ex.InnerException
+                }
+                if (-not $denied -and ($_.Exception.Message -match 'unauthorized|access is denied|registry access is not allowed')) { $denied = $true }
+                if ($denied) { return 'AccessDenied' }
+                throw
+            }
+            return 'Applied'
         }
         'Service' {
             $cur = Get-ServiceStartupState -Name $Tweak.ServiceName
             if ($null -eq $cur) {
                 Write-OptiLog "  (service '$($Tweak.ServiceName)' not present - skipped)" 'Info'
-                return $true
+                return 'NoChange'
             }
-            if ($cur -eq $Tweak.StartupType) { return $true }   # normalization is idempotent: only change where it differs
+            if ($cur -eq $Tweak.StartupType) { return 'NoChange' }   # normalization is idempotent: only change where it differs
             Set-ServiceStartupState -Name $Tweak.ServiceName -Type $Tweak.StartupType
-            return $true
+            return 'Applied'
         }
         'Powercfg' {
             switch ($Tweak.PowercfgAction) {
-                'hibernate-off' { & powercfg.exe /hibernate off 2>&1 | Out-Null; return $true }
-                'hibernate-on'  { & powercfg.exe /hibernate on  2>&1 | Out-Null; return $true }
+                'hibernate-off' { & powercfg.exe /hibernate off 2>&1 | Out-Null; return 'Applied' }
+                'hibernate-on'  { & powercfg.exe /hibernate on  2>&1 | Out-Null; return 'Applied' }
                 default         { throw "Unknown Powercfg action '$($Tweak.PowercfgAction)'." }
             }
         }
@@ -1999,26 +2027,26 @@ function Invoke-TweakApply {
             # which leaves the staged files in place so undo can re-register the app. Idempotent: absent
             # package = nothing to do.
             $pkgs = @(Get-AppxPackage -Name $Tweak.PackageName -ErrorAction SilentlyContinue)
-            if ($pkgs.Count -eq 0) { Write-OptiLog "  (Appx '$($Tweak.PackageName)' not installed for this user - skipped)" 'Info'; return $true }
+            if ($pkgs.Count -eq 0) { Write-OptiLog "  (Appx '$($Tweak.PackageName)' not installed for this user - skipped)" 'Info'; return 'NoChange' }
             foreach ($p in $pkgs) { Remove-AppxPackage -Package $p.PackageFullName -ErrorAction Stop }
-            return $true
+            return 'Applied'
         }
         'ScheduledTask' {
             # Disable the task (never delete). Idempotent: absent task = nothing to do; already-disabled = done.
             $task = Get-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction SilentlyContinue
-            if (-not $task) { Write-OptiLog "  (scheduled task '$($Tweak.TaskPath)$($Tweak.TaskName)' not present - skipped)" 'Info'; return $true }
-            if ([string]$task.State -eq 'Disabled') { return $true }
+            if (-not $task) { Write-OptiLog "  (scheduled task '$($Tweak.TaskPath)$($Tweak.TaskName)' not present - skipped)" 'Info'; return 'NoChange' }
+            if ([string]$task.State -eq 'Disabled') { return 'NoChange' }
             Disable-ScheduledTask -TaskPath $Tweak.TaskPath -TaskName $Tweak.TaskName -ErrorAction Stop | Out-Null
-            return $true
+            return 'Applied'
         }
         'Pagefile' {
             # Only 'SystemManaged' is supported: ensure Windows manages the pagefile for all drives.
             # Idempotent (already-managed = nothing to do); the change takes effect on the next reboot.
             if ($Tweak.PagefileAction -ne 'SystemManaged') { throw "Unknown Pagefile action '$($Tweak.PagefileAction)'." }
-            if ((Get-PagefileAutoManaged) -eq $true) { Write-OptiLog "  (pagefile is already Windows-managed - nothing to do)" 'Info'; return $true }
+            if ((Get-PagefileAutoManaged) -eq $true) { Write-OptiLog "  (pagefile is already Windows-managed - nothing to do)" 'Info'; return 'NoChange' }
             Set-PagefileAutoManaged -Enabled $true
             Write-OptiLog "  (pagefile set to Windows-managed - a reboot is required for it to take effect)" 'Info'
-            return $true
+            return 'Applied'
         }
         default { throw "Apply for tweak type '$($Tweak.Type)' is not implemented in this build." }
     }
@@ -2183,15 +2211,19 @@ function Invoke-ApplyMode {
     }
 
     # Apply each tweak under ShouldProcess (so -WhatIf previews per tweak and -Confirm can gate each).
-    $applied = 0; $failed = 0; $skipped = 0
+    $applied = 0; $failed = 0; $skipped = 0; $noop = 0; $denied = 0
     foreach ($t in $rows) {
         $target = Get-TweakTargetText -Tweak $t
         $desired = Get-TweakDesiredText -Tweak $t
         if ($Cmdlet.ShouldProcess($target, "Set to '$desired' [$($t.Id)]")) {
             try {
-                Invoke-TweakApply -Tweak $t | Out-Null
-                $applied++
-                Write-OptiLog "applied: $($t.Id) -> $target = $desired" 'Info'
+                $res = Invoke-TweakApply -Tweak $t
+                switch ($res) {
+                    'Applied'      { $applied++; Write-OptiLog "applied: $($t.Id) -> $target = $desired" 'Info' }
+                    'ReduceOnly'   { $noop++;    Write-OptiLog "kept: $($t.Id) ($target) - your setting is already at or beyond the target (reduce-only; left unchanged)" 'Info' }
+                    'AccessDenied' { $denied++;  Write-OptiLog "access denied: $($t.Id) ($target) - this key is ACL-locked on this machine; left unchanged (not a run failure)" 'Warning' }
+                    default        { $noop++ }   # 'NoChange' (idempotent / target not present); the apply already logged its own note
+                }
             } catch {
                 $failed++
                 Write-OptiLog "FAILED: $($t.Id) ($target): $($_.Exception.Message)" 'Warning'
@@ -2205,7 +2237,11 @@ function Invoke-ApplyMode {
         Write-OptiLog "WhatIf complete: $($rows.Count) tweak(s) would be applied. Nothing changed." 'Info'
     } else {
         $lvl = if ($failed -gt 0) { 'Warning' } else { 'Success' }
-        Write-OptiLog "Apply complete: $applied applied, $failed failed, $skipped skipped." $lvl
+        $extra = ''
+        if ($noop   -gt 0) { $extra += ", $noop unchanged" }
+        if ($denied -gt 0) { $extra += ", $denied access-denied" }
+        if ($skipped -gt 0) { $extra += ", $skipped skipped" }
+        Write-OptiLog "Apply complete: $applied applied, $failed failed$extra." $lvl
         if ($failed -gt 0) { Set-OptiExit 1 }
     }
   } finally {
@@ -2223,6 +2259,12 @@ function Invoke-PreviewMode {
             $current = Get-TweakCurrentState -Tweak $t
             $desired = Get-TweakDesiredText -Tweak $t
             $flag    = if ($current -eq $desired) { 'ok' } elseif ($current -eq '<absent>') { 'new' } else { 'change' }
+            # Reduce-only tweaks won't touch a value that is already at/beyond target - show that in preview.
+            if ($flag -eq 'change' -and ($t.PSObject.Properties.Name -contains 'ReduceOnly') -and $t.ReduceOnly -and $t.ValueType -eq 'DWord') {
+                $rc = $null
+                try { $rc = (Get-ItemProperty -LiteralPath $t.Path -Name $t.ValueName -ErrorAction Stop).$($t.ValueName) } catch { $rc = $null }
+                if ($null -ne $rc -and [int]$rc -le [int]$t.Data) { $flag = 'keep (reduce-only)' }
+            }
             Write-Host ""
             Write-Host ("  [{0}/{1}] {2}" -f $tier, $t.Category, $t.Id) -ForegroundColor Cyan
             Write-Host ("      {0}" -f (Get-TweakTargetText -Tweak $t))
