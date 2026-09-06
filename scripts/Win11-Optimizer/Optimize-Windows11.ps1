@@ -33,11 +33,13 @@
     Also apply the vendor/OEM telemetry add-on: sets TELEMETRY-ONLY vendor services to Manual - Intel
     (SUR / Energy Server / Telemetry Agent / Collector / DTT-telemetry), AMD (User Experience Program
     uploader), NVIDIA (inventory-appraisal), Killer (analytics), Dell (Data Vault), HP (Touchpoint
-    Analytics). CPU/GPU rows are hardware-detected; OEM rows apply only if the service is present. Functional
-    vendor services (thermal/DTT, graphics, audio, storage, networking, FreeSync, hotkeys) are never touched.
-    Automatic at Full; opt-in at other levels. Captured into its own rollback stack (see
-    -Rollback -IncludeVendorTelemetry). (Lenovo telemetry is opt-out via a registry policy, not a service,
-    and is not covered by this add-on yet.)
+    Analytics), Dell (Data Vault), HP (Touchpoint Analytics), and Lenovo (Vantage metrics-off policy).
+    Every service row applies purely on service-presence - NOT gated by CPU/GPU vendor or device brand, since
+    vendor telemetry can be installed regardless (e.g. HP printer software on a non-HP PC); absent services
+    are skipped. The Lenovo row is the one exception (a registry policy applied only on Lenovo systems).
+    Functional vendor services (thermal/DTT, graphics,
+    audio, storage, networking, FreeSync, hotkeys, Lenovo ImController) are never touched. Automatic at Full;
+    opt-in at other levels. Captured into its own rollback stack (see -Rollback -IncludeVendorTelemetry).
 
 .PARAMETER Categories
     Restrict the run to one or more tweak categories (e.g. Explorer, Privacy, Services). Applies to Apply
@@ -170,7 +172,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.22.0'
+$script:ScriptVersion   = '0.24.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -982,19 +984,20 @@ function Get-TweakCatalog {
 
         # ---- Vendor / OEM telemetry add-on (-IncludeVendorTelemetry; auto-applied at Full) --------
         # TELEMETRY-ONLY vendor services set to Manual (never Disabled - if we ever misjudged one, it can
-        # still start on demand), captured into their own 'VendorTelemetry' stack. CPU/GPU-vendor rows are
-        # gated to the matching hardware (Intel/AMD CPU, NVIDIA/AMD GPU); OEM rows (Dell/HP) are gated only
-        # by service-presence, NOT by manufacturer, because OEM services do not imply OEM hardware (e.g. HP
-        # printer software installs HP HSA services on non-HP PCs). An absent service is simply skipped, so
-        # a row for hardware/software you don't have is a no-op. FUNCTIONAL vendor services are deliberately
+        # still start on demand), captured into their own 'VendorTelemetry' stack. Every service row is gated
+        # ONLY by service-presence (an absent service is simply skipped) - NOT by CPU/GPU vendor or device
+        # brand, because vendor telemetry can be installed regardless of the machine's hardware or brand:
+        # HP printer software drops HP telemetry on a non-HP PC, Intel/AMD component software gets installed
+        # for peripherals on any box, etc. So a present telemetry service is caught wherever it lives. FUNCTIONAL vendor services are deliberately
         # NOT here: Intel DTT/DPTF thermal (ipfsvc), graphics, audio, storage (RstMwService), HDCP (cplspcon),
         # DAL (jhi_service), PROSet/Wireless (PIEServiceNew); AMD External Events Utility (atiesrxx / FreeSync),
         # Ryzen Master, PSP, chipset; NVIDIA driver containers (NvContainer*, NVDisplay.*); Killer networking
         # (KAPS/KNDB/Network/Provider); HP HSA capability services (App Helper/Network/SysInfo - functional).
         # Nothing here is Defender-related. NOTE: only dptftcs (the DTT *Telemetry* service) is touched, never
         # the DTT thermal/power framework itself.
-        # Lenovo is intentionally absent: its telemetry rides inside functional services (ImController / System
-        # Interface Foundation) and is opt-out via a registry policy, not a service - a separate tweak, TODO.
+        # Lenovo has no telemetry SERVICE (its telemetry rides inside functional services ImController /
+        # System Interface Foundation), so it is covered by a registry-POLICY row below
+        # (TurnOffMetricsCollection), gated to Lenovo systems - the one non-service member of this add-on.
         # Service names for AMD/Dell/HP are from vendor docs + debloat tooling; if a name is off on a given
         # machine the row simply skips (Service type), and each name is distinctively telemetry (never a
         # functional service), so shipping them is safe even before hands-on verification per brand.
@@ -1002,42 +1005,36 @@ function Get-TweakCatalog {
             Id = 'Vendor.IntelDttTelemetry'; Name = 'Intel DTT Telemetry service -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets the Intel Dynamic Tuning Technology TELEMETRY service (dptftcs) to Manual. This is only the telemetry piece - the DTT/DPTF thermal & power framework itself is never touched.'
-            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
             Type = 'Service'; ServiceName = 'dptftcs'; StartupType = 'Manual'
         }
         [pscustomobject]@{
             Id = 'Vendor.IntelTelemetryAgent'; Name = 'Intel Telemetry Agent -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets the Intel(R) Telemetry Agent Service (IntelTelemetryAgent) to start on-demand instead of automatically.'
-            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
             Type = 'Service'; ServiceName = 'IntelTelemetryAgent'; StartupType = 'Manual'
         }
         [pscustomobject]@{
             Id = 'Vendor.IntelCollector'; Name = 'Intel Collector Service -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets the Intel(R) Collector Service (IntelCollectorService, data collection) to Manual.'
-            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
             Type = 'Service'; ServiceName = 'IntelCollectorService'; StartupType = 'Manual'
         }
         [pscustomobject]@{
             Id = 'Vendor.IntelEnergyServer'; Name = 'Intel Energy Server (SUR) -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets the Intel Energy Server Service (ESRV_SVC_QUEENCREEK, part of the System Usage Report) to Manual.'
-            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
             Type = 'Service'; ServiceName = 'ESRV_SVC_QUEENCREEK'; StartupType = 'Manual'
         }
         [pscustomobject]@{
             Id = 'Vendor.IntelSystemUsageReport'; Name = 'Intel System Usage Report -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets the Intel(R) System Usage Report Service (SystemUsageReportSvc_QUEENCREEK) to Manual.'
-            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
             Type = 'Service'; ServiceName = 'SystemUsageReportSvc_QUEENCREEK'; StartupType = 'Manual'
         }
         [pscustomobject]@{
             Id = 'Vendor.NvidiaInventory'; Name = 'NVIDIA inventory/appraisal -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets the NVIDIA "Inventory and Compatibility Appraisal" service (InventorySvc) to Manual. The NVIDIA display/driver containers are never touched.'
-            Condition = { param($hw) $hw.GpuVendors -contains 'NVIDIA' }
             Type = 'Service'; ServiceName = 'InventorySvc'; StartupType = 'Manual'
         }
         [pscustomobject]@{
@@ -1050,7 +1047,6 @@ function Get-TweakCatalog {
             Id = 'Vendor.AmdUserExperience'; Name = 'AMD User Experience Program uploader -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = "Sets the AMD User Experience Program data uploader (AUEPLauncher) to Manual - AMD's usage telemetry, installed by AMD Software: Adrenalin and by AMD chipset drivers. Functional AMD services (External Events Utility/atiesrxx for FreeSync, Ryzen Master, PSP, chipset) are never touched."
-            Condition = { param($hw) ($hw.CpuVendor -eq 'AMD') -or ($hw.GpuVendors -contains 'AMD') }
             Type = 'Service'; ServiceName = 'AUEPLauncher'; StartupType = 'Manual'
         }
         [pscustomobject]@{
@@ -1076,6 +1072,19 @@ function Get-TweakCatalog {
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets HP Touchpoint Analytics (HpTouchpointAnalyticsService, "HP Analytics" - sends usage data to HP) to Manual. The HP HSA capability services (App Helper / Network / System Info) are functional and are NOT touched.'
             Type = 'Service'; ServiceName = 'HpTouchpointAnalyticsService'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            # Lenovo is the exception: no telemetry SERVICE to set Manual, so this is a registry POLICY (the
+            # value Lenovo documents for Commercial Vantage). Gated to Lenovo systems; on a Lenovo box it turns
+            # off Vantage metrics reporting. Authoritative for Commercial Vantage; consumer Vantage may honour
+            # it too (unverified). Functional Lenovo services (ImController / System Interface Foundation) are
+            # never touched. Reversible via the normal snapshot.
+            Id = 'Vendor.LenovoVantageTelemetry'; Name = 'Lenovo Vantage telemetry off (policy)'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Lenovo Vantage policy TurnOffMetricsCollection=1 so Vantage reports no metrics to Lenovo. Lenovo has no telemetry service to disable, so this is a registry policy applied only on Lenovo systems (authoritative for Commercial Vantage; consumer Vantage may honour it too).'
+            Condition = { param($hw) $hw.Manufacturer -match 'Lenovo' }
+            Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Lenovo\Commercial Vantage'
+            ValueName = 'TurnOffMetricsCollection'; ValueType = 'DWord'; Data = 1
         }
     )
 }
