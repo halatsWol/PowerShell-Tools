@@ -30,11 +30,14 @@
     Automatic at Full; opt-in at other levels. Captured into its own rollback stack.
 
 .PARAMETER IncludeVendorTelemetry
-    Also apply the vendor/OEM telemetry add-on: sets TELEMETRY-ONLY vendor services (Intel SUR / Energy
-    Server / Telemetry Agent / DTT-telemetry, NVIDIA inventory-appraisal, Killer analytics) to Manual.
-    Vendor/GPU-detected, so only services for hardware actually present are touched; functional vendor
-    services (thermal/DTT, graphics, audio, storage, networking) are never touched. Automatic at Full;
-    opt-in at other levels. Captured into its own rollback stack (see -Rollback -IncludeVendorTelemetry).
+    Also apply the vendor/OEM telemetry add-on: sets TELEMETRY-ONLY vendor services to Manual - Intel
+    (SUR / Energy Server / Telemetry Agent / Collector / DTT-telemetry), AMD (User Experience Program
+    uploader), NVIDIA (inventory-appraisal), Killer (analytics), Dell (Data Vault), HP (Touchpoint
+    Analytics). CPU/GPU rows are hardware-detected; OEM rows apply only if the service is present. Functional
+    vendor services (thermal/DTT, graphics, audio, storage, networking, FreeSync, hotkeys) are never touched.
+    Automatic at Full; opt-in at other levels. Captured into its own rollback stack (see
+    -Rollback -IncludeVendorTelemetry). (Lenovo telemetry is opt-out via a registry policy, not a service,
+    and is not covered by this add-on yet.)
 
 .PARAMETER Categories
     Restrict the run to one or more tweak categories (e.g. Explorer, Privacy, Services). Applies to Apply
@@ -167,7 +170,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.20.0'
+$script:ScriptVersion   = '0.22.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -542,9 +545,9 @@ function Get-TweakCatalog {
         [pscustomobject]@{
             Id = 'Performance.VisualFxBestPerformance'; Name = 'Visual effects: adjust for best performance'; Category = 'Performance'
             MinLevel = 'Minimal'; AddOn = $null; Scope = 'User'; Risk = 'Low'; Reversible = $true
-            Impact = 'Sets the visual-effects mode to "adjust for best performance" (VisualFXSetting=3).'
+            Impact = 'Sets the visual-effects mode to "adjust for best performance" (VisualFXSetting=2 - the value the Performance Options dialog writes; 3 is Custom and does not turn effects off). Individual effects (window/taskbar animations, Aero Peek) are also handled by their own tweaks.'
             Type = 'Registry'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
-            ValueName = 'VisualFXSetting'; ValueType = 'DWord'; Data = 3
+            ValueName = 'VisualFXSetting'; ValueType = 'DWord'; Data = 2
         }
         [pscustomobject]@{
             Id = 'Performance.DisableWindowAnimations'; Name = 'Disable window minimize/maximize animations'; Category = 'Performance'
@@ -979,16 +982,22 @@ function Get-TweakCatalog {
 
         # ---- Vendor / OEM telemetry add-on (-IncludeVendorTelemetry; auto-applied at Full) --------
         # TELEMETRY-ONLY vendor services set to Manual (never Disabled - if we ever misjudged one, it can
-        # still start on demand), captured into their own 'VendorTelemetry' stack. Each row is gated to the
-        # matching hardware (Intel CPU / NVIDIA GPU); an absent service is simply skipped, so a row for
-        # hardware you don't have is a no-op. FUNCTIONAL vendor services are deliberately NOT here: Intel
-        # DTT/DPTF thermal (ipfsvc), graphics (IntelGraphicsSoftwareService), audio, storage (RstMwService),
-        # HDCP (cplspcon), DAL (jhi_service), PROSet/Wireless (PIEServiceNew); NVIDIA driver containers
-        # (NvContainer*, NVDisplay.*); Killer networking (KAPS/KNDB/Network/Provider). Nothing here is
-        # Defender-related. NOTE: only dptftcs (the DTT *Telemetry* service) is touched - never the DTT
-        # thermal/power framework itself.
-        # AMD: no AMD-CPU telemetry service is targeted yet - the exact service names need verifying on an
-        # AMD machine before shipping them (adding a wrong name could hit a functional service). TODO.
+        # still start on demand), captured into their own 'VendorTelemetry' stack. CPU/GPU-vendor rows are
+        # gated to the matching hardware (Intel/AMD CPU, NVIDIA/AMD GPU); OEM rows (Dell/HP) are gated only
+        # by service-presence, NOT by manufacturer, because OEM services do not imply OEM hardware (e.g. HP
+        # printer software installs HP HSA services on non-HP PCs). An absent service is simply skipped, so
+        # a row for hardware/software you don't have is a no-op. FUNCTIONAL vendor services are deliberately
+        # NOT here: Intel DTT/DPTF thermal (ipfsvc), graphics, audio, storage (RstMwService), HDCP (cplspcon),
+        # DAL (jhi_service), PROSet/Wireless (PIEServiceNew); AMD External Events Utility (atiesrxx / FreeSync),
+        # Ryzen Master, PSP, chipset; NVIDIA driver containers (NvContainer*, NVDisplay.*); Killer networking
+        # (KAPS/KNDB/Network/Provider); HP HSA capability services (App Helper/Network/SysInfo - functional).
+        # Nothing here is Defender-related. NOTE: only dptftcs (the DTT *Telemetry* service) is touched, never
+        # the DTT thermal/power framework itself.
+        # Lenovo is intentionally absent: its telemetry rides inside functional services (ImController / System
+        # Interface Foundation) and is opt-out via a registry policy, not a service - a separate tweak, TODO.
+        # Service names for AMD/Dell/HP are from vendor docs + debloat tooling; if a name is off on a given
+        # machine the row simply skips (Service type), and each name is distinctively telemetry (never a
+        # functional service), so shipping them is safe even before hands-on verification per brand.
         [pscustomobject]@{
             Id = 'Vendor.IntelDttTelemetry'; Name = 'Intel DTT Telemetry service -> Manual'; Category = 'VendorTelemetry'
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
@@ -1036,6 +1045,37 @@ function Get-TweakCatalog {
             MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
             Impact = 'Sets the Killer Analytics Service (usage telemetry for Killer/Rivet network adapters) to Manual. The functional Killer networking services are never touched.'
             Type = 'Service'; ServiceName = 'Killer Analytics Service'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.AmdUserExperience'; Name = 'AMD User Experience Program uploader -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = "Sets the AMD User Experience Program data uploader (AUEPLauncher) to Manual - AMD's usage telemetry, installed by AMD Software: Adrenalin and by AMD chipset drivers. Functional AMD services (External Events Utility/atiesrxx for FreeSync, Ryzen Master, PSP, chipset) are never touched."
+            Condition = { param($hw) ($hw.CpuVendor -eq 'AMD') -or ($hw.GpuVendors -contains 'AMD') }
+            Type = 'Service'; ServiceName = 'AUEPLauncher'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.DellDataVaultCollector'; Name = 'Dell Data Vault Collector -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = "Sets the Dell Data Vault Collector (DDVDataCollector) to Manual. Dell Data Vault is SupportAssist's telemetry backend (system health/usage sent to Dell); this stops its background collection. Absent unless Dell SupportAssist is installed."
+            Type = 'Service'; ServiceName = 'DDVDataCollector'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.DellDataVaultApi'; Name = 'Dell Data Vault Service API -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Dell Data Vault Service API (DDVCollectorSvcApi) to Manual (part of the Dell Data Vault telemetry stack).'
+            Type = 'Service'; ServiceName = 'DDVCollectorSvcApi'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.DellDataVaultProcessor'; Name = 'Dell Data Vault Processor -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Dell Data Vault Processor (DDVRulesProcessor) to Manual (part of the Dell Data Vault telemetry stack).'
+            Type = 'Service'; ServiceName = 'DDVRulesProcessor'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.HpTouchpointAnalytics'; Name = 'HP Touchpoint Analytics -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets HP Touchpoint Analytics (HpTouchpointAnalyticsService, "HP Analytics" - sends usage data to HP) to Manual. The HP HSA capability services (App Helper / Network / System Info) are functional and are NOT touched.'
+            Type = 'Service'; ServiceName = 'HpTouchpointAnalyticsService'; StartupType = 'Manual'
         }
     )
 }
