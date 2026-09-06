@@ -38,6 +38,7 @@ TBOK is an excellent, fast, one-click tool. This project intentionally makes **d
 - **`-Level Custom`** — a guided, interactive walkthrough: for each category it shows every tweak's impact and asks how far to go (**Skip / Minimal / Balanced / Full**), then offers the AI and Gaming add-ons, then summarises and asks you to confirm before anything is applied. Works with `-AllUsers` and the usual rollback.
 - **`-IncludeAI` add-on** — turns off Copilot and Recall (AI data analysis), hides the Copilot taskbar button, disables the Edge Copilot/Discover sidebar, and removes the Copilot app (best-effort, re-registered from staged files on undo). Opt-in at any level, applied automatically at Full, and backed by its **own rollback stack** so you can peel just the AI layer off with `-Rollback -IncludeAI`.
 - **`-IncludeGaming` add-on** — enables Hardware-Accelerated GPU Scheduling, raises the games task CPU/GPU/scheduling/storage-I/O priorities, and turns off Game DVR background recording. All registry, fully reversible, applied on laptops and desktops alike. Opt-in at any level, automatic at Full, with its **own rollback stack** (`-Rollback -IncludeGaming`). It deliberately does **not** touch the power plan (Ultimate-Performance is never set) or boot parameters.
+- **`-IncludeVendorTelemetry` add-on** — sets **telemetry-only** vendor/OEM services to Manual: Intel (System Usage Report / Energy Server, Telemetry Agent, Collector, and the DTT *telemetry* service — never the DTT/DPTF thermal framework itself), NVIDIA (the inventory/compatibility-appraisal service — never the display/driver containers), and Killer (the Analytics service — never the networking services). It is **hardware-detected** (Intel rows only on Intel CPUs, the NVIDIA row only with an NVIDIA GPU present) and only ever touches a service that actually exists, so a service you don't have is simply skipped. Functional vendor services (thermal/power, graphics, audio, storage, networking) are never touched. Manual (not Disabled) so anything mis-classified can still start on demand; fully reversible. Opt-in at any level, automatic at Full, with its **own rollback stack** (`-Rollback -IncludeVendorTelemetry`). AMD-CPU telemetry services are not targeted yet (their exact names need verifying on an AMD machine first).
 - **`-AllUsers`** — applies the user-scope (HKCU) tweaks to **every** user profile, not just the current one: profiles are patched live where loaded, or by loading their `NTUSER.DAT` on demand, plus the **Default profile template** so newly created users inherit them. Each profile's prior state is captured, so rollback reverts every profile (re-loading hives as needed). Machine/service/power tweaks still apply once; Appx removal stays current-user for now.
 - `-Preview` — list the selected tweaks and their current on-machine values (changes nothing).
 - Prior-state capture → snapshot under `%ProgramData%\Marflow Software\Win11Optimizer` (manifest, per-key `.reg` backups, and a self-contained **undo `.ps1`** per segment).
@@ -68,6 +69,9 @@ TBOK is an excellent, fast, one-click tool. This project intentionally makes **d
 # Apply with add-ons (Copilot/Recall off, Copilot app removed; gaming priorities/HAGS/Game DVR off)
 .\Optimize-Windows11.ps1 -Level Balanced -IncludeAI -IncludeGaming
 
+# Apply Balanced plus the vendor/OEM telemetry add-on (Intel/NVIDIA/Killer telemetry services -> Manual)
+.\Optimize-Windows11.ps1 -Level Balanced -IncludeVendorTelemetry
+
 # Apply user-scope tweaks to every profile (and the Default template for new users)
 .\Optimize-Windows11.ps1 -Level Minimal -AllUsers
 
@@ -79,6 +83,7 @@ TBOK is an excellent, fast, one-click tool. This project intentionally makes **d
 .\Optimize-Windows11.ps1 -Rollback               # undo the last run (Level stack)
 .\Optimize-Windows11.ps1 -Rollback -IncludeAI     # peel just the AI add-on back off
 .\Optimize-Windows11.ps1 -Rollback -IncludeGaming # peel just the Gaming add-on back off
+.\Optimize-Windows11.ps1 -Rollback -IncludeVendorTelemetry # peel just the vendor-telemetry add-on back off
 .\Optimize-Windows11.ps1 -Rollback -All          # undo everything, back to baseline
 ```
 

@@ -11,7 +11,7 @@
     unwind one step at a time.
 
     Implemented: the Minimal / Balanced / Full tiers, a guided Custom walkthrough, the optional
-    -IncludeAI / -IncludeGaming add-ons, -AllUsers fan-out of user-scope tweaks across every profile
+    -IncludeAI / -IncludeGaming / -IncludeVendorTelemetry add-ons, -AllUsers fan-out of user-scope tweaks across every profile
     (including the Default template), a hardware-aware data-driven tweak catalog, live apply of registry /
     service / power / Appx / scheduled-task / pagefile tweaks, a VSS restore point, and a stacked (LIFO) rollback with per-run,
     per-segment undo scripts under ProgramData. Windows Defender is never weakened by any level or add-on.
@@ -28,6 +28,13 @@
 .PARAMETER IncludeGaming
     Also apply the Gaming add-on (Hardware-Accelerated GPU Scheduling, game task priorities, Game DVR off).
     Automatic at Full; opt-in at other levels. Captured into its own rollback stack.
+
+.PARAMETER IncludeVendorTelemetry
+    Also apply the vendor/OEM telemetry add-on: sets TELEMETRY-ONLY vendor services (Intel SUR / Energy
+    Server / Telemetry Agent / DTT-telemetry, NVIDIA inventory-appraisal, Killer analytics) to Manual.
+    Vendor/GPU-detected, so only services for hardware actually present are touched; functional vendor
+    services (thermal/DTT, graphics, audio, storage, networking) are never touched. Automatic at Full;
+    opt-in at other levels. Captured into its own rollback stack (see -Rollback -IncludeVendorTelemetry).
 
 .PARAMETER Categories
     Restrict the run to one or more tweak categories (e.g. Explorer, Privacy, Services). Applies to Apply
@@ -52,7 +59,7 @@
 
 .PARAMETER Rollback
     Undo previously applied runs. On its own, undoes the newest Level layer; combine with -To, -All,
-    -IncludeAI or -IncludeGaming.
+    -IncludeAI, -IncludeGaming or -IncludeVendorTelemetry.
 
 .PARAMETER To
     With -Rollback: unwind Level layers from newest back to the given snapshot id (inclusive). See
@@ -80,7 +87,7 @@
 
 .EXAMPLE
     .\Optimize-Windows11.ps1 -Level Full -Force
-    Apply the aggressive Full tier (and the AI/Gaming add-ons) without the interactive prompt.
+    Apply the aggressive Full tier (and the AI / Gaming / vendor-telemetry add-ons) without the interactive prompt.
 
 .EXAMPLE
     .\Optimize-Windows11.ps1 -Rollback -All
@@ -112,6 +119,11 @@ param (
     [Parameter(ParameterSetName = 'Preview')]
     [Parameter(ParameterSetName = 'Rollback')]
     [switch]$IncludeGaming,
+
+    [Parameter(ParameterSetName = 'Apply')]
+    [Parameter(ParameterSetName = 'Preview')]
+    [Parameter(ParameterSetName = 'Rollback')]
+    [switch]$IncludeVendorTelemetry,
 
     [Parameter(ParameterSetName = 'Apply')]
     [Parameter(ParameterSetName = 'Preview')]
@@ -155,7 +167,7 @@ param (
 # =================================================================================================
 # Constants
 # =================================================================================================
-$script:ScriptVersion   = '0.19.0'
+$script:ScriptVersion   = '0.20.0'
 $script:VendorRoot       = Join-Path $env:ProgramData 'Marflow Software'
 $script:StoreRoot        = Join-Path $script:VendorRoot 'Win11Optimizer'
 $script:SnapshotsRoot    = Join-Path $script:StoreRoot 'Snapshots'
@@ -964,6 +976,67 @@ function Get-TweakCatalog {
             Type = 'Registry'; Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR'
             ValueName = 'AllowGameDVR'; ValueType = 'DWord'; Data = 0
         }
+
+        # ---- Vendor / OEM telemetry add-on (-IncludeVendorTelemetry; auto-applied at Full) --------
+        # TELEMETRY-ONLY vendor services set to Manual (never Disabled - if we ever misjudged one, it can
+        # still start on demand), captured into their own 'VendorTelemetry' stack. Each row is gated to the
+        # matching hardware (Intel CPU / NVIDIA GPU); an absent service is simply skipped, so a row for
+        # hardware you don't have is a no-op. FUNCTIONAL vendor services are deliberately NOT here: Intel
+        # DTT/DPTF thermal (ipfsvc), graphics (IntelGraphicsSoftwareService), audio, storage (RstMwService),
+        # HDCP (cplspcon), DAL (jhi_service), PROSet/Wireless (PIEServiceNew); NVIDIA driver containers
+        # (NvContainer*, NVDisplay.*); Killer networking (KAPS/KNDB/Network/Provider). Nothing here is
+        # Defender-related. NOTE: only dptftcs (the DTT *Telemetry* service) is touched - never the DTT
+        # thermal/power framework itself.
+        # AMD: no AMD-CPU telemetry service is targeted yet - the exact service names need verifying on an
+        # AMD machine before shipping them (adding a wrong name could hit a functional service). TODO.
+        [pscustomobject]@{
+            Id = 'Vendor.IntelDttTelemetry'; Name = 'Intel DTT Telemetry service -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Intel Dynamic Tuning Technology TELEMETRY service (dptftcs) to Manual. This is only the telemetry piece - the DTT/DPTF thermal & power framework itself is never touched.'
+            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
+            Type = 'Service'; ServiceName = 'dptftcs'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.IntelTelemetryAgent'; Name = 'Intel Telemetry Agent -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Intel(R) Telemetry Agent Service (IntelTelemetryAgent) to start on-demand instead of automatically.'
+            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
+            Type = 'Service'; ServiceName = 'IntelTelemetryAgent'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.IntelCollector'; Name = 'Intel Collector Service -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Intel(R) Collector Service (IntelCollectorService, data collection) to Manual.'
+            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
+            Type = 'Service'; ServiceName = 'IntelCollectorService'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.IntelEnergyServer'; Name = 'Intel Energy Server (SUR) -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Intel Energy Server Service (ESRV_SVC_QUEENCREEK, part of the System Usage Report) to Manual.'
+            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
+            Type = 'Service'; ServiceName = 'ESRV_SVC_QUEENCREEK'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.IntelSystemUsageReport'; Name = 'Intel System Usage Report -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Intel(R) System Usage Report Service (SystemUsageReportSvc_QUEENCREEK) to Manual.'
+            Condition = { param($hw) $hw.CpuVendor -eq 'Intel' }
+            Type = 'Service'; ServiceName = 'SystemUsageReportSvc_QUEENCREEK'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.NvidiaInventory'; Name = 'NVIDIA inventory/appraisal -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the NVIDIA "Inventory and Compatibility Appraisal" service (InventorySvc) to Manual. The NVIDIA display/driver containers are never touched.'
+            Condition = { param($hw) $hw.GpuVendors -contains 'NVIDIA' }
+            Type = 'Service'; ServiceName = 'InventorySvc'; StartupType = 'Manual'
+        }
+        [pscustomobject]@{
+            Id = 'Vendor.KillerAnalytics'; Name = 'Killer Analytics Service -> Manual'; Category = 'VendorTelemetry'
+            MinLevel = $null; AddOn = 'VendorTelemetry'; Scope = 'Machine'; Risk = 'Low'; Reversible = $true
+            Impact = 'Sets the Killer Analytics Service (usage telemetry for Killer/Rivet network adapters) to Manual. The functional Killer networking services are never touched.'
+            Type = 'Service'; ServiceName = 'Killer Analytics Service'; StartupType = 'Manual'
+        }
     )
 }
 
@@ -1026,6 +1099,7 @@ function Get-OptiHardware {
         IsLaptop = $false; IsDesktop = $true; ChassisTypes = @()
         OSBuild = [int][Environment]::OSVersion.Version.Build
         SystemDiskMediaType = 'Unknown'; SystemDiskIsSSD = $false
+        CpuVendor = 'Unknown'; GpuVendors = @(); Manufacturer = 'Unknown'
     }
 
     try {
@@ -1066,6 +1140,26 @@ function Get-OptiHardware {
         }
     } catch { }
 
+    # CPU vendor (Intel / AMD), GPU vendors present, and system manufacturer - used to gate vendor-specific
+    # add-on rows (e.g. Intel-only telemetry services). Best-effort; unknown => the gated rows simply skip.
+    try {
+        $cpuMak = [string]((Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1).Manufacturer)
+        if ($cpuMak -match 'Intel|GenuineIntel')      { $hw.CpuVendor = 'Intel' }
+        elseif ($cpuMak -match 'AMD|AuthenticAMD')    { $hw.CpuVendor = 'AMD' }
+        elseif ($cpuMak)                              { $hw.CpuVendor = $cpuMak }
+    } catch { }
+    try {
+        $vendors = @()
+        foreach ($g in @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue)) {
+            $gn = "$($g.Name) $($g.AdapterCompatibility)"
+            if ($gn -match 'NVIDIA') { $vendors += 'NVIDIA' }
+            if ($gn -match 'AMD|Advanced Micro Devices|Radeon') { $vendors += 'AMD' }
+            if ($gn -match 'Intel')  { $vendors += 'Intel' }
+        }
+        $hw.GpuVendors = @($vendors | Select-Object -Unique)
+    } catch { }
+    try { $hw.Manufacturer = [string]((Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).Manufacturer) } catch { }
+
     $script:HardwareFacts = $hw
     return $hw
 }
@@ -1084,21 +1178,24 @@ function Select-Tweaks {
         [string]$Level,
         [string[]]$Categories,
         [switch]$IncludeAI,
-        [switch]$IncludeGaming
+        [switch]$IncludeGaming,
+        [switch]$IncludeVendorTelemetry
     )
 
     $rank = @{ Minimal = 1; Balanced = 2; Full = 3 }
-    $wantAI     = $IncludeAI.IsPresent     -or ($Level -in @('Full', 'Custom'))
-    $wantGaming = $IncludeGaming.IsPresent -or ($Level -in @('Full', 'Custom'))
+    $wantAI              = $IncludeAI.IsPresent              -or ($Level -in @('Full', 'Custom'))
+    $wantGaming          = $IncludeGaming.IsPresent          -or ($Level -in @('Full', 'Custom'))
+    $wantVendorTelemetry = $IncludeVendorTelemetry.IsPresent -or ($Level -in @('Full', 'Custom'))
     $hw = Get-OptiHardware
 
     $selected = foreach ($t in (Get-TweakCatalog)) {
         # Level / add-on membership. A level row applies when MinLevel <= chosen level <= MaxLevel
         # (MaxLevel defaults to Full); MaxLevel lets a Balanced choice be superseded by a Full one that
         # targets the same setting (e.g. telemetry Required at Balanced vs Off at Full).
-        if ($t.AddOn -eq 'AI')          { $include = $wantAI }
-        elseif ($t.AddOn -eq 'Gaming')  { $include = $wantGaming }
-        elseif ($Level -eq 'Custom')    { $include = $true }
+        if ($t.AddOn -eq 'AI')                     { $include = $wantAI }
+        elseif ($t.AddOn -eq 'Gaming')             { $include = $wantGaming }
+        elseif ($t.AddOn -eq 'VendorTelemetry')    { $include = $wantVendorTelemetry }
+        elseif ($Level -eq 'Custom')               { $include = $true }
         else {
             $maxL = if ($t.MaxLevel) { $t.MaxLevel } else { 'Full' }
             $include = ($rank[$t.MinLevel] -le $rank[$Level]) -and ($rank[$Level] -le $rank[$maxL])
@@ -2115,7 +2212,7 @@ function Invoke-CustomWalkthrough {
         $selected += @(Select-Tweaks -Level $lvl -Categories @($cat))
     }
 
-    foreach ($addon in @('AI', 'Gaming')) {
+    foreach ($addon in @('AI', 'Gaming', 'VendorTelemetry')) {
         $aRows = @($catalog | Where-Object { $_.AddOn -eq $addon })
         if ($aRows.Count -eq 0) { continue }
         Write-Host ("-- {0} add-on --" -f $addon) -ForegroundColor Cyan
@@ -2124,7 +2221,8 @@ function Invoke-CustomWalkthrough {
         Write-Host ""
         if ($ans -eq 'Y') {
             if ($addon -eq 'AI') { $selected += @(Select-Tweaks -Level Minimal -IncludeAI -Categories @('AI')) }
-            else { $selected += @(Select-Tweaks -Level Minimal -IncludeGaming -Categories @('Gaming')) }
+            elseif ($addon -eq 'Gaming') { $selected += @(Select-Tweaks -Level Minimal -IncludeGaming -Categories @('Gaming')) }
+            else { $selected += @(Select-Tweaks -Level Minimal -IncludeVendorTelemetry -Categories @('VendorTelemetry')) }
         }
     }
 
@@ -2158,7 +2256,7 @@ function Invoke-ApplyMode {
     if ($Level -eq 'Custom') {
         $rows = @(Invoke-CustomWalkthrough -IsWhatIf:$isWhatIf)
     } else {
-        $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming)
+        $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming -IncludeVendorTelemetry:$IncludeVendorTelemetry)
     }
 
     $tags = @()
@@ -2166,6 +2264,7 @@ function Invoke-ApplyMode {
     else {
         if ($IncludeAI -or $Level -eq 'Full') { $tags += '+AI' }
         if ($IncludeGaming -or $Level -eq 'Full') { $tags += '+Gaming' }
+        if ($IncludeVendorTelemetry -or $Level -eq 'Full') { $tags += '+VendorTelemetry' }
     }
     if ($AllUsers) { $tags += 'all-users' }
     $suffix = if ($tags) { " ($($tags -join ', '))" } else { '' }
@@ -2250,7 +2349,7 @@ function Invoke-ApplyMode {
 }
 
 function Invoke-PreviewMode {
-    $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming)
+    $rows = @(Select-Tweaks -Level $Level -Categories $Categories -IncludeAI:$IncludeAI -IncludeGaming:$IncludeGaming -IncludeVendorTelemetry:$IncludeVendorTelemetry)
     Write-OptiLog "Preview - Level '$Level': $($rows.Count) tweak(s) would be evaluated (read-only; nothing changed)." 'Info'
 
     if (-not $Quiet) {
@@ -2278,7 +2377,8 @@ function Invoke-RollbackMode {
     <#
         Unwinds snapshot layers (LIFO). Default: the newest active Level layer. -To <id>: Level layers
         newest -> <id> inclusive. -All: every active layer, all stacks, newest first. -IncludeAI /
-        -IncludeGaming: the newest active AI / Gaming add-on layer (independent of the Level stack).
+        -IncludeGaming / -IncludeVendorTelemetry: the newest active layer of that add-on stack
+        (independent of the Level stack; combinable).
     #>
     $idxState = Get-StackIndex
     $active = @($idxState.Layers | Where-Object { $_.Status -eq 'Active' })
@@ -2288,8 +2388,8 @@ function Invoke-RollbackMode {
     $targets = @()
     if ($All) {
         $targets = @($active)
-    } elseif ($IncludeAI -or $IncludeGaming) {
-        $segs = @(); if ($IncludeAI) { $segs += 'AI' }; if ($IncludeGaming) { $segs += 'Gaming' }
+    } elseif ($IncludeAI -or $IncludeGaming -or $IncludeVendorTelemetry) {
+        $segs = @(); if ($IncludeAI) { $segs += 'AI' }; if ($IncludeGaming) { $segs += 'Gaming' }; if ($IncludeVendorTelemetry) { $segs += 'VendorTelemetry' }
         foreach ($s in $segs) {
             $top = @($active | Where-Object { $_.Segment -eq $s } | Sort-Object Index -Descending | Select-Object -First 1)
             if ($top.Count -eq 0) { Write-OptiLog "No active '$s' add-on layer to roll back." 'Warning' } else { $targets += $top[0] }
@@ -2302,7 +2402,7 @@ function Invoke-RollbackMode {
         $targets = @($lvlActive | Where-Object { $_.Index -ge $toIdx })
     } else {
         $top = @($active | Where-Object { $_.Segment -eq 'Level' } | Sort-Object Index -Descending | Select-Object -First 1)
-        if ($top.Count -eq 0) { Write-OptiLog "No active Level layer to roll back. Try -Rollback -All, or -IncludeAI / -IncludeGaming." 'Info'; return }
+        if ($top.Count -eq 0) { Write-OptiLog "No active Level layer to roll back. Try -Rollback -All, or -IncludeAI / -IncludeGaming / -IncludeVendorTelemetry." 'Info'; return }
         $targets = @($top[0])
     }
 
