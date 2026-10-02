@@ -12,7 +12,7 @@
 RootModule = '.\TempDataCleanup.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.7'
+ModuleVersion = '1.8'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -108,6 +108,22 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = @'
+1.8
+- Several devices are cleaned in parallel background jobs (-ThrottleLimit, default 10;
+  -DeviceTimeoutMinutes, default 90); each device reports one line when it has finished.
+- Returns one TempDataCleanup.Result object per device (status, free space, message, log file);
+  -Quiet suppresses all console output.
+- -LowDisk / -VeryLowDisk without an interactive desktop (remote/WinRM, SYSTEM), where CleanMgr never
+  completes, apply native equivalents of the CleanMgr options instead.
+- CMTrace-format log (same layout as Repair-System) named with timestamp and device name; only the
+  run's own log files are removed from the remote temp folder.
+- All targets are built from folders resolved and validated on the device; cache locations pointing at
+  key system folders or user profiles are refused.
+- Fixes: CleanMgr waits are bounded, a lost remote connection is reported as failed, locked files are
+  queued for reboot once, profiles with '[' / ']' are cleaned, -AutoClean enables its steps as documented.
+- Default package cleanup no longer touches app data (Outlook, Photos, Snipping Tool, Camera); browser
+  site data (Firefox storage, IE cookies) needs confirmation.
+
 1.7
 - Content-cache cleanup (-ContentCacheCleanup, alias -IncludeCCMCache) is now relocation-aware and
   multi-system: ConfigMgr/SCCM ccmcache (located via WMI, the Software Center COM API, the registry, or

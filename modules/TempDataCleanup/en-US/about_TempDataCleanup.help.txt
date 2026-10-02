@@ -15,19 +15,22 @@ LONG DESCRIPTION
 
     Parameters:
     -----------
-    - ComputerName (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host.
+    - ComputerName (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host. With more than one computer, all devices are cleaned in parallel background jobs; instead of step output, each device prints one line (name, additional and total free space, or the failure reason) when it has finished. Duplicates and local aliases are cleaned only once.
     - IncludeSystemData (Optional): When this switch is used, system folders (such as Windows Temp, Prefetch, and SoftwareDistribution\Download) will also be cleaned up.
     - IncludeSystemLogs (Optional): When this switch is used, system log files and reporting folders (such as C:\Windows\Logs, C:\Windows\Minidump, and the Windows Error Reporting queues) will also be cleaned up. Logs held open by Windows services are scheduled for deletion on the next reboot.
     - ContentCacheCleanup (Optional, alias IncludeCCMCache): When this switch is provided, the cleanup will also clear the content/download caches of the software-distribution systems detected on the device: ConfigMgr/SCCM (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite, and the Intune Management Extension. The ConfigMgr cache is relocation-aware (found via WMI, the Software Center COM API, the registry, or the default under the Windows directory), so a moved cache (e.g. D:\SCCMCache) is found instead of assuming C:\Windows\ccmcache.
-    - IncludeBrowserData (Optional): When this switch is used, Browser-Caches from Mozilla Firefox, Google Chrome, and Microsoft Edge will also be cleaned up.
+    - IncludeBrowserData (Optional): When this switch is used, the browser caches of Edge, Chrome, Firefox, Opera, Vivaldi, Brave and IE will also be cleaned up. Saved site data (Firefox site storage, IE cookies) is only cleared after confirming a prompt, or with -ConfirmWarning.
     - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
     - IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
     - IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
     - LowDisk (Optional): Performs a System Cleanup using CleanMgr with basic settings. Additionally performs  `IncludeSystemData`, `ContentCacheCleanup` and `IncludeIconCache`
     - VeryLowDisk (Optional): Performs a System Cleanup as with 'LowDisk' with advanced settings. Additionally clears all Recycle-Bins and runs also -AutoClean
     - AutoClean (Optional): Executes CleanMgr Upgrade Cleanup additional to `IncludeSystemData`, `ContentCacheCleanup` and `IncludeIconCache`
-    - ConfirmWarning (Optional): Bypass Confirmation when using 'VeryLowDisk'
+    - ConfirmWarning (Optional): Bypass the confirmation prompts of 'VeryLowDisk', 'IncludeAllPackages' and the browser site data of 'IncludeBrowserData', all answered with yes (for unattended runs)
     - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
+    - ThrottleLimit (Optional): Maximum number of devices cleaned at the same time when more than one computer is given (1-100, default 10). Further devices start as soon as a running one has finished.
+    - DeviceTimeoutMinutes (Optional): With more than one computer, the maximum run time per device (5-1440 minutes, default 90). A device still running after that is stopped and reported as failed.
+    - Quiet (Optional): Suppresses all console output (progress, summary lines, warnings); only errors and the returned result objects remain, e.g. for scheduled or scripted runs. Confirmation prompts are still shown, use -ConfirmWarning to bypass them.
     - Credentials (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
     This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
 
@@ -102,7 +105,7 @@ SEE ALSO
 AUTHOR
     Wolfram Halatschek
     Contact: dev@kMarflow.com
-    Date: 2026-08-15
+    Date: 2026-10-02
 
 
 COPYRIGHT
