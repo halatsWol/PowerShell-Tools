@@ -6,13 +6,14 @@ function New-Folder {
     if (-not (Test-Path -Path $FolderPath)) {New-Item -Path $FolderPath -ItemType Directory -Force > $null}
 }
 
-function Write-CleanupLog {
+function Write-CMTraceLog {
     <#
-    Appends one CMTrace-format entry (same layout as Repair-System's Write-RepairLog), so the log reads
-    cleanly in CMTrace/OneTrace with a component per step and Warning/Error highlighting. A multi-line
-    message becomes a single entry. A briefly locked file (open viewer, AV scan) is retried and the
-    function never throws - a lost log line must not abort the cleanup. Self-contained so it survives
-    being shipped to a remote session.
+    Appends one CMTrace-format entry. Identical in TempDataCleanup, Repair-System, removeUserProfile and
+    AutoDeskCleanRemove; anything tool-specific lives in wrappers that call this. A multi-line message
+    stays a single entry, and CMTrace delimiters inside it are escaped so an embedded log cannot split
+    it. A briefly locked file (open viewer, AV scan) is retried and the function never throws - a lost
+    log line must not abort the caller. Wrappers pass their own $MyInvocation as -Caller, so file= names
+    the real call site. Self-contained so it survives being shipped to a remote session or script.
     #>
     param (
         [Parameter(Mandatory=$true, Position=0)]
@@ -27,26 +28,37 @@ function Write-CleanupLog {
 
         [Parameter(Position=3)]
         [ValidateSet('Info','Warning','Error')]
-        [string]$Severity = 'Info'
+        [string]$Severity = 'Info',
+
+        [System.Management.Automation.InvocationInfo]$Caller
     )
-    $type   = @{ Info = 1; Warning = 2; Error = 3 }[$Severity]
-    $now    = Get-Date
-    $offset = [TimeZoneInfo]::Local.GetUtcOffset($now).TotalMinutes
-    $source = if ($MyInvocation.ScriptName) { Split-Path -Path $MyInvocation.ScriptName -Leaf } else { 'TempDataCleanup' }
-    $entry  = '<![LOG[{0}]LOG]!><time="{1}{2:+000;-000}" date="{3}" component="{4}" context="" type="{5}" thread="{6}" file="{7}:{8}">' -f
-        $Message, $now.ToString('HH:mm:ss.fff'), $offset, $now.ToString('MM-dd-yyyy'), $Component, $type, $PID, $source, $MyInvocation.ScriptLineNumber
+    if (-not $Caller) { $Caller = $MyInvocation }
+    $type    = @{ Info = 1; Warning = 2; Error = 3 }[$Severity]
+    $now     = Get-Date
+    $offset  = [TimeZoneInfo]::Local.GetUtcOffset($now).TotalMinutes
+    $source  = if ($Caller.ScriptName) { Split-Path -Path $Caller.ScriptName -Leaf } else {
+        # Shipped scriptblock without a file: name the nearest named function that made the call.
+        $stack = @(Get-PSCallStack)
+        $i = 0
+        while ($i -lt $stack.Count -and -not [object]::ReferenceEquals($stack[$i].InvocationInfo, $Caller)) { $i++ }
+        $named = @($stack | Select-Object -Skip ($i + 1) | Where-Object { $_.FunctionName -ne '<ScriptBlock>' })
+        if ($named.Count -gt 0) { $named[0].FunctionName } else { '<ScriptBlock>' }
+    }
+    $escaped = $Message -replace '<!\[LOG\[', '&lt;![LOG[' -replace '\]LOG\]!>', ']LOG]!&gt;'
+    $entry   = '<![LOG[{0}]LOG]!><time="{1}{2:+000;-000}" date="{3}" component="{4}" context="" type="{5}" thread="{6}" file="{7}:{8}">' -f
+        $escaped, $now.ToString('HH:mm:ss.fff'), $offset, $now.ToString('MM-dd-yyyy'), $Component, $type, $PID, $source, $Caller.ScriptLineNumber
 
     # -Encoding UTF8 skips the BOM-detection read Add-Content otherwise does, which is the open that
-    # fails on a transiently held file.
+    # fails on a transiently held file. -WhatIf:$false keeps logging active in a -WhatIf run.
     for ($i = 0; $i -lt 10; $i++) {
         try {
-            Add-Content -LiteralPath $LogPath -Value $entry -Encoding UTF8 -ErrorAction Stop
+            Add-Content -LiteralPath $LogPath -Value $entry -Encoding UTF8 -ErrorAction Stop -WhatIf:$false
             return
         } catch {
             Start-Sleep -Milliseconds 200
         }
     }
-    Write-Warning "TempDataCleanup: a log entry could not be written to '$LogPath'; continuing."
+    Write-Warning "A log entry could not be written to '$LogPath'; continuing."
 }
 
 function Get-CleanupBasePath {
@@ -132,7 +144,7 @@ function Remove-PathReliable {
 
     # 2) Whatever survived is locked - schedule the remainder for deletion at next boot.
     try {
-        Register-PendingDelete -Path $Path
+        $null = Register-PendingDelete -Path $Path
         $result.Scheduled = $true
     } catch {
         $result.Error = $_.Exception.Message
@@ -142,44 +154,47 @@ function Remove-PathReliable {
 
 function Register-PendingDelete {
     <#
-    Queues paths for deletion at the next boot via the Session Manager's PendingFileRenameOperations.
-    A directory is expanded to its contents deepest-first (enumeration works on a locked tree), so each
-    directory is empty by the time its own entry is processed; a file is queued once. The value is read
-    and written once per call and paths already queued are skipped, so callers should pass all locked
-    items of a folder together. Callers have already validated the paths (Remove-PathReliable guard).
+    Queues paths for deletion at the next boot via the Session Manager's PendingFileRenameOperations,
+    which runs before anything can load them again. A directory is expanded to its contents
+    deepest-first (enumerated through \\?\, so locked trees and paths over 260 characters work), so each
+    directory is empty by the time its own entry is processed. Entries Windows already had pending are
+    kept and paths already queued are not added twice; the value is read and written once per call, so
+    pass all locked items together. Returns the paths it added. A drive root or top-level folder is
+    never queued: such a path is reported by throwing once everything else is queued. Identical in
+    TempDataCleanup, Repair-System and AutoDeskCleanRemove; self-contained for remote shipping.
     #>
-    param(
-        [Parameter(Mandatory=$true)]
-        [string[]]$Path
-    )
+    param([Parameter(Mandatory=$true)][string[]]$Path)
     $smKey   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
     $pending = New-Object System.Collections.Generic.List[string]
     $queued  = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $current = @((Get-ItemProperty -Path $smKey -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations | Where-Object { $null -ne $_ })
     $pending.AddRange([string[]]$current)
-    # Entries are source/destination pairs; an empty destination means 'delete'.
+    # entries are source/destination pairs; an empty destination means 'delete'
     for ($i = 0; $i + 1 -lt $current.Count; $i += 2) {
         if ($current[$i + 1] -eq '') { [void]$queued.Add($current[$i]) }
     }
 
-    $added = 0
-    foreach ($root in $Path) {
-        $targets = @(if (Test-Path -LiteralPath $root -PathType Container) {
-            Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue |
-                Sort-Object { $_.FullName.Length } -Descending |
-                ForEach-Object { $_.FullName }
-        }) + $root
+    $added   = New-Object System.Collections.Generic.List[string]
+    $refused = New-Object System.Collections.Generic.List[string]
+    foreach ($item in $Path) {
+        $root = $item -replace '^\\\\\?\\', ''
+        if ($root -notmatch '^[A-Za-z]:\\[^\\]+\\[^\\]') { $refused.Add($item); continue }
+        $targets = @(Get-ChildItem -LiteralPath "\\?\$root" -Recurse -Force -ErrorAction SilentlyContinue |
+                     ForEach-Object { $_.FullName.Substring(4) } |
+                     Sort-Object { $_.Length } -Descending) + $root
         foreach ($target in $targets) {
-            if ($queued.Add('\??\' + $target)) {
-                $pending.Add('\??\' + $target)
+            if ($queued.Add("\??\$target")) {
+                $pending.Add("\??\$target")
                 $pending.Add('')
-                $added++
+                $added.Add($target)
             }
         }
     }
-    if ($added -gt 0) {
-        Set-ItemProperty -Path $smKey -Name PendingFileRenameOperations -Value $pending.ToArray() -Type MultiString
+    if ($added.Count -gt 0) {
+        Set-ItemProperty -Path $smKey -Name PendingFileRenameOperations -Value $pending.ToArray() -Type MultiString -ErrorAction Stop
     }
+    if ($refused.Count -gt 0) { throw "Refused to schedule $($refused -join ', ') for deletion: not a safe target." }
+    $added.ToArray()
 }
 
 function Clear-FolderContentsReliable {
@@ -203,11 +218,60 @@ function Clear-FolderContentsReliable {
     })
     if ($BestEffort -or $locked.Count -eq 0) { return $false }
     try {
-        Register-PendingDelete -Path $locked
+        $null = Register-PendingDelete -Path $locked
         return $true
     } catch {
         return $false
     }
+}
+
+function Clear-WindowsUpdateDownload {
+    <#
+    Empties SoftwareDistribution\Download the way Microsoft's Windows Update reset does: wuauserv and
+    BITS hold and recreate files there, so both are force-stopped first - an interrupted download is
+    simply fetched again - and afterwards only those that were running are started again. A service
+    that ignores the stop is killed only when it runs alone in its process; a shared svchost would take
+    other services with it, so its files are left to the next reboot instead. An installation in
+    progress (TiWorker.exe) is never interrupted - that can leave the component store inconsistent - but
+    waited for up to $WaitMinutes; if it is still running then, the folder's contents are queued for
+    deletion at the next boot instead, which runs before Windows Update starts and after the
+    installation has finished. Returns Deferred (anything queued for the next reboot), Postponed (why
+    the whole folder waits for the reboot) and Skipped (why nothing could be done). Self-contained apart
+    from Clear-FolderContentsReliable and Register-PendingDelete.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Folder,
+        [int]$WaitMinutes = 10
+    )
+    $deadline = (Get-Date).AddMinutes($WaitMinutes)
+    while ((Get-Process -Name 'TiWorker' -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
+    if (Get-Process -Name 'TiWorker' -ErrorAction SilentlyContinue) {
+        $reason = "an update was still being installed (TiWorker.exe) after $WaitMinutes minutes"
+        $items  = @(Get-ChildItem -LiteralPath $Folder -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        if ($items.Count -eq 0) { return [pscustomobject]@{ Deferred = $false; Postponed = $null; Skipped = $null } }
+        try {
+            $null = Register-PendingDelete -Path $items
+            return [pscustomobject]@{ Deferred = $true; Postponed = $reason; Skipped = $null }
+        } catch {
+            return [pscustomobject]@{ Deferred = $false; Postponed = $null; Skipped = "$reason, and queueing it for the next boot failed: $($_.Exception.Message)" }
+        }
+    }
+
+    $names   = 'wuauserv', 'bits'
+    $running = @(Get-Service -Name $names -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Stopped' })
+    $running | Stop-Service -Force -NoWait -ErrorAction SilentlyContinue
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and @(Get-Service -Name $names -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Stopped' }).Count) {
+        Start-Sleep -Milliseconds 500
+    }
+    foreach ($service in @(Get-CimInstance -ClassName Win32_Service -ErrorAction SilentlyContinue | Where-Object { $names -contains $_.Name -and $_.ProcessId })) {
+        $sharing = @(Get-CimInstance -ClassName Win32_Service -Filter "ProcessId=$($service.ProcessId)" -ErrorAction SilentlyContinue).Count
+        if ($sharing -eq 1) { Stop-Process -Id $service.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
+    $deferred = $false
+    try { $deferred = [bool](Clear-FolderContentsReliable -Folder $Folder) }
+    finally { $running | Start-Service -ErrorAction SilentlyContinue }
+    [pscustomobject]@{ Deferred = $deferred; Postponed = $null; Skipped = $null }
 }
 
 function New-RemoteFunctionScriptBlock {
@@ -234,80 +298,106 @@ function New-RemoteFunctionScriptBlock {
     return [scriptblock]::Create($scriptText)
 }
 
+function Get-CCMCachePath {
+    <#
+    Location of the ConfigMgr client cache (relocatable). The WMI CacheConfig class can come back empty
+    even on a healthy client, so this tries WMI -> UIResourceMgr COM (what Software Center reads) ->
+    registry CacheConfig -> the default under Windows and returns the first non-empty value. The result
+    is not validated - check it with Test-SafeCachePath before clearing it. Self-contained so it
+    survives being shipped to a remote session.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases
+    )
+    $location = $null
+    try { $location = (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop | Select-Object -First 1).Location } catch { }
+    if ([string]::IsNullOrWhiteSpace($location)) {
+        try {
+            $ui = New-Object -ComObject UIResource.UIResourceMgr
+            $location = $ui.GetCacheInfo().Location
+            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ui)
+        } catch { }
+    }
+    if ([string]::IsNullOrWhiteSpace($location)) {
+        $location = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Mobile Client\Software Distribution\CacheConfig' -Name Location -ErrorAction SilentlyContinue).Location
+    }
+    if ([string]::IsNullOrWhiteSpace($location) -and $Bases.Windows) { $location = Join-Path $Bases.Windows 'ccmcache' }
+    return $location
+}
+
+function Test-SafeCachePath {
+    <#
+    A cache location comes from WMI/COM/registry, so a misconfigured value must never empty a key
+    system folder: the path has to be absolute, at least one level below a drive root and existing, and
+    must not be the Windows directory (or System32, SysWOW64, WinSxS, servicing, Installer,
+    SoftwareDistribution below it), Program Files, ProgramData, the profiles directory or anything
+    inside a user profile. No folder-name requirement: a relocated cache can be custom-named
+    (D:\SCCMCache). Self-contained so it survives being shipped to a remote session.
+    #>
+    param(
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$Path,
+
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $normalized = $Path.TrimEnd('\')
+    if ($normalized -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
+    $protected = @(
+        $env:ProgramFiles, ${env:ProgramFiles(x86)}, $Bases.ProgramData, $Bases.Profiles
+        if ($Bases.Windows) {
+            $Bases.Windows
+            foreach ($sub in 'System32', 'SysWOW64', 'WinSxS', 'servicing', 'Installer', 'SoftwareDistribution') { Join-Path $Bases.Windows $sub }
+        }
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.TrimEnd('\') }
+    if ($protected -contains $normalized) { return $false }
+    if ($Bases.Profiles -and $normalized.StartsWith($Bases.Profiles.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return (Test-Path -LiteralPath $normalized -PathType Container)
+}
+
 function Invoke-ContentCacheCleanup {
     <#
     Clears the content/download caches of the software-distribution systems present on the device -
     ConfigMgr (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite
     (<drive>:\AdaptivaCache) and the Intune Management Extension (IMECache + Content staging). Each
-    location is auto-detected; systems that are not installed are skipped. Whatever a running agent
-    holds open is cleared best-effort now and the remainder is scheduled for deletion on the next
-    reboot (via Clear-FolderContentsReliable). Self-contained apart from the bundled helpers, so it can
-    be shipped to a remote session.
+    location is auto-detected; systems that are not installed are skipped, and a location is only
+    cleared after Test-SafeCachePath accepted it. Whatever a running agent holds open is cleared
+    best-effort now and the remainder is scheduled for deletion on the next reboot (via
+    Clear-FolderContentsReliable).
+    Returns $true when anything was deferred to the next reboot. Identical in TempDataCleanup and
+    Repair-System; self-contained apart from Get-CCMCachePath, Test-SafeCachePath and the bundled helpers,
+    so it can be shipped to a remote session.
     #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$logfile,
+        [string]$LogPath,
+
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases,
+
+        [string]$Component = 'ContentCache',
+
+        # set when a Windows Update reset of the same run clears all of SoftwareDistribution anyway
+        [switch]$SkipWindowsUpdate,
 
         [string]$TranscriptPath
     )
     if ($TranscriptPath) { Start-Transcript -Path $TranscriptPath -Append | Out-Null }
 
-    $log = @{ LogPath = $logfile; Component = 'ContentCache' }
-    Write-CleanupLog @log 'Content cache cleanup (ConfigMgr / Windows Update / Adaptiva / Intune)'
-
-    # Resolve the Windows directory from the OS itself - $env:windir can be empty in a stripped
-    # environment, and an empty base is exactly how a cleanup can end up deleting from a drive root.
-    # The result is validated, paths are only built from a validated base, and every deletion target
-    # is re-checked below, so an empty/garbage value can never reach a delete.
-    $winDir = [Environment]::GetFolderPath('Windows')
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
-    $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
-
-    # A cache path is only safe to clear if it is absolute, at least one level below a drive root, it
-    # exists, and it is not one of the system's key folders or inside a user profile - the location
-    # comes from WMI/COM/registry and a misconfigured value must never empty eg. C:\Users or
-    # C:\Program Files. No folder-name requirement: a relocated cache can be custom-named (D:\SCCMCache).
-    $profilesDir = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -Name ProfilesDirectory -ErrorAction SilentlyContinue).ProfilesDirectory
-    $protected = @(
-        $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $profilesDir
-        if ($winDirValid) { $winDir; foreach ($sub in 'System32', 'SysWOW64', 'WinSxS', 'servicing', 'Installer', 'SoftwareDistribution') { Join-Path $winDir $sub } }
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.TrimEnd('\') }
-    $isSafeCache = {
-        param($p)
-        if ([string]::IsNullOrWhiteSpace($p)) { return $false }
-        $n = $p.TrimEnd('\')
-        if ($n -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
-        if ($protected -contains $n) { return $false }
-        if ($profilesDir -and $n.StartsWith($profilesDir.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
-        return (Test-Path -LiteralPath $n -PathType Container)
-    }
+    $log = @{ LogPath = $LogPath; Component = $Component }
+    Write-CMTraceLog @log 'Content cache cleanup (ConfigMgr / Windows Update / Adaptiva / Intune)'
 
     # -----------------------------------------------------------------------------------------------
-    # Detect each system's cache location(s). Absent systems yield nothing and are simply skipped.
+    # Detect each system's cache location(s). Absent systems yield nothing and are simply skipped;
+    # paths are only built from the validated base folders.
     # -----------------------------------------------------------------------------------------------
-
-    # ConfigMgr ccmcache (relocatable). The WMI CacheConfig class can come back empty even on a healthy
-    # client, so try several sources in order and take the first trusted, non-empty path: WMI ->
-    # UIResourceMgr COM (what Software Center reads) -> registry CacheConfig -> default under Windows.
-    $ccmLoc = $null
-    try { $ccmLoc = (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop | Select-Object -First 1).Location } catch { $ccmLoc = $null }
-    if ([string]::IsNullOrWhiteSpace($ccmLoc)) {
-        try {
-            $ui = New-Object -ComObject UIResource.UIResourceMgr
-            $ccmLoc = $ui.GetCacheInfo().Location
-            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ui)
-        } catch { }
-    }
-    if ([string]::IsNullOrWhiteSpace($ccmLoc)) {
-        $ccmLoc = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Mobile Client\Software Distribution\CacheConfig' -Name Location -ErrorAction SilentlyContinue).Location
-    }
-    if ([string]::IsNullOrWhiteSpace($ccmLoc) -and $winDirValid) { $ccmLoc = Join-Path $winDir 'ccmcache' }
-    $ccmPaths = @(); if (-not [string]::IsNullOrWhiteSpace($ccmLoc)) { $ccmPaths = @($ccmLoc) }
-
-    # Windows Update download cache - built only from the validated Windows directory.
-    $wuPaths = @(); if ($winDirValid) { $wuPaths = @((Join-Path $winDir 'SoftwareDistribution\Download')) }
+    $ccmLocation = Get-CCMCachePath -Bases $Bases
+    $ccmPaths    = @(if (-not [string]::IsNullOrWhiteSpace($ccmLocation)) { $ccmLocation })
+    $wuPaths     = @(if ($Bases.Windows) { Join-Path $Bases.Windows 'SoftwareDistribution\Download' })
 
     # Adaptiva OneSite content cache. Content sits directly under <drive>:\AdaptivaCache (no \Client
     # subfolder). Relocatable via the registry value 'cache.folder' ('na' = use the default), which
@@ -333,8 +423,7 @@ function Invoke-ContentCacheCleanup {
     # Intune Management Extension (Company Portal / Win32) staging + IMECache. IME normally self-cleans
     # on success but leaves residue on failure/locks. IMECache is under Windows; the Content staging
     # folders are under the IME install (Program Files (x86) on 64-bit, Program Files on 32-bit).
-    $intunePaths = @()
-    if ($winDirValid) { $intunePaths += (Join-Path $winDir 'IMECache') }
+    $intunePaths = @(if ($Bases.Windows) { Join-Path $Bases.Windows 'IMECache' })
     $imeBases = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
     foreach ($base in $imeBases) {
         $imeContent = Join-Path $base 'Microsoft Intune Management Extension\Content'
@@ -343,39 +432,58 @@ function Invoke-ContentCacheCleanup {
         }
     }
 
-    # -----------------------------------------------------------------------------------------------
-    # Clear every detected, trusted cache location; defer whatever is locked to the next reboot.
-    # -----------------------------------------------------------------------------------------------
     $providers = @(
         @{ Name = 'ConfigMgr (ccmcache)';                          Paths = $ccmPaths }
-        @{ Name = 'Windows Update (SoftwareDistribution\Download)'; Paths = $wuPaths }
+        @{ Name = 'Windows Update (SoftwareDistribution\Download)'; Paths = $wuPaths; WindowsUpdate = $true }
         @{ Name = 'Adaptiva OneSite (AdaptivaCache)';              Paths = $adaptivaPaths }
         @{ Name = 'Intune Management Extension (IMECache/Content)'; Paths = $intunePaths }
     )
 
+    # -----------------------------------------------------------------------------------------------
+    # Clear every detected, trusted cache location; defer whatever is locked to the next reboot.
+    # -----------------------------------------------------------------------------------------------
     $anyDeferred = $false
     foreach ($prov in $providers) {
+        if ($prov.WindowsUpdate -and $SkipWindowsUpdate) {
+            Write-CMTraceLog @log "$($prov.Name): left to the Windows Update cleanup step."
+            continue
+        }
         $cleaned = New-Object System.Collections.Generic.List[string]
+        $skipped = New-Object System.Collections.Generic.List[string]
+        $left    = New-Object System.Collections.Generic.List[string]
         foreach ($p in @($prov.Paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
-            if (& $isSafeCache $p) {
-                if (Clear-FolderContentsReliable -Folder $p) {
-                    $anyDeferred = $true
-                    $cleaned.Add("$p (locked items deferred to reboot)")
-                } else {
-                    $cleaned.Add($p)
-                }
+            if (-not (Test-SafeCachePath -Path $p -Bases $Bases)) {
+                $skipped.Add("'$p'")
+                continue
+            }
+            if ($prov.WindowsUpdate) {
+                $wu = Clear-WindowsUpdateDownload -Folder $p
+                if ($wu.Skipped) { $left.Add("$p ($($wu.Skipped))"); continue }
+                if ($wu.Postponed) { $anyDeferred = $true; $cleaned.Add("$p (queued for the next boot: $($wu.Postponed))"); continue }
+                $deferred = $wu.Deferred
             } else {
-                Write-CleanupLog @log "$($prov.Name): skipped '$p' (not found or path could not be trusted)."
+                $deferred = Clear-FolderContentsReliable -Folder $p
+            }
+            if ($deferred) {
+                $anyDeferred = $true
+                $cleaned.Add("$p (locked items deferred to reboot)")
+            } else {
+                $cleaned.Add($p)
             }
         }
-        if ($cleaned.Count -gt 0) { Write-CleanupLog @log "$($prov.Name): cleaned $($cleaned -join '; ')" }
-        else { Write-CleanupLog @log "$($prov.Name): nothing to clean (not installed or no cache present)." }
+        $parts = @()
+        if ($cleaned.Count -gt 0) { $parts += "cleaned $($cleaned -join '; ')" }
+        if ($left.Count -gt 0)    { $parts += "left untouched $($left -join '; ')" }
+        if ($skipped.Count -gt 0) { $parts += "skipped $($skipped -join ', ') (not found or path could not be trusted)" }
+        if ($parts.Count -eq 0)   { $parts += 'nothing to clean (not installed or no cache present)' }
+        $result = "$($prov.Name): $($parts -join '; ')."
+        Write-CMTraceLog @log $result
     }
 
-    if ($anyDeferred) { Write-CleanupLog @log 'One or more locked cache items were scheduled for deletion on the next reboot (restart required).' -Severity Warning }
+    if ($anyDeferred) { Write-CMTraceLog @log 'One or more locked cache items were scheduled for deletion on the next reboot (restart required).' -Severity Warning }
     if ($TranscriptPath) { Stop-Transcript | Out-Null }
+    return $anyDeferred
 }
-
 function Start-UserCleanup {
     [CmdletBinding()]
     param (
@@ -410,12 +518,19 @@ function Start-UserCleanup {
     if ($TranscriptPath) { Start-Transcript -Path $TranscriptPath -Append | Out-Null }
     $log = @{ LogPath = $logfile; Component = 'UserCleanup' }
     if (-not $Bases.Profiles) {
-        Write-CleanupLog @log 'User profile directory could not be resolved; user profile cleanup skipped.' -Severity Error
+        Write-CMTraceLog @log 'User profile directory could not be resolved; user profile cleanup skipped.' -Severity Error
         if ($TranscriptPath) { Stop-Transcript | Out-Null }
         return
     }
     if ($IncludeMSTeamsCache) {
-        Get-Process ms-teams -ErrorAction SilentlyContinue | Stop-Process -Force
+        # Its cache is locked while Teams runs; whoever had it open is named, so the closure is traceable.
+        $teams = @(Get-Process ms-teams -IncludeUserName -ErrorAction SilentlyContinue)
+        if ($teams) {
+            $users = @($teams | ForEach-Object { if ($_.UserName) { $_.UserName } else { "session $($_.SessionId)" } } | Sort-Object -Unique) -join ', '
+            $teams | Stop-Process -Force -ErrorAction SilentlyContinue
+            Write-Warning "Microsoft Teams was closed to clear its cache (users: $users)."
+            Write-CMTraceLog @log "Closed Microsoft Teams to clear its cache; it was running for: $users" -Severity Warning
+        }
     }
 
     # Relative paths may contain wildcards (eg. browser '\User Data\*\Cache'); expand to concrete folders.
@@ -425,17 +540,17 @@ function Start-UserCleanup {
         foreach ($relative in $relativePaths) {
             Get-Item -Path (Join-Path ([WildcardPattern]::Escape($profilePath)) $relative) -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } | ForEach-Object {
                 Clear-FolderContentsReliable -Folder $_.FullName -BestEffort | Out-Null
-                Write-CleanupLog @log "Cleared $($_.FullName)"
+                Write-CMTraceLog @log "Cleared $($_.FullName)"
             }
         }
     }
 
     $excludedProfiles = "Public","Default","Default User","All Users"
     $userProfiles = Get-ChildItem -LiteralPath $Bases.Profiles -Directory -ErrorAction SilentlyContinue | Where-Object { $excludedProfiles -notcontains $_.Name }
-    Write-CleanupLog @log "User profile cleanup ($($Bases.Profiles))"
+    Write-CMTraceLog @log "User profile cleanup ($($Bases.Profiles))"
     foreach ($userProfile in $userProfiles) {
         $profilePath = $userProfile.FullName
-        Write-CleanupLog @log "Profile: $($userProfile.Name)"
+        Write-CMTraceLog @log "Profile: $($userProfile.Name)"
         try{
             & $clearMatching $profilePath $userTempFolders
             if ($IncludeSystemLogs) {
@@ -456,7 +571,7 @@ function Start-UserCleanup {
                     $inUse = @($cacheFiles | Where-Object { -not (Remove-PathReliable -Path $_ -BestEffort).Deleted })
                     $iconMsg = "Removed $($cacheFiles.Count - $inUse.Count) of $($cacheFiles.Count) icon/thumbnail cache files"
                     if ($inUse) { $iconMsg += "; skipped (in use):`r`n" + ($inUse -join "`r`n") }
-                    Write-CleanupLog @log $iconMsg
+                    Write-CMTraceLog @log $iconMsg
                 }
             }
 
@@ -472,21 +587,21 @@ function Start-UserCleanup {
                     $backedUp = -not (Get-ChildItem -LiteralPath $backgrounds -Force -ErrorAction SilentlyContinue)
                 }
                 if (-not $backedUp) {
-                    Write-CleanupLog @log "MS-Teams background images could not be backed up; $path left untouched" -Severity Warning
+                    Write-CMTraceLog @log "MS-Teams background images could not be backed up; $path left untouched" -Severity Warning
                 } elseif (Test-Path -LiteralPath $path) {
                     Clear-FolderContentsReliable -Folder $path -BestEffort | Out-Null
-                    Write-CleanupLog @log "Cleared $path"
+                    Write-CMTraceLog @log "Cleared $path"
                 } else {
-                    Write-CleanupLog @log "Not found: $path"
+                    Write-CMTraceLog @log "Not found: $path"
                 }
                 $toRestore = @(Get-ChildItem -LiteralPath $bgBackup -Force -ErrorAction SilentlyContinue)
                 if ($toRestore) {
                     New-Item -Path $backgrounds -ItemType Directory -Force | Out-Null
                     $toRestore | Move-Item -Destination $backgrounds -Force -ErrorAction SilentlyContinue
                     if (Get-ChildItem -LiteralPath $bgBackup -Force -ErrorAction SilentlyContinue) {
-                        Write-CleanupLog @log "Some MS-Teams background images could not be restored; they remain in $bgBackup" -Severity Warning
+                        Write-CMTraceLog @log "Some MS-Teams background images could not be restored; they remain in $bgBackup" -Severity Warning
                     } else {
-                        Write-CleanupLog @log "Restored MS-Teams background images"
+                        Write-CMTraceLog @log "Restored MS-Teams background images"
                     }
                 }
                 if ((Test-Path -LiteralPath $bgBackup) -and -not (Get-ChildItem -LiteralPath $bgBackup -Force -ErrorAction SilentlyContinue)) {
@@ -496,13 +611,13 @@ function Start-UserCleanup {
                 $path = Join-Path $profilePath $teamsClassicPath
                 if (Test-Path -LiteralPath $path) {
                     Clear-FolderContentsReliable -Folder $path -BestEffort | Out-Null
-                    Write-CleanupLog @log "Cleared $path"
+                    Write-CMTraceLog @log "Cleared $path"
                 } else {
-                    Write-CleanupLog @log "Not found: $path"
+                    Write-CMTraceLog @log "Not found: $path"
                 }
             }
         }catch{
-            Write-CleanupLog @log "Error while cleaning up $($userProfile.Name): $_" -Severity Error
+            Write-CMTraceLog @log "Error while cleaning up $($userProfile.Name): $_" -Severity Error
             Write-Warning "Error while cleaning up $($userProfile.Name) :`r`n $_"
         }
     }
@@ -526,12 +641,15 @@ function Start-SystemCleanup {
 
         [switch]$IncludeSystemLogs,
 
+        # the content cache step empties SoftwareDistribution\Download itself
+        [switch]$SkipWindowsUpdateDownload,
+
         [string]$TranscriptPath
     )
 
     if ($TranscriptPath) { Start-Transcript -Path $TranscriptPath -Append | Out-Null }
     $log = @{ LogPath = $logfile; Component = 'SystemCleanup' }
-    Write-CleanupLog @log 'System cleanup'
+    Write-CMTraceLog @log 'System cleanup'
 
     # System temp/logs go through Remove-PathReliable (guarded, long-path safe) and are cleared
     # sequentially: locked items are scheduled for deletion at the next reboot, and every scheduling
@@ -539,37 +657,60 @@ function Start-SystemCleanup {
     # clobber each other. Content caches (ccmcache/WU/Adaptiva/Intune) are handled by the separate
     # Invoke-ContentCacheCleanup step.
     # Targets map a base name to paths relative to it; a base that could not be resolved on this
-    # machine skips its targets instead of building them from an empty value.
+    # machine skips its targets instead of building them from an empty value. Emits $true for every
+    # folder with items scheduled for deletion on reboot.
     $clearTargets = {
         param([hashtable]$targets)
         foreach ($baseName in $targets.Keys) {
             $base = $Bases[$baseName]
             foreach ($relative in $targets[$baseName]) {
                 if (-not $base) {
-                    Write-CleanupLog @log "Skipped <$baseName>\$relative ($baseName folder could not be resolved)" -Severity Warning
+                    Write-CMTraceLog @log "Skipped <$baseName>\$relative ($baseName folder could not be resolved)" -Severity Warning
                     continue
                 }
                 $folder = Join-Path $base $relative
                 if (-not (Test-Path -LiteralPath $folder)) {
-                    Write-CleanupLog @log "Not found: $folder"
+                    Write-CMTraceLog @log "Not found: $folder"
                 } elseif (Clear-FolderContentsReliable -Folder $folder) {
-                    Write-CleanupLog @log "Cleared $folder (locked items scheduled for deletion on reboot)"
+                    $true
+                    Write-CMTraceLog @log "Cleared $folder (locked items scheduled for deletion on reboot)"
                 } else {
-                    Write-CleanupLog @log "Cleared $folder"
+                    Write-CMTraceLog @log "Cleared $folder"
                 }
             }
         }
     }
 
-    if($IncludeSystemData) {
-        & $clearTargets $systemTempFolders
-    }
-
-    if($IncludeSystemLogs) {
-        & $clearTargets $sysReportingDirs
-    }
+    $deferred = @(
+        if ($IncludeSystemData) {
+            & $clearTargets $systemTempFolders
+            if ($SkipWindowsUpdateDownload) {
+                Write-CMTraceLog @log 'SoftwareDistribution\Download is left to the content cache cleanup.'
+            } elseif ($Bases.Windows) {
+                $download = Join-Path $Bases.Windows 'SoftwareDistribution\Download'
+                if (-not (Test-Path -LiteralPath $download)) {
+                    Write-CMTraceLog @log "Not found: $download"
+                } else {
+                    $wu = Clear-WindowsUpdateDownload -Folder $download
+                    if ($wu.Skipped) {
+                        Write-CMTraceLog @log "Left $download untouched: $($wu.Skipped)." -Severity Warning
+                    } elseif ($wu.Postponed) {
+                        $true
+                        Write-CMTraceLog @log "Queued the contents of $download for deletion on reboot: $($wu.Postponed)."
+                    } elseif ($wu.Deferred) {
+                        $true
+                        Write-CMTraceLog @log "Cleared $download with wuauserv/BITS stopped (locked items scheduled for deletion on reboot)"
+                    } else {
+                        Write-CMTraceLog @log "Cleared $download with wuauserv/BITS stopped"
+                    }
+                }
+            }
+        }
+        if ($IncludeSystemLogs) { & $clearTargets $sysReportingDirs }
+    ) -contains $true
 
     if ($TranscriptPath) { Stop-Transcript | Out-Null }
+    return $deferred
 }
 
 function Invoke-NativeDiskCleanup {
@@ -578,7 +719,7 @@ function Invoke-NativeDiskCleanup {
     each selected Disk Cleanup option is mapped to an equivalent that works in session 0. Data-driven
     options are applied from their own VolumeCaches definition (Folder / FileList / LastAccess / Flags),
     a few others map to native commands, and options without a safe equivalent are logged as skipped.
-    Locked files are left in place (as CleanMgr does). Self-contained apart from Write-CleanupLog,
+    Locked files are left in place (as CleanMgr does). Self-contained apart from Write-CMTraceLog,
     Remove-PathReliable and Clear-FolderContentsReliable, so it can be shipped to a remote session.
     #>
     param (
@@ -639,10 +780,10 @@ function Invoke-NativeDiskCleanup {
         $msg = "${name}: removed $removed file(s)"
         if ($days) { $msg += " not accessed for $days day(s)" }
         if ($inUse) { $msg += "; $inUse in use, left in place" }
-        Write-CleanupLog @log $msg
+        Write-CMTraceLog @log $msg
     }
 
-    Write-CleanupLog @log ("No interactive session: CleanMgr cannot complete here, applying native equivalents for:`r`n" + ($Options -join "`r`n")) -Severity Warning
+    Write-CMTraceLog @log ("No interactive session: CleanMgr cannot complete here, applying native equivalents for:`r`n" + ($Options -join "`r`n")) -Severity Warning
     foreach ($option in $Options) {
         $definition = Get-ItemProperty -Path "$volumeCaches\$option" -ErrorAction SilentlyContinue
         switch ($option) {
@@ -652,7 +793,7 @@ function Invoke-NativeDiskCleanup {
             }
             { $profilePaths.ContainsKey($_) } {
                 if (-not $Bases.Profiles) {
-                    Write-CleanupLog @log "${option}: skipped, user profile directory could not be resolved" -Severity Warning
+                    Write-CMTraceLog @log "${option}: skipped, user profile directory could not be resolved" -Severity Warning
                     break
                 }
                 $cleared = 0
@@ -663,19 +804,19 @@ function Invoke-NativeDiskCleanup {
                         $cleared++
                     }
                 }
-                Write-CleanupLog @log "${option}: cleared in $cleared profile(s)"
+                Write-CMTraceLog @log "${option}: cleared in $cleared profile(s)"
                 break
             }
             "Delivery Optimization Files" {
                 if (-not (Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue)) {
-                    Write-CleanupLog @log "${option}: skipped, Delete-DeliveryOptimizationCache is not available" -Severity Warning
+                    Write-CMTraceLog @log "${option}: skipped, Delete-DeliveryOptimizationCache is not available" -Severity Warning
                     break
                 }
                 try {
                     Delete-DeliveryOptimizationCache -Force -ErrorAction Stop 6>$null | Out-Null
-                    Write-CleanupLog @log "${option}: cache deleted"
+                    Write-CMTraceLog @log "${option}: cache deleted"
                 } catch {
-                    Write-CleanupLog @log "${option}: $_" -Severity Warning
+                    Write-CMTraceLog @log "${option}: $_" -Severity Warning
                 }
             }
             "Update Cleanup" {
@@ -683,10 +824,10 @@ function Invoke-NativeDiskCleanup {
                 $null = $dism.Handle   # keeps ExitCode readable after exit
                 if ($dism.WaitForExit($MaxMinutes * 60000)) {
                     $severity = if ($dism.ExitCode -eq 0) { 'Info' } else { 'Warning' }
-                    Write-CleanupLog @log "${option}: DISM StartComponentCleanup finished, exit code $($dism.ExitCode)" -Severity $severity
+                    Write-CMTraceLog @log "${option}: DISM StartComponentCleanup finished, exit code $($dism.ExitCode)" -Severity $severity
                 } else {
                     try { $dism.Kill() } catch { }
-                    Write-CleanupLog @log "${option}: DISM StartComponentCleanup exceeded $MaxMinutes minutes and was stopped" -Severity Warning
+                    Write-CMTraceLog @log "${option}: DISM StartComponentCleanup exceeded $MaxMinutes minutes and was stopped" -Severity Warning
                 }
             }
             "Device Driver Packages" {
@@ -698,7 +839,7 @@ function Invoke-NativeDiskCleanup {
                         Where-Object Count -gt 1 |
                         ForEach-Object { $_.Group | Sort-Object { try { [version]$_.Version } catch { [version]'0.0' } }, Date -Descending | Select-Object -Skip 1 })
                 } catch {
-                    Write-CleanupLog @log "${option}: driver list could not be read: $_" -Severity Warning
+                    Write-CMTraceLog @log "${option}: driver list could not be read: $_" -Severity Warning
                     break
                 }
                 $pnputil = Join-Path $Bases.Windows "System32\pnputil.exe"
@@ -709,16 +850,16 @@ function Invoke-NativeDiskCleanup {
                 }
                 $msg = "${option}: removed $removed older driver package(s)"
                 if ($inUse) { $msg += "; $inUse still in use, kept" }
-                Write-CleanupLog @log $msg
+                Write-CMTraceLog @log $msg
             }
             "Thumbnail Cache" {
-                Write-CleanupLog @log "${option}: covered by the user icon/thumbnail cache cleanup"
+                Write-CMTraceLog @log "${option}: covered by the user icon/thumbnail cache cleanup"
             }
             "Recycle Bin" {
-                Write-CleanupLog @log "${option}: covered by the Recycle Bin step"
+                Write-CMTraceLog @log "${option}: covered by the Recycle Bin step"
             }
             default {
-                Write-CleanupLog @log "${option}: skipped, no native equivalent outside an interactive session"
+                Write-CMTraceLog @log "${option}: skipped, no native equivalent outside an interactive session"
             }
         }
     }
@@ -744,7 +885,7 @@ function Start-CleanMgr{
     # CleanMgr, the Windows Update/catroot2 backups and the Recycle Bin are all located from the
     # validated Windows directory; without it nothing in this step can be targeted safely.
     if (-not $Bases.Windows) {
-        Write-CleanupLog @log "Windows directory could not be resolved; CleanMgr cleanup skipped." -Severity Error
+        Write-CMTraceLog @log "Windows directory could not be resolved; CleanMgr cleanup skipped." -Severity Error
         return
     }
     $cleanMgrExe = Join-Path $Bases.Windows "System32\cleanmgr.exe"
@@ -753,15 +894,15 @@ function Start-CleanMgr{
         param($process, [int]$maxMinutes)
         if ($process.WaitForExit($maxMinutes * 60000)) { return }
         $cleanMgrStucknotify = "CleanMgr.exe has been running for more than $maxMinutes minutes. Stopping it..."
-        Write-CleanupLog @log $cleanMgrStucknotify -Severity Warning
+        Write-CMTraceLog @log $cleanMgrStucknotify -Severity Warning
         Write-Warning $cleanMgrStucknotify
         try {
             $process.Kill()
-            Write-CleanupLog @log "CleanMgr.exe terminated." -Severity Warning
+            Write-CMTraceLog @log "CleanMgr.exe terminated." -Severity Warning
             Write-Warning "CleanMgr.exe terminated."
         } catch {
             $cleanMgrStuckTerminateFail = "Failed to terminate CleanMgr.exe: $_"
-            Write-CleanupLog @log $cleanMgrStuckTerminateFail -Severity Error
+            Write-CMTraceLog @log $cleanMgrStuckTerminateFail -Severity Error
             Write-Warning $cleanMgrStuckTerminateFail
         }
     }
@@ -802,16 +943,16 @@ function Start-CleanMgr{
 
         if ($VeryLowDisk) {
             # Clears each user's bin below <SystemDrive>\$Recycle.Bin; the folder itself is kept.
-            Write-CleanupLog @log "Cleaning Recycle Bin"
+            Write-CMTraceLog @log "Cleaning Recycle Bin"
             Clear-FolderContentsReliable -Folder (Join-Path $Bases.SystemDrive '$Recycle.Bin') -BestEffort | Out-Null
 
-            Write-CleanupLog @log "Cleaning SoftwareDistribution and catroot2 backup folders"
+            Write-CMTraceLog @log "Cleaning SoftwareDistribution and catroot2 backup folders"
             foreach ($backup in "SoftwareDistribution.bak","SoftwareDistribution.old","System32\catroot2.bak","System32\catroot2.old") {
                 $backupPath = Join-Path $Bases.Windows $backup
                 if (-not (Test-Path -LiteralPath $backupPath)) { continue }
                 $result = Remove-PathReliable -Path $backupPath -BestEffort
-                if ($result.Deleted) { Write-CleanupLog @log "Removed $backupPath" }
-                else { Write-CleanupLog @log "Could not fully remove $backupPath $($result.Error)" -Severity Warning }
+                if ($result.Deleted) { Write-CMTraceLog @log "Removed $backupPath" }
+                else { Write-CMTraceLog @log "Could not fully remove $backupPath $($result.Error)" -Severity Warning }
             }
         }
 
@@ -821,29 +962,29 @@ function Start-CleanMgr{
             Write-Host "No interactive session, running native equivalents of the CleanMgr options..."
             Invoke-NativeDiskCleanup -logfile $logfile -Bases $Bases -Options $options -MaxMinutes $CleanMaxDurationVal
         } else {
-            Write-CleanupLog @log ("Enabling CleanMgr cleanup options:`r`n" + ($options -join "`r`n"))
+            Write-CMTraceLog @log ("Enabling CleanMgr cleanup options:`r`n" + ($options -join "`r`n"))
             foreach ($option in $options) {
                 New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\$option" -Name StateFlags0901 -Value 2 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
             }
 
-            Write-CleanupLog @log "Executing CleanMgr /sagerun:901 (up to $CleanMaxDurationVal minutes)"
+            Write-CMTraceLog @log "Executing CleanMgr /sagerun:901 (up to $CleanMaxDurationVal minutes)"
             Write-Host "Starting CleanMgr.exe,`r`nThis may take a while... (up to $CleanMaxDurationVal minutes)"
             $process = Start-Process -FilePath $cleanMgrExe -ArgumentList '/sagerun:901' -PassThru
             & $waitCleanMgr $process $CleanMaxDurationVal
             # Bounded: leftover DismHost children of a killed CleanMgr (or unrelated servicing) must not block forever.
             Get-Process -Name cleanmgr,dismhost -ErrorAction SilentlyContinue | Wait-Process -Timeout 120 -ErrorAction SilentlyContinue
-            Write-CleanupLog @log "CleanMgr complete, removing CleanMgr automation settings"
+            Write-CMTraceLog @log "CleanMgr complete, removing CleanMgr automation settings"
             Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\*' -Name StateFlags0901 -ErrorAction SilentlyContinue | Remove-ItemProperty -Name StateFlags0901 -ErrorAction SilentlyContinue | Out-Null
         }
     }
 
     if($AutoClean -or $VeryLowDisk){
         $CleanMaxDurationVal = 5
-        Write-CleanupLog @log "Executing CleanMgr /autoclean upgrade cleanup (up to $CleanMaxDurationVal minutes)"
+        Write-CMTraceLog @log "Executing CleanMgr /autoclean upgrade cleanup (up to $CleanMaxDurationVal minutes)"
         Write-Host "Starting CleanMgr Upgrade-Cleanup,`r`nThis may take a while... (up to $CleanMaxDurationVal minutes)"
         $process = Start-Process -FilePath $cleanMgrExe -ArgumentList "/autoclean" -NoNewWindow -PassThru
         & $waitCleanMgr $process $CleanMaxDurationVal
-        Write-CleanupLog @log "CleanMgr upgrade cleanup complete"
+        Write-CMTraceLog @log "CleanMgr upgrade cleanup complete"
     }
 }
 
@@ -887,7 +1028,7 @@ function Invoke-DeviceCleanup {
     $comp = $ComputerName.Trim()
     $remote = -not ([string]::IsNullOrWhiteSpace($comp) -or $comp -eq "localhost" -or $comp -eq $env:COMPUTERNAME)
     if (-not $remote) { $comp = "localhost" }
-    $result = [PSCustomObject]@{ ComputerName = $comp; Status = 'Failed'; Message = ''; AdditionalFreeGB = $null; TotalFreeGB = $null; LogFile = $null }
+    $result = [PSCustomObject]@{ ComputerName = $comp; Status = 'Failed'; Message = ''; AdditionalFreeGB = $null; TotalFreeGB = $null; RestartRequired = $false; LogFile = $null }
 
     if ($remote -and ($comp -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
         $result.Message = "Invalid ComputerName format: '$comp' (letters, digits, '-', '_' and '.' only, or an IPv4 address)"
@@ -939,11 +1080,11 @@ function Invoke-DeviceCleanup {
         # Bundle each worker with the helpers it needs so they survive being shipped to a remote
         # session (module functions are otherwise undefined there). Locally, Invoke-Command without
         # a session runs the same block in-process, so every step takes a single code path.
-        $deleteHelpers      = 'Write-CleanupLog','Remove-PathReliable','Register-PendingDelete','Clear-FolderContentsReliable'
-        $logBlock           = New-RemoteFunctionScriptBlock -FunctionName 'Write-CleanupLog' -EntryPoint 'Write-CleanupLog'
+        $deleteHelpers      = 'Write-CMTraceLog','Remove-PathReliable','Register-PendingDelete','Clear-FolderContentsReliable'
+        $logBlock           = New-RemoteFunctionScriptBlock -FunctionName 'Write-CMTraceLog' -EntryPoint 'Write-CMTraceLog'
         $userCleanupBlock   = New-RemoteFunctionScriptBlock -FunctionName ($deleteHelpers + 'Start-UserCleanup') -EntryPoint 'Start-UserCleanup'
-        $systemCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName ($deleteHelpers + 'Start-SystemCleanup') -EntryPoint 'Start-SystemCleanup'
-        $cacheCleanupBlock  = New-RemoteFunctionScriptBlock -FunctionName ($deleteHelpers + 'Invoke-ContentCacheCleanup') -EntryPoint 'Invoke-ContentCacheCleanup'
+        $systemCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName ($deleteHelpers + 'Clear-WindowsUpdateDownload', 'Start-SystemCleanup') -EntryPoint 'Start-SystemCleanup'
+        $cacheCleanupBlock  = New-RemoteFunctionScriptBlock -FunctionName ($deleteHelpers + 'Clear-WindowsUpdateDownload', 'Get-CCMCachePath', 'Test-SafeCachePath', 'Invoke-ContentCacheCleanup') -EntryPoint 'Invoke-ContentCacheCleanup'
         $cleanMgrBlock      = New-RemoteFunctionScriptBlock -FunctionName ($deleteHelpers + 'Invoke-NativeDiskCleanup','Start-CleanMgr') -EntryPoint 'Start-CleanMgr'
         # A dropped remote session only produces non-terminating errors; stop the device run instead of
         # carrying on and reporting a bogus 'Completed'.
@@ -958,27 +1099,41 @@ function Invoke-DeviceCleanup {
         Write-Host "`r`nCleaning up  $comp`r`n"
         $common = @{ logfile = $logfile; Bases = $bases }
 
+        # A step that throws (locally, or remotely - that arrives as a terminating RemoteException) fails
+        # only itself; the remaining steps still run. Returns the step's last output.
+        $failedSteps = New-Object System.Collections.Generic.List[string]
+        $runStep = {
+            param([string]$Name, [scriptblock]$Block, [hashtable]$Arguments)
+            $out = $null
+            try {
+                $out = @(Invoke-Command @invokeParams -ScriptBlock $Block -ArgumentList $Arguments)
+            } catch {
+                & $assertSession
+                $failedSteps.Add($Name)
+                Write-Warning "$Name failed on ${comp}: $($_.Exception.Message)"
+                Invoke-Command @invokeParams -ScriptBlock $logBlock -ArgumentList @{ Message = "$Name failed: $($_.Exception.Message)"; Component = 'TempDataCleanup'; LogPath = $logfile; Severity = 'Error' } -ErrorAction SilentlyContinue
+            }
+            & $assertSession
+            if ($out) { $out[-1] }
+        }
+
         # Steps run one after another: locked system/cache items are scheduled for reboot through the
         # single shared PendingFileRenameOperations value, so overlapping steps would clobber it.
         Write-Host "Cleaning up User Data and Cache"
-        $null = Invoke-Command @invokeParams -ScriptBlock $userCleanupBlock -ArgumentList ($UserParams + $common + @{ TranscriptPath = $transcriptPath })
-        & $assertSession
+        $null = & $runStep 'User cleanup' $userCleanupBlock ($UserParams + $common + @{ TranscriptPath = $transcriptPath })
 
         if ($SystemParams) {
             Write-Host "Cleaning up System Data"
-            $null = Invoke-Command @invokeParams -ScriptBlock $systemCleanupBlock -ArgumentList ($SystemParams + $common + @{ TranscriptPath = $transcriptPath })
-            & $assertSession
+            if ((& $runStep 'System cleanup' $systemCleanupBlock ($SystemParams + $common + @{ TranscriptPath = $transcriptPath })) -eq $true) { $result.RestartRequired = $true }
         }
 
         if ($ContentCache) {
             Write-Host "Cleaning up Content Caches (ConfigMgr / Windows Update / Adaptiva / Intune)"
-            $null = Invoke-Command @invokeParams -ScriptBlock $cacheCleanupBlock -ArgumentList @{ logfile = $logfile; TranscriptPath = $transcriptPath }
-            & $assertSession
+            if ((& $runStep 'Content cache cleanup' $cacheCleanupBlock @{ LogPath = $logfile; Bases = $bases; TranscriptPath = $transcriptPath }) -eq $true) { $result.RestartRequired = $true }
         }
 
         if ($CleanMgrParams) {
-            $null = Invoke-Command @invokeParams -ScriptBlock $cleanMgrBlock -ArgumentList ($CleanMgrParams + $common)
-            & $assertSession
+            $null = & $runStep 'Disk cleanup' $cleanMgrBlock ($CleanMgrParams + $common)
         }
 
         Invoke-Command @invokeParams -ScriptBlock $logBlock -ArgumentList @{ Message = "Cleanup on $comp finished"; Component = 'TempDataCleanup'; LogPath = $logfile }
@@ -1016,6 +1171,9 @@ function Invoke-DeviceCleanup {
         }
         if ($null -eq $result.AdditionalFreeGB) {
             $result.Message = (@($result.Message, "Free space of $($bases.SystemDrive) could not be read") | Where-Object { $_ }) -join '; '
+        }
+        if ($failedSteps.Count) {
+            $result.Message = (@("Failed: $($failedSteps -join ', ') (see the log)", $result.Message) | Where-Object { $_ }) -join '; '
         }
         $result.Status = 'Completed'
         return $result
@@ -1057,8 +1215,8 @@ function Invoke-TempDataCleanup {
     "localhost", the own computer name) are cleaned only once.
 
     .PARAMETER IncludeSystemData
-    If this switch is present, the cleanup will also include system folders such as the Windows Temp,
-    Prefetch, and SoftwareDistribution\Download folders.
+    If this switch is present, the cleanup will also include system folders such as the Windows Temp and
+    SoftwareDistribution\Download folders. Prefetch is not cleared; Windows maintains it itself.
 
     .PARAMETER IncludeSystemLogs
     If this switch is present, the cleanup will also include system log files and reporting folders such
@@ -1087,7 +1245,9 @@ function Invoke-TempDataCleanup {
     with -ConfirmWarning.
 
     .PARAMETER IncludeMSTeamsCache
-    If this switch is present, the cleanup will also include Microsoft Teams cache folders.
+    If this switch is present, the cleanup will also include Microsoft Teams cache folders. A running Teams
+    (new Teams, any signed-in user) is closed first, because its cache is locked; the users concerned are
+    named in a warning and in the log.
 
     .PARAMETER IncludeIconCache
     If this switch is present, the cleanup will also include the User Icon & ThumbCache files.
@@ -1238,8 +1398,10 @@ function Invoke-TempDataCleanup {
 
     .OUTPUTS
     TempDataCleanup.Result - one object per device, returned after all devices have finished:
-    ComputerName, Status ('Completed' / 'Failed'), AdditionalFreeGB, TotalFreeGB, Message (failure
-    reason or note) and LogFile (the copied log for remote devices, else the log on the device).
+    ComputerName, Status ('Completed' / 'Failed'), AdditionalFreeGB, TotalFreeGB, RestartRequired (locked
+    files were queued for deletion on the next restart), Message (failure reason, steps that failed while the others still ran, or note) and LogFile (the
+    copied log for remote devices, else the log on the device). The closing restart reminder names only the
+    devices with RestartRequired.
     The console shows ComputerName, Status, AdditionalFreeGB and TotalFreeGB by default.
 
     .LINK
@@ -1275,7 +1437,7 @@ function Invoke-TempDataCleanup {
 
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2026-10-02
+    Date: 2026-10-06
     #>
 
 
@@ -1464,10 +1626,11 @@ function Invoke-TempDataCleanup {
         # System targets are relative to base folders resolved and validated on the target device
         # (Get-CleanupBasePath), never to hard-coded drive letters.
         $systemTempFolders=@{
+            # SoftwareDistribution\Download needs wuauserv/BITS stopped: Start-SystemCleanup clears it
+            # through Clear-WindowsUpdateDownload. Prefetch is left alone: Windows maintains its size itself
+            # and clearing it only slows down the next start of every application.
             Windows = @(
-                "Temp",
-                "Prefetch",
-                "SoftwareDistribution\Download"
+                "Temp"
             )
         }
         $msTeamsCacheFolder="\AppData\local\Packages\MSTeams_8wekyb3d8bbwe\LocalCache"
@@ -1626,6 +1789,7 @@ function Invoke-TempDataCleanup {
                 sysReportingDirs  = $sysReportingDirs
                 IncludeSystemData = [bool]$IncludeSystemData
                 IncludeSystemLogs = [bool]$IncludeSystemLogs
+                SkipWindowsUpdateDownload = [bool]$ContentCacheCleanup
             }
         }
         if ($LowDisk -or $VeryLowDisk -or $AutoClean) {
@@ -1641,6 +1805,7 @@ function Invoke-TempDataCleanup {
             if ($result.Status -eq 'Completed') {
                 $gb = { param($v) if ($null -ne $v) { "{0:N2} GB" -f $v } else { "n/a" } }
                 $line = "[{0}] Cleanup complete - Additional free space: {1}, Total free space: {2}" -f $result.ComputerName, (& $gb $result.AdditionalFreeGB), (& $gb $result.TotalFreeGB)
+                if ($result.RestartRequired) { $line += " - restart required" }
                 Write-Host $line -ForegroundColor Green
                 if ($result.Message) { Write-Warning "[$($result.ComputerName)] $($result.Message)" }
             } else {
@@ -1652,6 +1817,7 @@ function Invoke-TempDataCleanup {
                 Status           = $result.Status
                 AdditionalFreeGB = if ($null -ne $result.AdditionalFreeGB) { [math]::Round($result.AdditionalFreeGB, 2) } else { $null }
                 TotalFreeGB      = if ($null -ne $result.TotalFreeGB) { [math]::Round($result.TotalFreeGB, 2) } else { $null }
+                RestartRequired  = [bool]$result.RestartRequired
                 Message          = $result.Message
                 LogFile          = $result.LogFile
             }
@@ -1666,8 +1832,8 @@ function Invoke-TempDataCleanup {
             # One background job per device, at most -ThrottleLimit at a time; their step output is
             # discarded and each device reports a single result line as soon as it has finished.
             $deviceBlock = New-RemoteFunctionScriptBlock -EntryPoint 'Invoke-DeviceCleanup' -FunctionName @(
-                'New-Folder','Write-CleanupLog','Get-CleanupBasePath','Remove-PathReliable','Register-PendingDelete',
-                'Clear-FolderContentsReliable','New-RemoteFunctionScriptBlock','Invoke-ContentCacheCleanup','Start-UserCleanup',
+                'New-Folder','Write-CMTraceLog','Get-CleanupBasePath','Remove-PathReliable','Register-PendingDelete',
+                'Clear-FolderContentsReliable','Clear-WindowsUpdateDownload','New-RemoteFunctionScriptBlock','Get-CCMCachePath','Test-SafeCachePath','Invoke-ContentCacheCleanup','Start-UserCleanup',
                 'Start-SystemCleanup','Invoke-NativeDiskCleanup','Start-CleanMgr','Invoke-DeviceCleanup')
             $queue = New-Object System.Collections.Generic.Queue[string] (,[string[]]$targets)
             $pending = New-Object System.Collections.Generic.List[object]
@@ -1721,7 +1887,11 @@ function Invoke-TempDataCleanup {
             }
         }
         Write-Host "`r`nCleanUp Complete" -ForegroundColor Green
-        Write-Host "Please Restart the Computer to finalize the Cleanup!" -ForegroundColor Yellow
+        # Only devices with locked files queued for deletion on reboot need a restart to finish.
+        $restartDevices = @($results | Where-Object RestartRequired | ForEach-Object ComputerName)
+        if ($restartDevices) {
+            Write-Host "Please restart $($restartDevices -join ', ') to finalize the cleanup (locked files are queued for deletion on the next restart)." -ForegroundColor Yellow
+        }
         $results
     }
 }

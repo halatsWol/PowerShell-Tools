@@ -16,11 +16,11 @@ LONG DESCRIPTION
     Parameters:
     -----------
     - ComputerName (Optional): Specifies the name of the computer to run the cleanup on. Accepts PipeLine and Array input. If Null/Empty String ("") (except via Pipeline), or whitespace it will default to Local Host. With more than one computer, all devices are cleaned in parallel background jobs; instead of step output, each device prints one line (name, additional and total free space, or the failure reason) when it has finished. Duplicates and local aliases are cleaned only once.
-    - IncludeSystemData (Optional): When this switch is used, system folders (such as Windows Temp, Prefetch, and SoftwareDistribution\Download) will also be cleaned up.
+    - IncludeSystemData (Optional): When this switch is used, system folders (such as Windows Temp and SoftwareDistribution\Download) will also be cleaned up. Prefetch is not cleared: Windows maintains it itself, and clearing it only slows down the next start of every application. The Windows Update and BITS services are force-stopped while SoftwareDistribution\Download is emptied (an interrupted download is simply fetched again) and started again afterwards; an update installation in progress is never interrupted but waited for up to 10 minutes; if it is still running then, the folder's contents are deleted at the next boot instead. Together with ContentCacheCleanup, that folder is emptied once, by the content cache cleanup.
     - IncludeSystemLogs (Optional): When this switch is used, system log files and reporting folders (such as C:\Windows\Logs, C:\Windows\Minidump, and the Windows Error Reporting queues) will also be cleaned up. Logs held open by Windows services are scheduled for deletion on the next reboot.
     - ContentCacheCleanup (Optional, alias IncludeCCMCache): When this switch is provided, the cleanup will also clear the content/download caches of the software-distribution systems detected on the device: ConfigMgr/SCCM (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite, and the Intune Management Extension. The ConfigMgr cache is relocation-aware (found via WMI, the Software Center COM API, the registry, or the default under the Windows directory), so a moved cache (e.g. D:\SCCMCache) is found instead of assuming C:\Windows\ccmcache.
     - IncludeBrowserData (Optional): When this switch is used, the browser caches of Edge, Chrome, Firefox, Opera, Vivaldi, Brave and IE will also be cleaned up. Saved site data (Firefox site storage, IE cookies) is only cleared after confirming a prompt, or with -ConfirmWarning.
-    - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up.
+    - IncludeMSTeamsCache (Optional): When this switch is used, Microsoft Teams cache files will also be cleaned up. A running Teams (new Teams, any signed-in user) is closed first, because its cache is locked; the users concerned are named in a warning and in the log.
     - IncludeIconCache (Optional): When this switch is used, the User Icon & ThumbCache will also be cleaned up.
     - IncludeAllPackages (Optional): When this switch is used, all packages in $env:localappdata\Packages\ will be cleaned up.
     - LowDisk (Optional): Performs a System Cleanup using CleanMgr with basic settings. Additionally performs  `IncludeSystemData`, `ContentCacheCleanup` and `IncludeIconCache`
@@ -105,7 +105,7 @@ SEE ALSO
 AUTHOR
     Wolfram Halatschek
     Contact: dev@kMarflow.com
-    Date: 2026-10-02
+    Date: 2026-10-06
 
 
 COPYRIGHT

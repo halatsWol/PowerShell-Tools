@@ -123,6 +123,11 @@ PrivateData = @{
   queued for reboot once, profiles with '[' / ']' are cleaned, -AutoClean enables its steps as documented.
 - Default package cleanup no longer touches app data (Outlook, Photos, Snipping Tool, Camera); browser
   site data (Firefox storage, IE cookies) needs confirmation.
+- SoftwareDistribution\Download is emptied with wuauserv/BITS force-stopped and restarted afterwards; a
+  running update installation is waited for up to 10 minutes, else the folder is cleared at the next
+  boot. With -ContentCacheCleanup it is cleared only once.
+- A step that fails no longer aborts the device; the others still run and the result names it.
+- Prefetch is no longer cleared; closing Teams for -IncludeMSTeamsCache is logged with the users.
 
 1.7
 - Content-cache cleanup (-ContentCacheCleanup, alias -IncludeCCMCache) is now relocation-aware and
