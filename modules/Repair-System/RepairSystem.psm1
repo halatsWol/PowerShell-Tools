@@ -6,207 +6,146 @@ function New-Folder {
     if (-not (Test-Path -Path $FolderPath)) {New-Item -Path $FolderPath -ItemType Directory -Force > $null}
 }
 
-function Write-RepairLog {
-    [CmdletBinding(DefaultParameterSetName = 'FullEntry')]
-    param (
-        [Parameter(Position = 0, Mandatory = $false)]
-        [string]$Message = "",
+function New-SecureDirectory {
+    <#
+        Creates a directory only SYSTEM and Administrators can modify, with the ACL
+        applied at creation so there is no window in which it is open. A folder made
+        directly under C:\ otherwise inherits Modify for Authenticated Users - and the
+        deferred task runs as SYSTEM.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [switch]$UsersRead
+    )
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $rights = @{ 'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl' }
+    if ($UsersRead) { $rights['S-1-5-32-545'] = 'ReadAndExecute' }
+    foreach ($sid in $rights.Keys) {
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            (New-Object System.Security.Principal.SecurityIdentifier $sid), $rights[$sid], 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+    }
 
-        [Parameter(Mandatory = $true)]
+    $parent = Split-Path -Path $Path -Parent
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop -WhatIf:$false | Out-Null
+    }
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        [System.IO.FileSystemAclExtensions]::Create([System.IO.DirectoryInfo]::new($Path), $acl)
+    } else {
+        [void][System.IO.Directory]::CreateDirectory($Path, $acl)
+    }
+}
+
+function Write-CMTraceLog {
+    <#
+    Appends one CMTrace-format entry. Identical in TempDataCleanup, Repair-System, removeUserProfile and
+    AutoDeskCleanRemove; anything tool-specific lives in wrappers that call this. A multi-line message
+    stays a single entry, and CMTrace delimiters inside it are escaped so an embedded log cannot split
+    it. A briefly locked file (open viewer, AV scan) is retried and the function never throws - a lost
+    log line must not abort the caller. Wrappers pass their own $MyInvocation as -Caller, so file= names
+    the real call site. Self-contained so it survives being shipped to a remote session or script.
+    #>
+    param (
+        [Parameter(Mandatory=$true, Position=0)]
+        [AllowEmptyString()]
+        [string]$Message,
+
+        [Parameter(Mandatory=$true, Position=1)]
         [string]$Component,
 
-        [Parameter(Mandatory = $false)]
-        [string]$Source,
-
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory=$true, Position=2)]
         [string]$LogPath,
 
-        [Parameter(Mandatory = $false)]
-        [datetime]$Time,
+        [Parameter(Position=3)]
+        [ValidateSet('Info','Warning','Error')]
+        [string]$Severity = 'Info',
 
-        [Parameter(ParameterSetName = 'Start')]
-        [switch]$StartLogEntry,
-
-        [Parameter(ParameterSetName = 'Add')]
-        [switch]$AddLogEntryData,
-
-        [Parameter(ParameterSetName = 'End')]
-        [switch]$EndLogEntry
+        [System.Management.Automation.InvocationInfo]$Caller
     )
-
-    $callerLine   = $MyInvocation.ScriptLineNumber
-    $callerScript = Split-Path -Path $MyInvocation.ScriptName -Leaf
-    if ([string]::IsNullOrWhiteSpace($callerScript)) { $callerScript = "Interactive" }
-    $resolvedSource = if ([string]::IsNullOrWhiteSpace($Source)) {
-        "${callerScript}:${callerLine}"
-    } else {
-        "${callerScript}:${callerLine}($Source)"
+    if (-not $Caller) { $Caller = $MyInvocation }
+    $type    = @{ Info = 1; Warning = 2; Error = 3 }[$Severity]
+    $now     = Get-Date
+    $offset  = [TimeZoneInfo]::Local.GetUtcOffset($now).TotalMinutes
+    $source  = if ($Caller.ScriptName) { Split-Path -Path $Caller.ScriptName -Leaf } else {
+        # Shipped scriptblock without a file: name the nearest named function that made the call.
+        $stack = @(Get-PSCallStack)
+        $i = 0
+        while ($i -lt $stack.Count -and -not [object]::ReferenceEquals($stack[$i].InvocationInfo, $Caller)) { $i++ }
+        $named = @($stack | Select-Object -Skip ($i + 1) | Where-Object { $_.FunctionName -ne '<ScriptBlock>' })
+        if ($named.Count -gt 0) { $named[0].FunctionName } else { '<ScriptBlock>' }
     }
+    $escaped = $Message -replace '<!\[LOG\[', '&lt;![LOG[' -replace '\]LOG\]!>', ']LOG]!&gt;'
+    $entry   = '<![LOG[{0}]LOG]!><time="{1}{2:+000;-000}" date="{3}" component="{4}" context="" type="{5}" thread="{6}" file="{7}:{8}">' -f
+        $escaped, $now.ToString('HH:mm:ss.fff'), $offset, $now.ToString('MM-dd-yyyy'), $Component, $type, $PID, $source, $Caller.ScriptLineNumber
 
-    $timestamp   = if ($Time) { $Time } else { Get-Date }
-    $dateStr     = $timestamp.ToString("MM-dd-yyyy")
-    $timeStr     = $timestamp.ToString("HH:mm:ss.fff")
-    $tzOffset    = (Get-TimeZone).BaseUtcOffset.TotalMinutes
-    $tzFormatted = if ($tzOffset -ge 0) { "+{0:000}" -f $tzOffset } else { "-{0:000}" -f [math]::Abs($tzOffset) }
-    $threadId    = [System.Diagnostics.Process]::GetCurrentProcess().Id
-
-    $statePath = "$LogPath.state"
-    $logDir    = [System.IO.Path]::GetDirectoryName($LogPath)
-    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-
-    # The master log is a contended file: a CMTrace viewer, antivirus / search-indexer scans, or the OS
-    # lagging to release the handle right after the previous append can all briefly lock it. Append with
-    # retry and NEVER throw - a dropped log line must never abort the actual repair. -Encoding UTF8 skips
-    # the BOM-detection read that Add-Content does by default, which is the open that fails on a
-    # transiently held file (the same hardening Write-StepLogEntry already uses for step logs).
-    $appendLog = {
-        param($path, $value)
-        for ($i = 0; $i -lt 10; $i++) {
-            try { Add-Content -Path $path -Value $value -Encoding UTF8 -ErrorAction Stop; return } catch { Start-Sleep -Milliseconds 200 }
-        }
-        Write-Warning "Repair-System: a log entry could not be written to '$(Split-Path $path -Leaf)' after retries; continuing."
-    }
-    # Reads the open-entry state file, tolerating a transient lock or corrupt content (returns $null).
-    $readState = {
-        param($sp)
-        for ($i = 0; $i -lt 10; $i++) {
-            try { return (Get-Content $sp -Raw -ErrorAction Stop | ConvertFrom-Json) } catch { Start-Sleep -Milliseconds 200 }
-        }
-        return $null
-    }
-
-    function Close-UnclosedEntry {
-        if (Test-Path $statePath) {
-            $state = & $readState $statePath
-            Remove-Item $statePath -Force -ErrorAction SilentlyContinue
-            if ($null -eq $state) { return }
-            $autoCloseTime = [datetime]::Parse($state.Time)
-            $dateAuto = $autoCloseTime.ToString("MM-dd-yyyy")
-            $timeAuto = $autoCloseTime.ToString("HH:mm:ss.fff")
-            $tzAuto   = if ($tzOffset -ge 0) { "+{0:000}" -f $tzOffset } else { "-{0:000}" -f [math]::Abs($tzOffset) }
-            & $appendLog $state.LogPath "]LOG]!><time=""$timeAuto$tzAuto"" date=""$dateAuto"" component=""$($state.Component)"" context=""autoClosedByFollowingEntry"" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
-        }
-    }
-
-    if ($StartLogEntry -and $EndLogEntry) {
-        Close-UnclosedEntry
-        & $appendLog $LogPath "<![LOG[$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
-        return
-    }
-
-    switch ($PSCmdlet.ParameterSetName) {
-        'Start' {
-            Close-UnclosedEntry
-            if ($null -eq $Message) { $Message = "LogEntry:" }
-            & $appendLog $LogPath "<![LOG[$Message"
-            @{ Component = $Component; Source = $resolvedSource; LogPath = $LogPath; Time = $timestamp.ToString("o") } |
-                ConvertTo-Json -Compress | Out-File -FilePath $statePath -Encoding UTF8 -Force
-        }
-        'Add' {
-            if ($Message) { & $appendLog $LogPath $Message }
-        }
-        'End' {
-            if ($null -eq $Message) { $Message = "" }
-            $state = $null
-            if (Test-Path $statePath) {
-                $state = & $readState $statePath
-                Remove-Item $statePath -Force -ErrorAction SilentlyContinue
-            }
-            if ($null -ne $state) {
-                & $appendLog $state.LogPath "$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$($state.Component)"" context="""" type=""1"" thread=""$threadId"" file=""$($state.Source)"">"
-            } else {
-                & $appendLog $LogPath "$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
-            }
-        }
-        default {
-            Close-UnclosedEntry
-            & $appendLog $LogPath "<![LOG[$Message]LOG]!><time=""$timeStr$tzFormatted"" date=""$dateStr"" component=""$Component"" context="""" type=""1"" thread=""$threadId"" file=""$resolvedSource"">"
-        }
-    }
-}
-
-function Start-LogAppendJob {
-    param(
-        [Parameter(Mandatory=$true)]  [string]$StepLogPath,
-        [Parameter(Mandatory=$true)]  [string]$MasterLogPath,
-        [Parameter(Mandatory=$true)]  [string]$StepName,
-        [Parameter(Mandatory=$false)] [string]$Component = "Repair-System",
-        [switch]$Sync
-    )
-    $appendBlock = {
-        param($stepLogPath, $masterLogPath, $stepName, $component)
-        $maxWaitSec = 120; $waited = 0
-        while (-not (Test-Path $stepLogPath) -and $waited -lt $maxWaitSec) {
-            Start-Sleep -Seconds 5; $waited += 5
-        }
-        if (-not (Test-Path $stepLogPath)) { return }
-        $content = Get-Content $stepLogPath -Raw -ErrorAction SilentlyContinue
-        if ([string]::IsNullOrWhiteSpace($content)) { return }
-        # Collapse repeated progress lines (DISM bar / SFC verification) to only the last one.
-        # Split on \r\n, \n, or bare \r (SFC uses \r-only for in-place progress updates).
-        # Blank lines that appear between progress lines are suppressed; the first blank line
-        # after the last progress line is restored as a separator before the result text.
-        $lines    = $content -split '\r?\n|\r'
-        $filtered = [System.Collections.Generic.List[string]]::new()
-        $pending  = $null
-        foreach ($line in $lines) {
-            if ($line -match '^\[=.*%|^Verification \d+% complete') {
-                $pending = $line
-            } elseif ([string]::IsNullOrWhiteSpace($line) -and $null -ne $pending) {
-                # blank line while a progress line is pending — skip, it is between progress lines
-            } else {
-                if ($null -ne $pending) {
-                    $filtered.Add($pending)
-                    $filtered.Add("")   # blank separator before result text
-                    $pending = $null
-                }
-                $filtered.Add($line)
-            }
-        }
-        if ($null -ne $pending) { $filtered.Add($pending) }
-        $content = $filtered -join "`n"
-        $ts      = Get-Date
-        $timeStr = $ts.ToString("HH:mm:ss.fff")
-        $dateStr = $ts.ToString("MM-dd-yyyy")
-        $tzOffset = (Get-TimeZone).BaseUtcOffset.TotalMinutes
-        $tzFmt   = if ($tzOffset -ge 0) { "+{0:000}" -f $tzOffset } else { "-{0:000}" -f [math]::Abs($tzOffset) }
-        $tid     = [System.Diagnostics.Process]::GetCurrentProcess().Id
-        # Same contended-file hardening as Write-RepairLog: retry, and -Encoding UTF8 to skip the
-        # BOM-detection read that fails on a transiently locked file (also keeps the master log a
-        # single uniform encoding).
-        $appendMaster = {
-            param($mp, $v)
-            for ($k = 0; $k -lt 10; $k++) {
-                try { Add-Content -Path $mp -Value $v -Encoding UTF8 -ErrorAction Stop; return } catch { Start-Sleep -Milliseconds 200 }
-            }
-        }
-        & $appendMaster $masterLogPath "<![LOG[--- $stepName log ---"
-        & $appendMaster $masterLogPath $content
-        & $appendMaster $masterLogPath "--- end $stepName log ---]LOG]!><time=""$timeStr$tzFmt"" date=""$dateStr"" component=""$component"" context="""" type=""1"" thread=""$tid"" file=""LogAppendJob"">"
-    }
-    if ($Sync) {
-        & $appendBlock $StepLogPath $MasterLogPath $StepName $Component
-    } else {
-        return Start-Job -ScriptBlock $appendBlock -ArgumentList $StepLogPath, $MasterLogPath, $StepName, $Component
-    }
-}
-
-function Write-StepLogEntry {
-    # Append $Value to a step log with retry. Uses -Encoding UTF8 to skip the BOM-detection
-    # read that Add-Content normally performs — that read fails while the process redirect
-    # FileStream is still held open. Retries up to 10x / 2s. Falls back to Write-Warning.
-    param([string]$Path, [string]$Value, [switch]$Silent)
+    # -Encoding UTF8 skips the BOM-detection read Add-Content otherwise does, which is the open that
+    # fails on a transiently held file. -WhatIf:$false keeps logging active in a -WhatIf run.
     for ($i = 0; $i -lt 10; $i++) {
         try {
-            Add-Content -Path $Path -Value $Value -Encoding UTF8 -ErrorAction Stop
+            Add-Content -LiteralPath $LogPath -Value $entry -Encoding UTF8 -ErrorAction Stop -WhatIf:$false
             return
         } catch {
             Start-Sleep -Milliseconds 200
         }
     }
-    if (-not $Silent) {
-        Write-Warning "Step log '$(Split-Path $Path -Leaf)' could not be written. Entry: $Value"
+    Write-Warning "A log entry could not be written to '$LogPath'; continuing."
+}
+
+function Add-RepairStepLog {
+    <#
+    Embeds a finished step's own log (its content, read from the target by the caller) into the master
+    log as one CMTrace entry. Repeated progress lines (DISM bar / SFC verification) are collapsed to the
+    last one.
+    #>
+    param(
+        [AllowEmptyString()] [AllowNull()] [string]$Content,
+        [Parameter(Mandatory=$true)]  [string]$MasterLogPath,
+        [Parameter(Mandatory=$true)]  [string]$StepName,
+        [Parameter(Mandatory=$false)] [string]$Component = "RepairSystem"
+    )
+    if ([string]::IsNullOrWhiteSpace($Content)) { return }
+    # The step's own entries (Write-CMTraceLog in the step log) become plain 'time [severity] message'
+    # lines, so the embedded block reads like the tool output around it.
+    $content = [regex]::Replace($Content, '(?s)<!\[LOG\[(.*?)\]LOG\]!><time="([\d:.]+)[^"]*"[^>]*?type="(\d)"[^>]*>', {
+        param($m)
+        $level = @{ '2' = ' [Warning]'; '3' = ' [Error]' }[$m.Groups[3].Value]
+        "$($m.Groups[2].Value)$level $($m.Groups[1].Value)"
+    })
+    # Split on \r\n, \n, or bare \r (SFC uses \r-only for in-place progress updates).
+    # Blank lines that appear between progress lines are suppressed; the first blank line
+    # after the last progress line is restored as a separator before the result text.
+    $lines    = $content -split '\r?\n|\r'
+    $filtered = [System.Collections.Generic.List[string]]::new()
+    $pending  = $null
+    foreach ($line in $lines) {
+        if ($line -match '^\[=.*%|^Verification \d+% complete') {
+            $pending = $line
+        } elseif ([string]::IsNullOrWhiteSpace($line) -and $null -ne $pending) {
+            # blank line while a progress line is pending — skip, it is between progress lines
+        } else {
+            if ($null -ne $pending) {
+                $filtered.Add($pending)
+                $filtered.Add("")   # blank separator before result text
+                $pending = $null
+            }
+            $filtered.Add($line)
+        }
     }
+    if ($null -ne $pending) { $filtered.Add($pending) }
+    Write-CMTraceLog -Message ("--- $StepName log ---`n" + ($filtered -join "`n") + "`n--- end $StepName log ---") -Component $Component -LogPath $MasterLogPath -Caller $MyInvocation
+}
+
+function Write-StepLogLine {
+    # One entry in a step's own log on the target; bundled with Write-CMTraceLog into every step that
+    # keeps one. Add-RepairStepLog folds the step log into the master log afterwards.
+    param(
+        [Parameter(Mandatory=$true)] [string]$Path,
+        [Parameter(Mandatory=$true)] [AllowEmptyString()] [string]$Message,
+        [Parameter(Mandatory=$true)] [string]$Component,
+        [ValidateSet('Info','Warning','Error')] [string]$Severity = 'Info'
+    )
+    Write-CMTraceLog -Message $Message -Component $Component -LogPath $Path -Severity $Severity -Caller $MyInvocation
 }
 
 <#
@@ -252,6 +191,9 @@ $script:RepairSystemStepLayouts = @{
         10 = @{ Key = 'ZipLogs';                   Label = 'Zip CBS/DISM Logs' }
     }
 }
+# Set while a -Quiet run is in progress, so remote steps can be silenced on the device as well.
+$script:RepairSystemQuietRun = $false
+
 # The current (widest) layout - what ConvertTo encodes against and what live runs report/analyse.
 $script:RepairSystemSteps = $script:RepairSystemStepLayouts[11]
 
@@ -274,7 +216,7 @@ Anything not listed here falls back to a generic "tool-specific result code" mes
 #>
 $script:RepairSystemKnownCodes = @{
     Generic = @{
-        '0'          = 'Success, or the step was not requested. Without the original run context this cannot be distinguished: a step that was never requested (e.g. -noDism, -noSfc, or component cleanup not included) keeps its initial value of 0, indistinguishable here from a step that ran and succeeded. A step skipped for a known reason instead carries its own code - not necessary (-4) or connection lost (5) - so those never appear as 0.'
+        '0'          = 'Success, or the step was not requested. Without the original run context this cannot be distinguished: a step that was never requested (e.g. -noDism, -noSfc, or component cleanup not included) keeps its initial value of 0, indistinguishable here from a step that ran and succeeded. A step skipped for a known reason instead carries its own code - not necessary (-4), postponed (-5) or connection lost (5) - so those never appear as 0.'
         '1'          = 'The step failed. See the step''s log file for details.'
         '5'          = 'Skipped - the remote connection was lost before this step could run.'
         '87'         = 'DISM: The parameter is incorrect (ERROR_INVALID_PARAMETER).'
@@ -282,17 +224,24 @@ $script:RepairSystemKnownCodes = @{
         '3010'       = 'DISM/SFC: Success, but a restart is required to finish applying changes.'
         '-2' = 'Repair-System terminated the process because it exceeded its maximum allowed run time (timeout). Restarting the device and running the step again is recommended.'
         '-3' = 'The process ended almost immediately, well before Repair-System killed it for a timeout. It was most likely closed by something else (e.g. Task Manager, a crash, a forced shutdown) before it could finish, so its own exit code could not be trusted and was not used.'
-        '-4' = 'The step was requested but did not run because it was not necessary (for DISM RestoreHealth, ScanHealth reported no corruption; for DISM StartComponentCleanup, AnalyzeComponentStore did not recommend a cleanup) or because a required prior step did not complete. No changes were made, and this is not an error.'
+        '-4' = 'The step was requested but did not run because it was not necessary (for DISM StartComponentCleanup, AnalyzeComponentStore did not recommend a cleanup) or because a required prior step did not complete. No changes were made, and this is not an error.'
+        '-5' = 'The step was needed but postponed because a restart is pending (for DISM StartComponentCleanup, AnalyzeComponentStore recommended a cleanup but reported that a restart is required first). Restart the device and run Repair-System again.'
     }
     Startup = @{
         '0' = 'Startup completed successfully.'
         '1' = 'Invalid -ComputerName format.'
-        '2' = 'Remote computer unreachable (ping failed).'
+        '2' = 'Remote computer unreachable (no PowerShell session could be opened and ping failed).'
         '3' = 'Unable to establish a WinRM/remote PowerShell session.'
         '4' = 'Connection to the remote device was lost during execution.'
         '5' = 'Not running with administrative privileges.'
         '6' = 'Error reading or writing the configuration file.'
         '7' = 'Conflicting parameters were supplied (e.g. -IncludeComponentCleanup with -noDism).'
+    }
+    DISMScanHealth = @{
+        '0' = 'ScanHealth is no longer run - RestoreHealth (position 2) scans the image itself and repairs only what it finds - so current builds always report 0 here. In codes from older builds, 0 meant success or not requested.'
+    }
+    WindowsUpdateCleanup = @{
+        '3010' = 'Success, but a restart is required: locked items are deleted at the next boot. Also reported when an update or MSI installation was still running after the wait - then no service was stopped and the whole reset runs at the next boot.'
     }
     WMIRepair = @{
         '0' = 'WMI repository is consistent, or was inconsistent and successfully salvaged (verified consistent afterwards).'
@@ -321,13 +270,17 @@ $script:RepairSystemProcessSentinel = @{
 $script:RepairSystemMinPlausibleDurationSeconds = 30
 
 # Out-of-band value recorded for a step that WAS requested but deliberately did not run because
-# a precondition was not met (DISM RestoreHealth when ScanHealth finds no corruption, DISM
-# StartComponentCleanup when AnalyzeComponentStore recommends none, or a conditional step whose
+# a precondition was not met (DISM StartComponentCleanup when AnalyzeComponentStore recommends none, or a conditional step whose
 # prerequisite step failed). Distinct from 0 - which for a requested step would read as a genuine
 # success - so "requested but not executed" is never misreported as "ran and succeeded". Sits in
 # the same reserved top-of-uint32 band as the process sentinels and is treated as a non-problem
 # by Get-RepairSystemExitCodeSeverity.
 $script:RepairSystemNotExecutedCode = -4 # 0xFFFFFFFC / 4294967292 as uint32
+
+# Recorded for a step that is needed but was held back because a restart is pending (DISM
+# StartComponentCleanup when AnalyzeComponentStore recommends a cleanup but returns 3010). Unlike
+# -4 it needs action: restart and run again.
+$script:RepairSystemPostponedCode = -5 # 0xFFFFFFFB / 4294967291 as uint32
 
 function Get-RepairSystemProcessResult {
     <#
@@ -418,7 +371,7 @@ function ConvertFrom-RepairSystemExitCode {
     # and let the caller pick the matching step layout by the resulting count - this is what keeps a
     # historical code decoding correctly after a new step is inserted ahead of the old trailing ones.
     # Signed Int32 so the out-of-band sentinels round-trip back to the small negatives they were
-    # stored as (-2/-3/-4) instead of surfacing as their unwieldy uint32 form (4294967294/93/92).
+    # stored as (-2/-3/-4/-5) instead of surfacing as their unwieldy uint32 form (4294967294/93/92/91).
     # This makes ConvertFrom the true inverse of ConvertTo, which takes a signed [int[]].
     $values = [System.Collections.Generic.List[int]]::new()
     $pos = 0
@@ -539,7 +492,10 @@ function Set-RepairSystemExitCode {
         [Parameter(Mandatory=$false)]
         [string]$LogPath = '',
         [Parameter(Mandatory=$false)]
-        [bool[]]$RequestedSteps = $null
+        [bool[]]$RequestedSteps,
+        # Steps that were started; only consulted after a lost connection (startup field 4).
+        [Parameter(Mandatory=$false)]
+        [bool[]]$AttemptedSteps
     )
     $detailedCode = ConvertTo-RepairSystemExitCode -Codes $Codes
     $severity     = Get-RepairSystemExitCodeSeverity -Codes $Codes
@@ -565,12 +521,16 @@ function Set-RepairSystemExitCode {
                 $val   = $step.Value
                 $status = if (-not $isReq -and $val -eq 0) {
                     'Not requested'
+                } elseif ($val -eq 0 -and $Codes[0] -eq 4 -and $null -ne $AttemptedSteps -and -not $AttemptedSteps[$step.Position]) {
+                    'Not run (connection lost)'
                 } elseif ($val -eq 0) {
                     'Success'
                 } elseif ($val -eq 3010) {
                     'Success (restart required)'
                 } elseif ($val -eq -4) {
                     'Skipped (not needed)'
+                } elseif ($val -eq -5) {
+                    'Postponed (restart required)'
                 } elseif ($val -eq 5) {
                     'Skipped (connection lost)'
                 } elseif ($val -eq -2) {
@@ -630,9 +590,10 @@ function Write-RepairSystemExitCodeAnalysis {
 function New-RemoteFunctionScriptBlock {
     <#
     Invoke-Command -ScriptBlock ${function:Name} only ships that single function's body to the
-    remote session, so helper functions it depends on (eg. Stop-ServiceSafely) are otherwise
+    remote session, so helper functions it depends on (eg. Remove-PathReliable) are otherwise
     undefined there. This bundles the helper definitions together with the entry point into one
-    script block, so the helper stays defined in a single place but still works when shipped remotely.
+    script block, so the helper stays defined in a single place but still works when shipped. The
+    block takes one hashtable (-ArgumentList $params) and splats it onto the entry point.
     #>
     param(
         [Parameter(Mandatory=$true)]
@@ -642,506 +603,348 @@ function New-RemoteFunctionScriptBlock {
         [string]$EntryPoint
     )
 
-    $scriptText = ""
+    $scriptText = "param(`$Params)`n"
     foreach ($name in $FunctionName) {
         $scriptText += "function $name {`n" + (Get-Item "function:$name").ScriptBlock.ToString() + "`n}`n"
     }
-    $scriptText += "$EntryPoint @args"
+    $scriptText += "$EntryPoint @Params"
     return [scriptblock]::Create($scriptText)
 }
 
-function Invoke-RemoteStep {
+function Invoke-RepairStep {
     <#
-    Runs one remote repair step via Invoke-Command. If the step fails with a remoting
-    error, retries the connection for up to $ReconnectTimeoutSec seconds. If the machine
-    comes back online the interrupted step is marked failed but remaining steps continue.
-    If not, ConnectionLost is set so every later call becomes a no-op.
+    Runs one step on the target: in the run's PSSession for a remote device, in-process for the local
+    one, so every step takes the same code path. Errors the step itself reports are shown and its
+    return value is kept. Only a broken session counts as a lost connection: the session is reopened
+    for up to $ReconnectTimeoutSec seconds - if that works the interrupted step is marked failed (1)
+    and the run continues, otherwise $Target.Lost is set and every later call returns $null.
     #>
     param(
         [Parameter(Mandatory=$true)]
-        [hashtable]$InvokeParams,
+        [hashtable]$Target,
 
         [Parameter(Mandatory=$true)]
         [scriptblock]$ScriptBlock,
 
-        [Parameter(Mandatory=$false)]
         [object[]]$ArgumentList = @(),
-
-        [Parameter(Mandatory=$true)]
-        [string]$ComputerName,
 
         [Parameter(Mandatory=$true)]
         [string]$StepName,
 
-        [Parameter(Mandatory=$true)]
-        [ref]$ConnectionLost,
-
-        [Parameter(Mandatory=$false)]
         [int]$ReconnectTimeoutSec = 90
     )
-
-    if ($ConnectionLost.Value) {
-        return $null
+    if ($Target.Lost) { return $null }
+    # A step that throws fails only itself (1); without the catch it would end the whole run. On PS 5.1
+    # a throw in the session also arrives here as a terminating RemoteException.
+    if (-not $Target.Session) {
+        try { return Invoke-Command -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList }
+        catch { Write-Error "'$StepName' failed: $_"; return 1 }
     }
 
+    # A remote step's host output and warnings reach the local console directly, past any redirection
+    # by the caller, so a quiet run silences them on the device itself.
+    if ($Target.Quiet) { $ScriptBlock = [scriptblock]::Create("& {`n$ScriptBlock`n} @args 6>`$null 3>`$null") }
+    $result = $null
     try {
-        $stepResult = Invoke-Command @InvokeParams -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop
-        return $stepResult
+        $result = Invoke-Command -Session $Target.Session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
     } catch {
-        $stepError = $_
-        Write-Warning "Connection to '$ComputerName' interrupted during '$StepName'. Retrying for up to $ReconnectTimeoutSec seconds..."
-
-        $deadline = (Get-Date).AddSeconds($ReconnectTimeoutSec)
-        $reconnected = $false
-        while ((Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 10
-            try {
-                Invoke-Command @InvokeParams -ScriptBlock { $true } -ErrorAction Stop | Out-Null
-                $reconnected = $true
-                break
-            } catch { }
-        }
-
-        if ($reconnected) {
-            Write-Warning "Reconnected to '$ComputerName'. Step '$StepName' did not complete - marking as failed and continuing."
-            return 1
-        }
-
-        $ConnectionLost.Value = $true
-        Write-Error "Lost connection to '$ComputerName' while performing '$StepName'. Skipping remaining repair steps.`r`n$stepError"
-        return $null
+        if ($Target.Session.State -eq 'Opened') { Write-Error "'$StepName' failed: $_"; return 1 }
     }
+    if ($Target.Session.State -eq 'Opened') { return $result }
+
+    Write-Warning "Connection to '$($Target.ComputerName)' interrupted during '$StepName'. Retrying for up to $ReconnectTimeoutSec seconds..."
+    Remove-PSSession -Session $Target.Session -ErrorAction SilentlyContinue
+    $sessionParams = $Target.SessionParams
+    $deadline = (Get-Date).AddSeconds($ReconnectTimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 10
+        try {
+            $Target.Session = New-PSSession @sessionParams -ErrorAction Stop
+            Write-Warning "Reconnected to '$($Target.ComputerName)'. Step '$StepName' did not complete - marking as failed and continuing."
+            return 1
+        } catch { }
+    }
+    $Target.Lost = $true
+    Write-Error "Lost connection to '$($Target.ComputerName)' while performing '$StepName'. Skipping remaining repair steps."
+    return $null
+}
+function Invoke-RepairTool {
+    <#
+    Runs one DISM/SFC operation with its output captured to the step log and a hard time limit, and
+    returns the result Repair-System trusts for it (see Get-RepairSystemProcessResult). stderr goes to
+    <step log>_stderr.log: an empty capture is deleted (queued for the next reboot if a killed process
+    still holds it), a non-empty one is kept as its own file. Self-contained apart from
+    Write-CMTraceLog, Get-RepairSystemProcessResult, Remove-PathReliable and Register-PendingDelete.
+    #>
+    param(
+        [Parameter(Mandatory=$true)] [string]$Name,
+        [Parameter(Mandatory=$true)] [string]$FilePath,
+        [Parameter(Mandatory=$true)] [string[]]$ArgumentList,
+        [Parameter(Mandatory=$true)] [string]$LogPath,
+        [Parameter(Mandatory=$true)] [decimal]$MaxMinutes,
+        # SFC writes UTF-16 with embedded NULs; normalise its captures to plain text.
+        [switch]$AsciiOutput
+    )
+    $errLog = $LogPath -replace '\.log$', '_stderr.log'
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -RedirectStandardOutput $LogPath -RedirectStandardError $errLog -NoNewWindow -PassThru
+        $null = $process.Handle   # keeps ExitCode readable after exit (empty on PS 5.1 otherwise)
+        $startTime = Get-Date
+        $killedByTimeout = -not $process.WaitForExit([int]($MaxMinutes * 60000))
+        if ($killedByTimeout) {
+            $stuck = "$Name has been running for more than $MaxMinutes minutes. Stopping it..."
+            Write-Warning $stuck
+            try {
+                # Only the DismHost.exe children of this run, never other servicing on the machine.
+                $children = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=$($process.Id)" -ErrorAction SilentlyContinue)
+                $process.Kill()
+                $children | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                [void]$process.WaitForExit(30000)
+                # Written only now: the step log is held by the process's output redirect until it exits.
+                Write-CMTraceLog "$stuck $Name terminated." $Name $LogPath Warning
+                Write-Warning "$Name terminated."
+            } catch {
+                Write-CMTraceLog "$stuck Failed to terminate ${Name}: $_" $Name $LogPath Error
+                Write-Warning "Failed to terminate ${Name}: $_"
+            }
+        }
+        $result = Get-RepairSystemProcessResult -Process $process -StartTime $startTime -KilledByTimeout:$killedByTimeout
+    } catch {
+        $message = "An error occurred while running ${Name}:`r`n$_"
+        Write-Error $message
+        Write-CMTraceLog $message $Name $LogPath Error
+        return 1
+    }
+
+    # Post-run handling must never overwrite the step result (eg. turn a -2 timeout into a 1): right
+    # after a timeout kill a handle may still be held, so every read here is allowed to fail.
+    try {
+        if ($AsciiOutput) {
+            foreach ($file in $LogPath, $errLog) {
+                $text = if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw -ErrorAction Stop }
+                if ($null -ne $text) { Set-Content -LiteralPath $file -Value (($text -replace '[^\x00-\x7F]', '') -replace [char]0) -ErrorAction Stop }
+            }
+        }
+    } catch {
+        Write-CMTraceLog "Post-run log handling failed (step result preserved): $_" $Name $LogPath Warning
+    }
+    $errItem = Get-Item -LiteralPath $errLog -ErrorAction SilentlyContinue
+    if ($errItem) {
+        $isEmpty = $errItem.Length -eq 0
+        if (-not $isEmpty -and $errItem.Length -lt 4096) {
+            try { $isEmpty = [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $errLog -Raw -ErrorAction Stop)) } catch { }
+        }
+        if ($isEmpty -and (Remove-PathReliable -Path $errLog).Scheduled) {
+            Write-CMTraceLog "Empty stderr capture '$($errItem.Name)' is locked; queued for deletion on the next restart." $Name $LogPath
+        }
+    }
+    return $result
 }
 
 function Invoke-SFC {
-    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$sfcLog,
-
-        [Parameter(Mandatory = $true, Position=1)]
-        [ValidateRange(0.25,10.0)]
-        [decimal]$ChangeTimeout = 1.0,
-
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg
-
-    )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    # get directory path from $sfcLog
-    $sfcLogDir = Split-Path -Path $sfcLog -Parent
-    $sfcErrorLog = Join-Path -Path $sfcLogDir -ChildPath "SFC_Error.log"
-    $SfcMaxDurationVal = 20 * $ChangeTimeout
-    if (-not $Quiet) { Write-Host "executing SFC (up to $SfcMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
-        try{
-            $SfcMaxDuration = New-TimeSpan -Minutes $SfcMaxDurationVal
-            $process = Start-Process -FilePath "sfc" -ArgumentList "/scannow" -RedirectStandardOutput $sfcLog -RedirectStandardError $sfcErrorLog -NoNewWindow -PassThru
-            $SfcStartTime = Get-Date
-            $sfcKilledByTimeout = $false
-
-            # Monitor the process
-            while (-not $process.HasExited) {
-                Start-Sleep -Seconds 5
-
-                $elapsed = (Get-Date) - $SfcStartTime
-                if ($elapsed -gt $SfcMaxDuration) {
-                    $sfcStucknotify = "Sfc.exe has been running for more than $($SfcMaxDuration.TotalMinutes) minutes. Stopping it..."
-                    Write-Warning $sfcStucknotify
-                    $sfcKilledByTimeout = $true
-                    try {
-                        $process.Kill()
-                        [void]$process.WaitForExit(30000); $process.WaitForExit()
-                        Write-StepLogEntry $sfcLog "!!`t`t> $sfcStucknotify"
-                        $sfcStuckTerminate = "Sfc.exe terminated."
-                        Write-StepLogEntry $sfcLog "!!`t`t> $sfcStuckTerminate"
-                        Write-Warning $sfcStuckTerminate
-                    } catch {
-                        $sfcStuckTerminateFail = "Failed to terminate Sfc.exe: $_"
-                        Write-StepLogEntry $sfcLog "!!`t`t> $sfcStuckTerminateFail" -Silent
-                        Write-Warning $sfcStuckTerminateFail
-                    }
-                    break
-                }
-            }
-            $process.WaitForExit()
-            $sfcExitCode = Get-RepairSystemProcessResult -Process $process -StartTime $SfcStartTime -KilledByTimeout:$sfcKilledByTimeout
-            # $sfcExitCode is captured above, before this log cleanup: right after a timeout kill a
-            # log handle may still be held, so reading it can throw - keep that out of the outer
-            # catch so a cleanup hiccup can't overwrite the step result (e.g. a -2 timeout as a 1).
-            try {
-                $logContent = Get-Content $sfcLog -Raw
-                $logContent = $logContent -replace '[^\x00-\x7F]', ''
-                $logContent = $logContent -replace [char]0
-                Set-Content $sfcLog -Value $logContent
-
-                $errorLogContent = Get-Content $sfcErrorLog -Raw
-                $errorLogContent = $errorLogContent -replace '[^\x00-\x7F]', ''
-                $errorLogContent = $errorLogContent -replace [char]0
-                Write-StepLogEntry $sfcLog "`r`n`r`n// Start Error-Log:`r`n$errorLogContent`r`n// End Error-Log"
-                Remove-Item -Path $sfcErrorLog -Force -ErrorAction SilentlyContinue
-            } catch {
-                Write-StepLogEntry $sfcLog "!!`t`t> Post-run log handling failed (step result preserved): $_" -Silent
-            }
-            return $sfcExitCode
-        } catch {
-            $errorMessage = "An error occurred while performing SFC: `r`n$_"
-            Write-Error $errorMessage
-            Add-Content -Path $sfcLog -Value $errorMessage
-            return 1
-        }
-}
-
-function Invoke-DISMScan {
-    param (
-        [CmdletBinding()]
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$dismScanLog,
-
-        [Parameter(Mandatory = $true, Position=1)]
-        [ValidateRange(0.25,10.0)]
-        [decimal]$ChangeTimeout = 1.0,
-
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg
-
-    )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    $dismScanLogDir = Split-Path -Path $dismScanLog -Parent
-    $dismErrorLog = Join-Path -Path $dismScanLogDir -ChildPath "DISM_Error.log"
-    $DismMaxDurationVal = 15 * $ChangeTimeout
-    if (-not $Quiet) { Write-Host "executing DISM/ScanHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
-    try{
-        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/Scanhealth" -RedirectStandardOutput $dismScanLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
-        $DismStartTime = Get-Date
-        $dismKilledByTimeout = $false
-
-        # Monitor the process
-        while (-not $process.HasExited) {
-            Start-Sleep -Seconds 5
-
-            $elapsed = (Get-Date) - $DismStartTime
-            if ($elapsed -gt $DismMaxDuration) {
-                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
-                Write-Warning $dismStucknotify
-                $dismKilledByTimeout = $true
-                try {
-                    $process.Kill()
-                    Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    [void]$process.WaitForExit(30000); $process.WaitForExit()
-                    Write-StepLogEntry $dismScanLog "!!`t`t> $dismStucknotify"
-                    $dismStuckTerminate = "Dism.exe terminated."
-                    Write-StepLogEntry $dismScanLog "!!`t`t> $dismStuckTerminate"
-                    Write-Warning $dismStuckTerminate
-                } catch {
-                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
-                    Write-StepLogEntry $dismScanLog "!!`t`t> $dismStuckTerminateFail" -Silent
-                    Write-Warning $dismStuckTerminateFail
-                }
-                break
-            }
-        }
-
-        $process.WaitForExit()
-        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
-        # Capture the result before the log cleanup below: right after a timeout kill the error-log
-        # handle may still be held, so reading it can throw - and that must not fall through to the
-        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
-        try {
-            $dismLogContent = Get-Content $dismErrorLog -Raw
-            Write-StepLogEntry $dismScanLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-StepLogEntry $dismScanLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
-        }
-        return $dismResult
-    } catch {
-        $errorMessage = "An error occurred while performing DISM ScanHealth: `r`n$_"
-        Write-Error $errorMessage
-        Add-Content -Path $dismScanLog -Value $errorMessage
-        return 1
-    }
-}
-
-function Get-DISMScanResult {
-    param(
         [Parameter(Mandatory=$true)]
-        [String]$dismScanLog
-    )
-    $lines=Get-Content -Path $dismScanLog
-    $ScanResultData=$lines[-1..-($lines.Count)]
-    foreach ($line in $ScanResultData) {
-        if ($line -match 'The component store is repairable.') {
-            return 1
-        } elseif ($line -match 'No component store corruption detected.') {
-            return 0
+        [string]$LogPath,
 
+        [Parameter(Mandatory=$true)]
+        [ValidateRange(0.25,10.0)]
+        [decimal]$ChangeTimeout
+    )
+    $maxMinutes = 20 * $ChangeTimeout
+    $start = Get-Date
+    Write-Host "executing SFC (up to $maxMinutes min, Start $(Get-Date -Format 'HH:mm' -Date $start))"
+    $result = Invoke-RepairTool -Name 'Sfc.exe' -FilePath 'sfc' -ArgumentList '/scannow' -LogPath $LogPath -MaxMinutes $maxMinutes -AsciiOutput
+    Write-CMTraceLog (Get-SfcCbsSummary -Since $start) 'Sfc.exe' $LogPath
+    $result
+}
+
+function Get-SfcCbsSummary {
+    <#
+    Language-neutral SFC verdict: sfc's console text is localised and it exits 0 even when it could not
+    repair, but the [SR] entries it writes to CBS.log are neither. Returns one fixed line for the step
+    log, which Test-DismSfcStepIncomplete reads. CBS.log is rotated to CbsPersist_*.log (compressed to
+    .cab later) when it grows too large, possibly in the middle of the scan, so the persisted parts
+    written since the start are read first. Self-contained for remote shipping.
+    #>
+    param([Parameter(Mandatory=$true)] [datetime]$Since)
+    $cbsDir       = Join-Path $env:windir 'Logs\CBS'
+    $sinceStamp   = $Since.AddSeconds(-2).ToString('yyyy-MM-dd HH:mm:ss')
+    $finished     = $false
+    $repaired     = @{}
+    $unrepairable = @{}
+    $expandDir    = Join-Path $env:TEMP "RepairSystem-Cbs-$([guid]::NewGuid().ToString('N'))"
+    try {
+        $persisted = @(Get-ChildItem -LiteralPath $cbsDir -Filter 'CbsPersist_*' -File -ErrorAction SilentlyContinue |
+                       Where-Object { $_.LastWriteTime -ge $Since.AddSeconds(-2) -and $_.Extension -in '.log', '.cab' } | Sort-Object Name)
+        $files = foreach ($file in $persisted) {
+            if ($file.Extension -eq '.log') { $file.FullName; continue }
+            # expand.exe names a single-file cab's content after the cab, so every file extracted counts
+            $target = Join-Path $expandDir $file.BaseName
+            $null = New-Item -ItemType Directory -Path $target -Force
+            & (Join-Path $env:windir 'System32\expand.exe') "-F:*" $file.FullName $target 2>&1 | Out-Null
+            Get-ChildItem -LiteralPath $target -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
         }
+        $files = @($files) + (Join-Path $cbsDir 'CBS.log')
+        foreach ($path in $files) {
+            # CBS.log is held open by TrustedInstaller, so share everything.
+            $reader = New-Object System.IO.StreamReader (New-Object System.IO.FileStream $path, 'Open', 'Read', 'ReadWrite, Delete')
+            try {
+                while ($null -ne ($line = $reader.ReadLine())) {
+                    if ($line.IndexOf('[SR] ') -lt 0 -or $line.Length -lt 19 -or [string]::CompareOrdinal($line.Substring(0, 19), $sinceStamp) -lt 0) { continue }
+                    # the final batch's "Repair complete" is the only one per run
+                    if ($line -match '\[SR\] Repair complete') { $finished = $true }
+                    elseif ($line -match '\[SR\] Repairing file (.+) from store') { $repaired[(Split-Path $Matches[1] -Leaf)] = $true }
+                    elseif ($line -match '\[SR\] Could not reproject corrupted file ([^;]+)') { $unrepairable[(Split-Path $Matches[1] -Leaf)] = $true }
+                    elseif ($line -match "\[SR\] Cannot repair member file \[l:\d+\]'([^']+)'") { $unrepairable[$Matches[1]] = $true }
+                }
+            } finally { $reader.Dispose() }
+        }
+    } catch {
+        return "Repair-System SFC result (CBS.log): not available - $($_.Exception.Message)"
+    } finally {
+        if (Test-Path -LiteralPath $expandDir) { Remove-Item -LiteralPath $expandDir -Recurse -Force -ErrorAction SilentlyContinue }
     }
-    return 1
+    $result = "Repair-System SFC result (CBS.log): Finished=$finished; Repaired=$($repaired.Count); Unrepairable=$($unrepairable.Count)"
+    if ($unrepairable.Count) { $result += " ($(@($unrepairable.Keys) -join ', '))" }
+    $result
 }
 
 function Invoke-DISMRestore {
-    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$dismRestoreLog,
+        [Parameter(Mandatory=$true)]
+        [string]$LogPath,
 
-        [Parameter(Mandatory = $true, Position=1)]
+        [Parameter(Mandatory=$true)]
         [ValidateRange(0.25,10.0)]
-        [decimal]$ChangeTimeout = 1.0,
-
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg
-
+        [decimal]$ChangeTimeout
     )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    $dismLogDir = Split-Path -Path $dismRestoreLog -Parent
-    $dismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
-
-    $DismMaxDurationVal = 40 * $ChangeTimeout
-    if (-not $Quiet) { Write-Host "executing DISM/RestoreHealth (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
-    try{
-        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/RestoreHealth" -RedirectStandardOutput $dismRestoreLog -RedirectStandardError $dismErrorLog -NoNewWindow -PassThru
-        $DismStartTime = Get-Date
-        $dismKilledByTimeout = $false
-
-        # Monitor the process
-        while (-not $process.HasExited) {
-            Start-Sleep -Seconds 5
-
-            $elapsed = (Get-Date) - $DismStartTime
-            if ($elapsed -gt $DismMaxDuration) {
-                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
-                Write-Warning $dismStucknotify
-                $dismKilledByTimeout = $true
-                try {
-                    $process.Kill()
-                    Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    [void]$process.WaitForExit(30000); $process.WaitForExit()
-                    Write-StepLogEntry $dismRestoreLog "!!`t`t> $dismStucknotify"
-                    $dismStuckTerminate = "Dism.exe terminated."
-                    Write-StepLogEntry $dismRestoreLog "!!`t`t> $dismStuckTerminate"
-                    Write-Warning $dismStuckTerminate
-                } catch {
-                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
-                    Write-StepLogEntry $dismRestoreLog "!!`t`t> $dismStuckTerminateFail" -Silent
-                    Write-Warning $dismStuckTerminateFail
-                }
-                break
-            }
-        }
-
-        $process.WaitForExit()
-        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
-        # Capture the result before the log cleanup below: right after a timeout kill the error-log
-        # handle may still be held, so reading it can throw - and that must not fall through to the
-        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
-        try {
-            $dismLogContent = Get-Content $dismErrorLog -Raw
-            Write-StepLogEntry $dismRestoreLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-StepLogEntry $dismRestoreLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
-        }
-        return $dismResult
-    } catch {
-        $errorMessage = "An error occurred while performing DISM RestoreHealth: `r`n$_"
-        Write-Error $errorMessage
-        Add-Content -Path $dismRestoreLog -Value $errorMessage
-        return 1
-    }
+    $maxMinutes = 40 * $ChangeTimeout
+    Write-Host "executing DISM/RestoreHealth (up to $maxMinutes min, Start $(Get-Date -Format 'HH:mm'))"
+    Invoke-RepairTool -Name 'Dism.exe' -FilePath 'dism.exe' -ArgumentList '/online', '/Cleanup-Image', '/RestoreHealth', '/NoRestart', '/English' -LogPath $LogPath -MaxMinutes $maxMinutes
 }
 
 function Invoke-DISMAnalyzeComponentStore {
-    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$analyzeComponentLog,
+        [Parameter(Mandatory=$true)]
+        [string]$LogPath,
 
-        [Parameter(Mandatory = $true, Position=1)]
+        [Parameter(Mandatory=$true)]
         [ValidateRange(0.25,10.0)]
-        [decimal]$ChangeTimeout = 1.0,
-
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg
-
+        [decimal]$ChangeTimeout
     )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    $DismLogDir = Split-Path -Path $analyzeComponentLog -Parent
-    $DismErrorLog = Join-Path -Path $DismLogDir -ChildPath "DISM_Error.log"
-
-    $DismMaxDurationVal = 5 * $ChangeTimeout
-    if (-not $Quiet) { Write-Host "executing DISM Analyze Component Store (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
-    try{
-        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/AnalyzeComponentStore" -RedirectStandardOutput $analyzeComponentLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
-        $DismStartTime = Get-Date
-        $dismKilledByTimeout = $false
-
-        # Monitor the process
-        while (-not $process.HasExited) {
-            Start-Sleep -Seconds 5
-
-            $elapsed = (Get-Date) - $DismStartTime
-            if ($elapsed -gt $DismMaxDuration) {
-                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
-                Write-Warning $dismStucknotify
-                $dismKilledByTimeout = $true
-                try {
-                    $process.Kill()
-                    Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    [void]$process.WaitForExit(30000); $process.WaitForExit()
-                    Write-StepLogEntry $analyzeComponentLog "!!`t`t> $dismStucknotify"
-                    $dismStuckTerminate = "Dism.exe terminated."
-                    Write-StepLogEntry $analyzeComponentLog "!!`t`t> $dismStuckTerminate"
-                    Write-Warning $dismStuckTerminate
-                } catch {
-                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
-                    Write-StepLogEntry $analyzeComponentLog "!!`t`t> $dismStuckTerminateFail" -Silent
-                    Write-Warning $dismStuckTerminateFail
-                }
-                break
-            }
-        }
-        $process.WaitForExit()
-        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
-        # AnalyzeComponentStore returns a NON-ZERO exit code (e.g. 1) precisely when it recommends
-        # cleanup ("Component Store Cleanup Recommended : Yes") - a normal, successful outcome, not a
-        # failure. Left alone, that fast (well under the plausibility window) non-zero-but-clean finish
-        # is misread by Get-RepairSystemProcessResult as -3 (terminated externally), which in the caller
-        # also suppresses the StartComponentCleanup step. DISM writes the verdict line only after the
-        # scan has finished, so a self-completed analysis that produced a Yes/No verdict is a success:
-        # normalise it to 0 and let Get-DISMAnalyzeComponentStoreResult (log-parsed) drive the cleanup
-        # decision. A timeout kill (-2) or a genuine failure with no verdict line is left untouched.
-        if (-not $dismKilledByTimeout -and $dismResult -ne 0) {
-            try {
-                $analyzeOutput = Get-Content -Path $analyzeComponentLog -Raw -ErrorAction Stop
-                if ($analyzeOutput -match 'Component Store Cleanup Recommended\s*:\s*(Yes|No)') { $dismResult = 0 }
-            } catch { }
-        }
-        # Capture the result before the log cleanup below: right after a timeout kill the error-log
-        # handle may still be held, so reading it can throw - and that must not fall through to the
-        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
-        try {
-            $dismLogContent = Get-Content $dismErrorLog -Raw
-            Write-StepLogEntry $analyzeComponentLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-StepLogEntry $analyzeComponentLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
-        }
-        return $dismResult
-    } catch {
-        $errorMessage = "An error occurred while performing DISM AnalyzeComponentStore: `r`n$_"
-        Write-Error $errorMessage
-        Add-Content -Path $analyzeComponentLog -Value $errorMessage
-        return 1
-    }
+    $maxMinutes = 5 * $ChangeTimeout
+    Write-Host "executing DISM Analyze Component Store (up to $maxMinutes min, Start $(Get-Date -Format 'HH:mm'))"
+    Invoke-RepairTool -Name 'Dism.exe' -FilePath 'dism.exe' -ArgumentList '/online', '/Cleanup-Image', '/AnalyzeComponentStore', '/NoRestart', '/English' -LogPath $LogPath -MaxMinutes $maxMinutes
 }
 
 function Get-DISMAnalyzeComponentStoreResult {
-    param (
-        [Parameter(Mandatory=$true)]
-        [String]$analyzeComponentLog
-    )
-
-    $lines = Get-Content -Path $analyzeComponentLog
-    $analyzeComponentLogData = $lines[-1..-($lines.Count)]
-    foreach ($line in $analyzeComponentLogData) {
-        if ($line -match 'Component Store Cleanup Recommended : Yes') {
-            return $true
-        } elseif ($line -match 'Component Store Cleanup Recommended : No') {
-            return $false
-        }
-    }
-    return $true
+    # $true = cleanup recommended (or the verdict is unknown), $false = not recommended.
+    param([AllowEmptyString()][AllowNull()][string]$Content)
+    return ($Content -notmatch 'Component Store Cleanup Recommended\s*:\s*No')
 }
 
 function Invoke-DISMComponentStoreCleanup {
-    [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$componentCleanupLog,
+        [Parameter(Mandatory=$true)]
+        [string]$LogPath,
 
-        [Parameter(Mandatory = $true, Position=1)]
+        [Parameter(Mandatory=$true)]
         [ValidateRange(0.25,10.0)]
-        [decimal]$ChangeTimeout = 1.0,
-
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg
-
+        [decimal]$ChangeTimeout
     )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    $dismLogDir = Split-Path -Path $componentCleanupLog -Parent
-    $DismErrorLog = Join-Path -Path $dismLogDir -ChildPath "DISM_Error.log"
-    $DismMaxDurationVal = 20 * $ChangeTimeout
-    if (-not $Quiet) { Write-Host "executing DISM Component Store Cleanup (up to $DismMaxDurationVal min, Start $(Get-Date -Format "HH:mm"))" }
-    try{
-        $DismMaxDuration = New-TimeSpan -Minutes $DismMaxDurationVal
-        $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/Cleanup-Image", "/StartComponentCleanup" -RedirectStandardOutput $componentCleanupLog -RedirectStandardError $DismErrorLog -NoNewWindow -PassThru
-        $DismStartTime = Get-Date
-        $dismKilledByTimeout = $false
+    $maxMinutes = 20 * $ChangeTimeout
+    Write-Host "executing DISM Component Store Cleanup (up to $maxMinutes min, Start $(Get-Date -Format 'HH:mm'))"
+    Invoke-RepairTool -Name 'Dism.exe' -FilePath 'dism.exe' -ArgumentList '/online', '/Cleanup-Image', '/StartComponentCleanup', '/NoRestart', '/English' -LogPath $LogPath -MaxMinutes $maxMinutes
+}
 
-        # Monitor the process
-        while (-not $process.HasExited) {
-            Start-Sleep -Seconds 5
-
-            $elapsed = (Get-Date) - $DismStartTime
-            if ($elapsed -gt $DismMaxDuration) {
-                $dismStucknotify = "Dism.exe has been running for more than $($DismMaxDuration.TotalMinutes) minutes. Stopping it..."
-                Write-Warning $dismStucknotify
-                $dismKilledByTimeout = $true
-                try {
-                    $process.Kill()
-                    Get-Process -Name "DismHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-                    [void]$process.WaitForExit(30000); $process.WaitForExit()
-                    Write-StepLogEntry $componentCleanupLog "!!`t`t> $dismStucknotify"
-                    $dismStuckTerminate = "Dism.exe terminated."
-                    Write-StepLogEntry $componentCleanupLog "!!`t`t> $dismStuckTerminate"
-                    Write-Warning $dismStuckTerminate
-                } catch {
-                    $dismStuckTerminateFail = "Failed to terminate Dism.exe: $_"
-                    Write-StepLogEntry $componentCleanupLog "!!`t`t> $dismStuckTerminateFail" -Silent
-                    Write-Warning $dismStuckTerminateFail
-                }
-                break
+function Get-CleanupBasePath {
+    <#
+    Resolves the OS folders every cleanup target is built from, on the machine being cleaned. A base is
+    only accepted if it is absolute, below a drive root and exists; otherwise it is $null and callers
+    skip the targets depending on it. An empty variable or failed lookup therefore never turns into a
+    path at or near a drive root. Self-contained so it survives being shipped to a remote session.
+    #>
+    $firstValid = {
+        foreach ($candidate in $args) {
+            if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+            $candidate = ([string]$candidate).TrimEnd('\')
+            if (($candidate -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $candidate -PathType Container)) {
+                return $candidate
             }
         }
-
-        $process.WaitForExit()
-        $dismResult = Get-RepairSystemProcessResult -Process $process -StartTime $DismStartTime -KilledByTimeout:$dismKilledByTimeout
-        # Capture the result before the log cleanup below: right after a timeout kill the error-log
-        # handle may still be held, so reading it can throw - and that must not fall through to the
-        # outer catch and overwrite the step result (e.g. turn a -2 timeout into a generic 1).
-        try {
-            $dismLogContent = Get-Content $dismErrorLog -Raw
-            Write-StepLogEntry $componentCleanupLog "`r`n`r`n// Start Error-Log:`r`n$dismLogContent`r`n// End Error-Log"
-            Remove-Item -Path $dismErrorLog -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-StepLogEntry $componentCleanupLog "!!`t`t> Post-run error-log handling failed (step result preserved): $_" -Silent
-        }
-        return $dismResult
-    } catch {
-        $message = "An error occurred while performing Component Store Cleanup: `r`n$_"
-        Write-Error $message
-        Add-Content -Path $componentCleanupLog -Value $message
     }
+
+    $windows  = & $firstValid ([Environment]::GetFolderPath('Windows')) $env:windir $env:SystemRoot
+    $drive    = if ($windows) { Split-Path -Path $windows -Qualifier }
+    $profiles = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -Name ProfilesDirectory -ErrorAction SilentlyContinue).ProfilesDirectory
+
+    @{
+        ComputerName = $env:COMPUTERNAME
+        Windows     = $windows
+        SystemDrive = $drive
+        ProgramData = & $firstValid ([Environment]::GetFolderPath('CommonApplicationData')) $env:ProgramData
+        Profiles    = & $firstValid $profiles $(if ($drive) { "$drive\Users" })
+    }
+}
+
+function Get-CCMCachePath {
+    <#
+    Location of the ConfigMgr client cache (relocatable). The WMI CacheConfig class can come back empty
+    even on a healthy client, so this tries WMI -> UIResourceMgr COM (what Software Center reads) ->
+    registry CacheConfig -> the default under Windows and returns the first non-empty value. The result
+    is not validated - check it with Test-SafeCachePath before clearing it. Self-contained so it
+    survives being shipped to a remote session.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases
+    )
+    $location = $null
+    try { $location = (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop | Select-Object -First 1).Location } catch { }
+    if ([string]::IsNullOrWhiteSpace($location)) {
+        try {
+            $ui = New-Object -ComObject UIResource.UIResourceMgr
+            $location = $ui.GetCacheInfo().Location
+            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ui)
+        } catch { }
+    }
+    if ([string]::IsNullOrWhiteSpace($location)) {
+        $location = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Mobile Client\Software Distribution\CacheConfig' -Name Location -ErrorAction SilentlyContinue).Location
+    }
+    if ([string]::IsNullOrWhiteSpace($location) -and $Bases.Windows) { $location = Join-Path $Bases.Windows 'ccmcache' }
+    return $location
+}
+
+function Test-SafeCachePath {
+    <#
+    A cache location comes from WMI/COM/registry, so a misconfigured value must never empty a key
+    system folder: the path has to be absolute, at least one level below a drive root and existing, and
+    must not be the Windows directory (or System32, SysWOW64, WinSxS, servicing, Installer,
+    SoftwareDistribution below it), Program Files, ProgramData, the profiles directory or anything
+    inside a user profile. No folder-name requirement: a relocated cache can be custom-named
+    (D:\SCCMCache). Self-contained so it survives being shipped to a remote session.
+    #>
+    param(
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$Path,
+
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $normalized = $Path.TrimEnd('\')
+    if ($normalized -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
+    $protected = @(
+        $env:ProgramFiles, ${env:ProgramFiles(x86)}, $Bases.ProgramData, $Bases.Profiles
+        if ($Bases.Windows) {
+            $Bases.Windows
+            foreach ($sub in 'System32', 'SysWOW64', 'WinSxS', 'servicing', 'Installer', 'SoftwareDistribution') { Join-Path $Bases.Windows $sub }
+        }
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.TrimEnd('\') }
+    if ($protected -contains $normalized) { return $false }
+    if ($Bases.Profiles -and $normalized.StartsWith($Bases.Profiles.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return (Test-Path -LiteralPath $normalized -PathType Container)
 }
 
 function Invoke-ContentCacheCleanup {
@@ -1149,95 +952,41 @@ function Invoke-ContentCacheCleanup {
     Clears the content/download caches of the software-distribution systems present on the device -
     ConfigMgr (ccmcache), Windows Update (SoftwareDistribution\Download), Adaptiva OneSite
     (<drive>:\AdaptivaCache) and the Intune Management Extension (IMECache + Content staging). Each
-    location is auto-detected; systems that are not installed are skipped. Whatever a running agent
-    holds open is cleared best-effort now and the remainder is scheduled for deletion on the next
-    reboot (via Remove-PathReliable), so the step returns 3010 ("restart required") when anything was
-    deferred, otherwise 0. Self-contained apart from Remove-PathReliable, so it can be shipped remotely.
+    location is auto-detected; systems that are not installed are skipped, and a location is only
+    cleared after Test-SafeCachePath accepted it. Whatever a running agent holds open is cleared
+    best-effort now and the remainder is scheduled for deletion on the next reboot (via
+    Clear-FolderContentsReliable).
+    Returns $true when anything was deferred to the next reboot. Identical in TempDataCleanup and
+    Repair-System; self-contained apart from Get-CCMCachePath, Test-SafeCachePath and the bundled helpers,
+    so it can be shipped to a remote session.
     #>
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$cacheCleanupLog,
+        [Parameter(Mandatory=$true)]
+        [string]$LogPath,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases,
 
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$VerboseArg
+        [string]$Component = 'ContentCache',
 
+        # set when a Windows Update reset of the same run clears all of SoftwareDistribution anyway
+        [switch]$SkipWindowsUpdate,
+
+        [string]$TranscriptPath
     )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
+    if ($TranscriptPath) { Start-Transcript -Path $TranscriptPath -Append | Out-Null }
 
-    if (-not $Quiet) { Write-Host "executing Content Cache Cleanup" }
-
-    # Resolve the Windows directory from the OS itself - $env:windir can be empty in a stripped
-    # environment, and an empty base is exactly how a cleanup can end up deleting from a drive root.
-    # The result is validated, paths are only built from a validated base, and every deletion target
-    # is re-checked below, so an empty/garbage value can never reach a delete.
-    $winDir = [Environment]::GetFolderPath('Windows')
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
-    $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
-
-    # Per-step log writer (captures the log path so it is safe to call from anywhere in the function).
-    $log = {
-        param($m)
-        try { Add-Content -Path $cacheCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - $m" -ErrorAction SilentlyContinue } catch {}
-    }.GetNewClosure()
-
-    # A cache path is only safe to clear if it is absolute, at least one level below a drive root, not
-    # the Windows directory or System32, and it exists. No folder-name requirement - a relocated cache
-    # can be custom-named (e.g. D:\SCCMCache). An empty/garbage value fails the first checks, so it can
-    # never become a root-level delete.
-    $isSafeCache = {
-        param($p, $win)
-        if ([string]::IsNullOrWhiteSpace($p)) { return $false }
-        $n = $p.TrimEnd('\')
-        if ($n -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
-        if (-not [string]::IsNullOrWhiteSpace($win)) {
-            $w = $win.TrimEnd('\')
-            if (($n -ieq $w) -or ($n -ieq ((Join-Path $w 'System32').TrimEnd('\')))) { return $false }
-        }
-        return (Test-Path -LiteralPath $n -PathType Container)
-    }
-
-    # Clears a validated folder's CONTENTS via Remove-PathReliable: deletes what is free right now and
-    # schedules anything still locked for deletion at the next reboot. Returns $true if anything was
-    # deferred to reboot.
-    $clearContents = {
-        param($folder)
-        $deferred = $false
-        Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            $r = Remove-PathReliable -Path $_.FullName
-            if ($r -and $r.Scheduled) { $deferred = $true }
-        }
-        return $deferred
-    }
+    $log = @{ LogPath = $LogPath; Component = $Component }
+    Write-CMTraceLog @log 'Content cache cleanup (ConfigMgr / Windows Update / Adaptiva / Intune)'
 
     # -----------------------------------------------------------------------------------------------
-    # Detect each system's cache location(s). Absent systems yield nothing and are simply skipped.
+    # Detect each system's cache location(s). Absent systems yield nothing and are simply skipped;
+    # paths are only built from the validated base folders.
     # -----------------------------------------------------------------------------------------------
-
-    # ConfigMgr ccmcache (relocatable). The WMI CacheConfig class can come back empty even on a healthy
-    # client, so try several sources in order and take the first trusted, non-empty path: WMI ->
-    # UIResourceMgr COM (what Software Center reads) -> registry CacheConfig -> default under Windows.
-    $ccmLoc = $null
-    try { $ccmLoc = (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop | Select-Object -First 1).Location } catch { $ccmLoc = $null }
-    if ([string]::IsNullOrWhiteSpace($ccmLoc)) {
-        try {
-            $ui = New-Object -ComObject UIResource.UIResourceMgr
-            $ccmLoc = $ui.GetCacheInfo().Location
-            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ui)
-        } catch { }
-    }
-    if ([string]::IsNullOrWhiteSpace($ccmLoc)) {
-        $ccmLoc = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Mobile Client\Software Distribution\CacheConfig' -Name Location -ErrorAction SilentlyContinue).Location
-    }
-    if ([string]::IsNullOrWhiteSpace($ccmLoc) -and $winDirValid) { $ccmLoc = Join-Path $winDir 'ccmcache' }
-    $ccmPaths = @(); if (-not [string]::IsNullOrWhiteSpace($ccmLoc)) { $ccmPaths = @($ccmLoc) }
-
-    # Windows Update download cache - built only from the validated Windows directory.
-    $wuPaths = @(); if ($winDirValid) { $wuPaths = @((Join-Path $winDir 'SoftwareDistribution\Download')) }
+    $ccmLocation = Get-CCMCachePath -Bases $Bases
+    $ccmPaths    = @(if (-not [string]::IsNullOrWhiteSpace($ccmLocation)) { $ccmLocation })
+    $wuPaths     = @(if ($Bases.Windows) { Join-Path $Bases.Windows 'SoftwareDistribution\Download' })
 
     # Adaptiva OneSite content cache. Content sits directly under <drive>:\AdaptivaCache (no \Client
     # subfolder). Relocatable via the registry value 'cache.folder' ('na' = use the default), which
@@ -1263,8 +1012,7 @@ function Invoke-ContentCacheCleanup {
     # Intune Management Extension (Company Portal / Win32) staging + IMECache. IME normally self-cleans
     # on success but leaves residue on failure/locks. IMECache is under Windows; the Content staging
     # folders are under the IME install (Program Files (x86) on 64-bit, Program Files on 32-bit).
-    $intunePaths = @()
-    if ($winDirValid) { $intunePaths += (Join-Path $winDir 'IMECache') }
+    $intunePaths = @(if ($Bases.Windows) { Join-Path $Bases.Windows 'IMECache' })
     $imeBases = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
     foreach ($base in $imeBases) {
         $imeContent = Join-Path $base 'Microsoft Intune Management Extension\Content'
@@ -1273,33 +1021,116 @@ function Invoke-ContentCacheCleanup {
         }
     }
 
-    # -----------------------------------------------------------------------------------------------
-    # Clear every detected, trusted cache location; defer whatever is locked to the next reboot.
-    # -----------------------------------------------------------------------------------------------
     $providers = @(
         @{ Name = 'ConfigMgr (ccmcache)';                          Paths = $ccmPaths }
-        @{ Name = 'Windows Update (SoftwareDistribution\Download)'; Paths = $wuPaths }
+        @{ Name = 'Windows Update (SoftwareDistribution\Download)'; Paths = $wuPaths; WindowsUpdate = $true }
         @{ Name = 'Adaptiva OneSite (AdaptivaCache)';              Paths = $adaptivaPaths }
         @{ Name = 'Intune Management Extension (IMECache/Content)'; Paths = $intunePaths }
     )
 
+    # -----------------------------------------------------------------------------------------------
+    # Clear every detected, trusted cache location; defer whatever is locked to the next reboot.
+    # -----------------------------------------------------------------------------------------------
     $anyDeferred = $false
     foreach ($prov in $providers) {
+        if ($prov.WindowsUpdate -and $SkipWindowsUpdate) {
+            Write-CMTraceLog @log "$($prov.Name): left to the Windows Update cleanup step."
+            continue
+        }
         $cleaned = New-Object System.Collections.Generic.List[string]
+        $skipped = New-Object System.Collections.Generic.List[string]
+        $left    = New-Object System.Collections.Generic.List[string]
         foreach ($p in @($prov.Paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
-            if (& $isSafeCache $p $winDir) {
-                $deferred = & $clearContents $p
-                if ($deferred) { $anyDeferred = $true }
-                if ($deferred) { $cleaned.Add("$p (locked items deferred to reboot)") } else { $cleaned.Add($p) }
+            if (-not (Test-SafeCachePath -Path $p -Bases $Bases)) {
+                $skipped.Add("'$p'")
+                continue
+            }
+            if ($prov.WindowsUpdate) {
+                $wu = Clear-WindowsUpdateDownload -Folder $p
+                if ($wu.Skipped) { $left.Add("$p ($($wu.Skipped))"); continue }
+                if ($wu.Postponed) { $anyDeferred = $true; $cleaned.Add("$p (queued for the next boot: $($wu.Postponed))"); continue }
+                $deferred = $wu.Deferred
             } else {
-                & $log "$($prov.Name): skipped '$p' (not found or path could not be trusted)."
+                $deferred = Clear-FolderContentsReliable -Folder $p
+            }
+            if ($deferred) {
+                $anyDeferred = $true
+                $cleaned.Add("$p (locked items deferred to reboot)")
+            } else {
+                $cleaned.Add($p)
             }
         }
-        if ($cleaned.Count -gt 0) { & $log "$($prov.Name): cleaned $($cleaned -join '; ')" }
-        else { & $log "$($prov.Name): nothing to clean (not installed or no cache present)." }
+        $parts = @()
+        if ($cleaned.Count -gt 0) { $parts += "cleaned $($cleaned -join '; ')" }
+        if ($left.Count -gt 0)    { $parts += "left untouched $($left -join '; ')" }
+        if ($skipped.Count -gt 0) { $parts += "skipped $($skipped -join ', ') (not found or path could not be trusted)" }
+        if ($parts.Count -eq 0)   { $parts += 'nothing to clean (not installed or no cache present)' }
+        $result = "$($prov.Name): $($parts -join '; ')."
+        Write-CMTraceLog @log $result
     }
 
-    if ($anyDeferred) { return 3010 } else { return 0 }
+    if ($anyDeferred) { Write-CMTraceLog @log 'One or more locked cache items were scheduled for deletion on the next reboot (restart required).' -Severity Warning }
+    if ($TranscriptPath) { Stop-Transcript | Out-Null }
+    return $anyDeferred
+}
+function Invoke-ContentCacheCleanupStep {
+    # Step entry point: Repair-System records step results as exit codes, the shared cleanup returns a bool.
+    param(
+        [Parameter(Mandatory=$true)] [string]$LogPath,
+        [Parameter(Mandatory=$true)] [hashtable]$Bases,
+        [switch]$SkipWindowsUpdate
+    )
+    Write-Host "executing Content Cache Cleanup"
+    if (Invoke-ContentCacheCleanup -LogPath $LogPath -Bases $Bases -Component 'ContentCacheCleanup' -SkipWindowsUpdate:$SkipWindowsUpdate) { 3010 } else { 0 }
+}
+
+function Clear-WindowsUpdateDownload {
+    <#
+    Empties SoftwareDistribution\Download the way Microsoft's Windows Update reset does: wuauserv and
+    BITS hold and recreate files there, so both are force-stopped first - an interrupted download is
+    simply fetched again - and afterwards only those that were running are started again. A service
+    that ignores the stop is killed only when it runs alone in its process; a shared svchost would take
+    other services with it, so its files are left to the next reboot instead. An installation in
+    progress (TiWorker.exe) is never interrupted - that can leave the component store inconsistent - but
+    waited for up to $WaitMinutes; if it is still running then, the folder's contents are queued for
+    deletion at the next boot instead, which runs before Windows Update starts and after the
+    installation has finished. Returns Deferred (anything queued for the next reboot), Postponed (why
+    the whole folder waits for the reboot) and Skipped (why nothing could be done). Self-contained apart
+    from Clear-FolderContentsReliable and Register-PendingDelete.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Folder,
+        [int]$WaitMinutes = 10
+    )
+    $deadline = (Get-Date).AddMinutes($WaitMinutes)
+    while ((Get-Process -Name 'TiWorker' -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
+    if (Get-Process -Name 'TiWorker' -ErrorAction SilentlyContinue) {
+        $reason = "an update was still being installed (TiWorker.exe) after $WaitMinutes minutes"
+        $items  = @(Get-ChildItem -LiteralPath $Folder -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        if ($items.Count -eq 0) { return [pscustomobject]@{ Deferred = $false; Postponed = $null; Skipped = $null } }
+        try {
+            $null = Register-PendingDelete -Path $items
+            return [pscustomobject]@{ Deferred = $true; Postponed = $reason; Skipped = $null }
+        } catch {
+            return [pscustomobject]@{ Deferred = $false; Postponed = $null; Skipped = "$reason, and queueing it for the next boot failed: $($_.Exception.Message)" }
+        }
+    }
+
+    $names   = 'wuauserv', 'bits'
+    $running = @(Get-Service -Name $names -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Stopped' })
+    $running | Stop-Service -Force -NoWait -ErrorAction SilentlyContinue
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and @(Get-Service -Name $names -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Stopped' }).Count) {
+        Start-Sleep -Milliseconds 500
+    }
+    foreach ($service in @(Get-CimInstance -ClassName Win32_Service -ErrorAction SilentlyContinue | Where-Object { $names -contains $_.Name -and $_.ProcessId })) {
+        $sharing = @(Get-CimInstance -ClassName Win32_Service -Filter "ProcessId=$($service.ProcessId)" -ErrorAction SilentlyContinue).Count
+        if ($sharing -eq 1) { Stop-Process -Id $service.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
+    $deferred = $false
+    try { $deferred = [bool](Clear-FolderContentsReliable -Folder $Folder) }
+    finally { $running | Start-Service -ErrorAction SilentlyContinue }
+    [pscustomobject]@{ Deferred = $deferred; Postponed = $null; Skipped = $null }
 }
 
 function Stop-ServiceSafely {
@@ -1329,15 +1160,20 @@ function Stop-ServiceSafely {
         $stillRunning = Get-Service -ErrorAction SilentlyContinue -Name $ServiceName | Where-Object { $_.Status -ne 'Stopped' }
     } while ($stillRunning -and ((Get-Date) - $waitStart).TotalSeconds -lt $TimeoutSeconds)
 
+    # A service that ignores the stop is killed only when it runs alone in its process: a shared svchost
+    # would take every other service in it down too. Its files are then left to the next reboot.
     foreach ($svc in $stillRunning) {
-        $svcStuckMsg = "Service '$($svc.Name)' did not stop within $TimeoutSeconds seconds. Stopping its process forcefully..."
-        Write-Warning $svcStuckMsg
         try {
             $svcProcessId = (Get-CimInstance -ClassName Win32_Service -Filter "Name='$($svc.Name)'" -ErrorAction Stop).ProcessId
-            if ($svcProcessId -and $svcProcessId -ne 0) {
-                Stop-Process -Id $svcProcessId -Force -ErrorAction Stop
-                Write-Verbose "Process (PID $svcProcessId) backing service '$($svc.Name)' was forcefully stopped."
+            if (-not $svcProcessId) { continue }
+            $sharing = @(Get-CimInstance -ClassName Win32_Service -Filter "ProcessId=$svcProcessId" -ErrorAction Stop | Where-Object { $_.Name -ne $svc.Name })
+            if ($sharing.Count -gt 0) {
+                Write-Warning "Service '$($svc.Name)' did not stop within $TimeoutSeconds seconds; its process also hosts $($sharing.Name -join ', '), so it is left running."
+                continue
             }
+            Write-Warning "Service '$($svc.Name)' did not stop within $TimeoutSeconds seconds. Stopping its process forcefully..."
+            Stop-Process -Id $svcProcessId -Force -ErrorAction Stop
+            Write-Verbose "Process (PID $svcProcessId) backing service '$($svc.Name)' was forcefully stopped."
         } catch {
             Write-Warning "Failed to forcefully stop process for service '$($svc.Name)': $_"
         }
@@ -1351,10 +1187,16 @@ function Remove-PathReliable {
     next reboot through the Session Manager's PendingFileRenameOperations - which are processed
     before any service starts, so a handle held right now no longer matters. Returns an object with
     Deleted / Scheduled / Error. Self-contained so it survives being shipped to a remote session.
+
+    -BestEffort stops after the immediate delete: locked items are neither scheduled for reboot nor
+    reported as an error. Used for user-profile temp, where boot-time deletion of a locked user file
+    (eg. an open browser's cache) is not wanted.
     #>
     param(
         [Parameter(Mandatory=$true)]
-        [string]$Path
+        [string]$Path,
+
+        [switch]$BestEffort
     )
     $result = [PSCustomObject]@{ Path = $Path; Deleted = $false; Scheduled = $false; Error = $null }
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
@@ -1386,30 +1228,90 @@ function Remove-PathReliable {
         return $result
     }
 
-    # 2) Whatever survived is locked - schedule the remainder for deletion at next boot. Enumeration
-    #    works on a locked tree (only deletion is blocked); order deepest-first so each directory is
-    #    empty by the time its own entry is processed.
-    try {
-        $targets = New-Object System.Collections.Generic.List[string]
-        @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue) |
-            Sort-Object { $_.FullName.Length } -Descending |
-            ForEach-Object { $targets.Add($_.FullName) }
-        $targets.Add($Path)
+    # -BestEffort: stop here - do not schedule locked items for reboot.
+    if ($BestEffort) { return $result }
 
-        $smKey   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
-        $pending = New-Object System.Collections.Generic.List[string]
-        $current = (Get-ItemProperty -Path $smKey -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
-        if ($current) { $pending.AddRange([string[]]$current) }
-        foreach ($t in $targets) {
-            $pending.Add('\??\' + $t)   # NT-namespace source path to remove
-            $pending.Add('')            # empty destination => delete on boot
-        }
-        Set-ItemProperty -Path $smKey -Name PendingFileRenameOperations -Value $pending.ToArray() -Type MultiString
+    # 2) Whatever survived is locked - schedule the remainder for deletion at next boot.
+    try {
+        $null = Register-PendingDelete -Path $Path
         $result.Scheduled = $true
     } catch {
         $result.Error = $_.Exception.Message
     }
     return $result
+}
+
+function Register-PendingDelete {
+    <#
+    Queues paths for deletion at the next boot via the Session Manager's PendingFileRenameOperations,
+    which runs before anything can load them again. A directory is expanded to its contents
+    deepest-first (enumerated through \\?\, so locked trees and paths over 260 characters work), so each
+    directory is empty by the time its own entry is processed. Entries Windows already had pending are
+    kept and paths already queued are not added twice; the value is read and written once per call, so
+    pass all locked items together. Returns the paths it added. A drive root or top-level folder is
+    never queued: such a path is reported by throwing once everything else is queued. Identical in
+    TempDataCleanup, Repair-System and AutoDeskCleanRemove; self-contained for remote shipping.
+    #>
+    param([Parameter(Mandatory=$true)][string[]]$Path)
+    $smKey   = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+    $pending = New-Object System.Collections.Generic.List[string]
+    $queued  = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $current = @((Get-ItemProperty -Path $smKey -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations | Where-Object { $null -ne $_ })
+    $pending.AddRange([string[]]$current)
+    # entries are source/destination pairs; an empty destination means 'delete'
+    for ($i = 0; $i + 1 -lt $current.Count; $i += 2) {
+        if ($current[$i + 1] -eq '') { [void]$queued.Add($current[$i]) }
+    }
+
+    $added   = New-Object System.Collections.Generic.List[string]
+    $refused = New-Object System.Collections.Generic.List[string]
+    foreach ($item in $Path) {
+        $root = $item -replace '^\\\\\?\\', ''
+        if ($root -notmatch '^[A-Za-z]:\\[^\\]+\\[^\\]') { $refused.Add($item); continue }
+        $targets = @(Get-ChildItem -LiteralPath "\\?\$root" -Recurse -Force -ErrorAction SilentlyContinue |
+                     ForEach-Object { $_.FullName.Substring(4) } |
+                     Sort-Object { $_.Length } -Descending) + $root
+        foreach ($target in $targets) {
+            if ($queued.Add("\??\$target")) {
+                $pending.Add("\??\$target")
+                $pending.Add('')
+                $added.Add($target)
+            }
+        }
+    }
+    if ($added.Count -gt 0) {
+        Set-ItemProperty -Path $smKey -Name PendingFileRenameOperations -Value $pending.ToArray() -Type MultiString -ErrorAction Stop
+    }
+    if ($refused.Count -gt 0) { throw "Refused to schedule $($refused -join ', ') for deletion: not a safe target." }
+    $added.ToArray()
+}
+
+function Clear-FolderContentsReliable {
+    <#
+    Deletes the CONTENTS of a folder (the folder itself is kept, matching temp-cleanup behaviour) by
+    routing every child through Remove-PathReliable. Whatever is still locked is queued for deletion at
+    the next reboot in one go; -BestEffort skips that (used for user-profile temp). Returns $true if
+    anything was deferred to the next reboot.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Folder,
+
+        [switch]$BestEffort
+    )
+    if (-not (Test-Path -LiteralPath $Folder)) { return $false }
+    # Refused items carry an Error and are never queued; only genuinely locked ones are collected.
+    $locked = @(Get-ChildItem -LiteralPath $Folder -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        $r = Remove-PathReliable -Path $_.FullName -BestEffort
+        if (-not $r.Deleted -and -not $r.Error) { $_.FullName }
+    })
+    if ($BestEffort -or $locked.Count -eq 0) { return $false }
+    try {
+        $null = Register-PendingDelete -Path $locked
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 function Test-DataStoreHealth {
@@ -1427,7 +1329,7 @@ function Test-DataStoreHealth {
         [Parameter(Mandatory=$true)]
         [string]$WinDir
     )
-    $log  = { param($m) Add-Content -Path $LogPath -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - DataStore: $m" -ErrorAction SilentlyContinue }
+    $log = { param($m, $s = 'Info') Write-StepLogLine $LogPath "DataStore: $m" 'WUCleanup' $s }
     if ([string]::IsNullOrWhiteSpace($WinDir) -or -not (Test-Path -LiteralPath $WinDir -PathType Container)) {
         & $log 'Windows directory not provided or invalid - cannot assess DataStore.'; return 'Wipe'
     }
@@ -1454,7 +1356,7 @@ function Test-DataStoreHealth {
             if (& $isClean) {
                 & $log 'Hard repair (/p) succeeded.'
             } else {
-                & $log 'Recovery failed - DataStore will be wiped (skipping /g).'
+                & $log 'Recovery failed - DataStore will be wiped (skipping /g).' Warning
                 return 'Wipe'
             }
         }
@@ -1466,7 +1368,7 @@ function Test-DataStoreHealth {
     & $log '/g: integrity failed - attempting hard repair (/p).'
     & esentutl.exe /p "$edb" 2>&1 | Out-Null
     if (& $isIntact) { & $log '/g: OK after repair - keeping DataStore.'; return 'Keep' }
-    & $log '/g: still failing after repair - DataStore will be wiped.'
+    & $log '/g: still failing after repair - DataStore will be wiped.' Warning
     return 'Wipe'
 }
 
@@ -1478,7 +1380,7 @@ function Invoke-WULegacyRepair {
     opt-in. The Winsock reset requires a reboot to take effect. Self-contained for remote execution.
     #>
     param([Parameter(Mandatory=$true)][string]$LogPath)
-    $log = { param($m) Add-Content -Path $LogPath -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - Legacy: $m" -ErrorAction SilentlyContinue }
+    $log = { param($m, $s = 'Info') Write-StepLogLine $LogPath "Legacy: $m" 'WUCleanup' $s }
 
     $dlls = @(
         'atl.dll','urlmon.dll','mshtml.dll','shdocvw.dll','browseui.dll','jscript.dll','vbscript.dll',
@@ -1502,61 +1404,105 @@ function Invoke-WULegacyRepair {
 }
 
 function Invoke-WindowsUpdateCleanup {
-    [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory=$true)]
         [string]$updateCleanupLog,
 
-        [Parameter(Mandatory = $true, Position=1)]
-        [ValidateRange(0.25,10.0)]
-        [decimal]$ChangeTimeout = 1.0,
-
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg,
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases,
 
         # Force-wipe the DataStore even when it is healthy (loses update history).
-        [Parameter(Mandatory=$false, Position=4)]
         [bool]$ResetUpdateHistory = $false,
 
         # Already-confirmed decision to run the legacy repair (confirmation happens in the caller).
-        [Parameter(Mandatory=$false, Position=5)]
-        [bool]$DoLegacyRepair = $false
+        [bool]$DoLegacyRepair = $false,
+
+        # How long an installation in progress is waited for before the reset is queued for the next boot.
+        [int]$WaitMinutes = 10
     )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
-    $log = { param($m) Add-Content -Path $updateCleanupLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - $m" -ErrorAction SilentlyContinue }
+    $log = { param($m, $s = 'Info') Write-StepLogLine $updateCleanupLog $m 'WUCleanup' $s }
     $deferred = $false   # any deletion scheduled for reboot
     $failed   = $false
 
     Write-Host "Starting Windows Update Cleanup..."
 
-    # Update Medic + Update Orchestrator + Delivery Optimization are stopped FIRST so they can't
-    # resurrect the update services we stop next. They are trigger-started, so they are left out of
-    # the restart list - Windows starts them again on demand.
-    $servicesStop  = @("waasmedicsvc","usosvc","dosvc","wuauserv","bits","cryptsvc","appidsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
-    $servicesStart = @("bits","wuauserv","cryptsvc","appidsvc","msiserver","trustedinstaller","ccmexec","smstsmgr")
+    # A running task sequence drives Windows Update itself and would interfere with the reset, so it is stopped.
+    $taskSequence = @(Get-Process -Name 'TSManager' -ErrorAction SilentlyContinue)
+    if ($taskSequence) {
+        $taskSequence | Stop-Process -Force -ErrorAction SilentlyContinue
+        $m = if (Get-Process -Name 'TSManager' -ErrorAction SilentlyContinue) { 'A ConfigMgr task sequence (TSManager.exe) is running and could not be stopped.' }
+             else { 'A running ConfigMgr task sequence (TSManager.exe) was stopped.' }
+        Write-Warning $m
+        & $log $m Warning
+    }
 
-    Stop-ServiceSafely -ServiceName $servicesStop -Force
-    if ($Null -ne (Get-Process CcmExec  -ea SilentlyContinue)) { Get-Process CcmExec  | Stop-Process -Force -ErrorAction SilentlyContinue }
-    if ($Null -ne (Get-Process TSManager -ea SilentlyContinue)) { Get-Process TSManager | Stop-Process -Force -ErrorAction SilentlyContinue }
-
-    # Resolve the Windows directory from the OS (robust against an empty $env:windir) and validate it
-    # before ANY path is built from it - an empty base is how a cleanup ends up deleting from a drive
-    # root. Remove-PathReliable adds a second guard, but paths are only built here when valid.
-    $winDir = [Environment]::GetFolderPath('Windows')
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
-    $winDirValid = (-not [string]::IsNullOrWhiteSpace($winDir)) -and ($winDir -match '^[A-Za-z]:\\[^\\]') -and (Test-Path -LiteralPath $winDir -PathType Container)
+    # Paths are only built from the validated Windows directory (see Get-CleanupBasePath) - an empty
+    # base is how a cleanup ends up deleting from a drive root. Remove-PathReliable adds a second guard.
+    $winDir = $Bases.Windows
+    $winDirValid = -not [string]::IsNullOrWhiteSpace($winDir)
     if (-not $winDirValid) {
         Write-Warning "Windows directory could not be resolved; skipping SoftwareDistribution and catroot2 reset."
-        & $log 'CRITICAL: Windows directory could not be resolved; skipping SoftwareDistribution and catroot2 reset.'
+        & $log 'Windows directory could not be resolved; skipping SoftwareDistribution and catroot2 reset.' Error
         $failed = $true
     }
-    $sdPath   = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution' } else { $null }
-    $dsPath   = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution\DataStore' } else { $null }
-    $catroot2 = if ($winDirValid) { Join-Path $winDir 'System32\catroot2' } else { $null }
+    $sdPath    = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution' } else { $null }
+    $dsPath    = if ($winDirValid) { Join-Path $winDir 'SoftwareDistribution\DataStore' } else { $null }
+    $catroot2  = if ($winDirValid) { Join-Path $winDir 'System32\catroot2' } else { $null }
+    $bitsQueue = if ($Bases.ProgramData) { Join-Path $Bases.ProgramData 'Microsoft\Network\Downloader' } else { $null }
+
+    # Stopping cryptsvc or the update services under a running servicing or MSI installation can leave
+    # it half-applied, so wait for it; if it outlasts the wait, the files are reset at the next boot,
+    # before any of these services start.
+    $installActivity = {
+        if (Get-Process -Name 'TiWorker' -ErrorAction SilentlyContinue) { return 'an update is being installed (TiWorker.exe)' }
+        try { ([System.Threading.Mutex]::OpenExisting('Global\_MSIExecute')).Dispose(); return 'an MSI installation is running' }
+        catch {
+            if ($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.InnerException -is [System.UnauthorizedAccessException]) { return 'an MSI installation is running' }
+        }
+        $null
+    }
+    $activity = & $installActivity
+    if ($activity) {
+        Write-Host "Waiting up to $WaitMinutes minutes: $activity..."
+        & $log "Waiting up to $WaitMinutes minutes: $activity."
+        $deadline = (Get-Date).AddMinutes($WaitMinutes)
+        while ($activity -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5; $activity = & $installActivity }
+    }
+    if ($activity) {
+        $items = @()
+        if ($sdPath -and (Test-Path -LiteralPath $sdPath)) {
+            $items += @(Get-ChildItem -LiteralPath $sdPath -Force -ErrorAction SilentlyContinue |
+                        Where-Object { $ResetUpdateHistory -or $_.Name -ine 'DataStore' } | ForEach-Object { $_.FullName })
+        }
+        if ($catroot2 -and (Test-Path -LiteralPath $catroot2)) { $items += $catroot2 }
+        if ($bitsQueue -and (Test-Path -LiteralPath $bitsQueue)) {
+            $items += @(Get-ChildItem -LiteralPath $bitsQueue -Filter 'qmgr*' -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        }
+        try { if ($items) { $null = Register-PendingDelete -Path $items } }
+        catch {
+            $m = "Still $activity after $WaitMinutes minutes, and queueing the reset for the next boot failed: $($_.Exception.Message)"
+            Write-Warning $m
+            & $log $m Error
+            return 1
+        }
+        $kept = if ($ResetUpdateHistory) { '' } else { ', keeping the update history' }
+        $m = "Still $activity after $WaitMinutes minutes; no service was stopped. SoftwareDistribution$kept, catroot2 and the BITS queue are reset at the next boot instead."
+        Write-Warning $m
+        & $log $m Warning
+        if ($DoLegacyRepair) {
+            & $log 'The legacy repair was not run; run Repair-System -WindowsUpdateCleanup -IncludeLegacyRepair again after the restart.' Warning
+            Write-Warning 'The legacy repair was not run; run it again after the restart.'
+        }
+        return 3010
+    }
+
+    # The update services Microsoft's reset stops. Update Medic, Orchestrator and Delivery Optimization
+    # go first so they can't restart the others. Only services that were running are started again,
+    # including dependents that Stop-Service -Force takes down with them.
+    $servicesStop = @('waasmedicsvc', 'usosvc', 'dosvc', 'wuauserv', 'bits', 'cryptsvc', 'appidsvc')
+    $stopped = @(Get-Service -Name $servicesStop -ErrorAction SilentlyContinue | ForEach-Object { $_; $_.DependentServices } |
+                 Where-Object { $_.Status -eq 'Running' } | Select-Object -ExpandProperty Name -Unique)
+    Stop-ServiceSafely -ServiceName $servicesStop -Force
 
     # --- SoftwareDistribution: keep update history when the DataStore is healthy, else full wipe ---
     if ($sdPath -and (Test-Path -LiteralPath $sdPath)) {
@@ -1571,17 +1517,22 @@ function Invoke-WindowsUpdateCleanup {
 
         if ($keepDataStore) {
             Write-Host "Clearing SoftwareDistribution (keeping update history)..."
-            foreach ($child in (Get-ChildItem -LiteralPath $sdPath -Force -ErrorAction SilentlyContinue)) {
+            # Locked children are collected and queued for reboot in one PendingFileRenameOperations write.
+            $locked = @(foreach ($child in (Get-ChildItem -LiteralPath $sdPath -Force -ErrorAction SilentlyContinue)) {
                 if ($child.Name -ieq 'DataStore') { continue }
-                $r = Remove-PathReliable -Path $child.FullName
-                if ($r.Scheduled) { $deferred = $true }
-                if ($r.Error)     { & $log "SoftwareDistribution\$($child.Name): $($r.Error)" }
+                $r = Remove-PathReliable -Path $child.FullName -BestEffort
+                if ($r.Error) { & $log "SoftwareDistribution\$($child.Name): $($r.Error)" }
+                elseif (-not $r.Deleted) { $child.FullName }
+            })
+            if ($locked) {
+                try { $null = Register-PendingDelete -Path $locked; $deferred = $true }
+                catch { & $log "SoftwareDistribution: locked items could not be queued for reboot: $_" Warning }
             }
         } else {
             Write-Host "Resetting SoftwareDistribution..."
             $r = Remove-PathReliable -Path $sdPath
             if ($r.Scheduled) { $deferred = $true }
-            if ($r.Error)     { & $log "SoftwareDistribution: $($r.Error)"; $failed = $true }
+            if ($r.Error)     { & $log "SoftwareDistribution: $($r.Error)" Error; $failed = $true }
         }
     } else {
         & $log 'SoftwareDistribution not present - nothing to reset.'
@@ -1596,19 +1547,20 @@ function Invoke-WindowsUpdateCleanup {
         Write-Host "Resetting catroot2..."
         $r = Remove-PathReliable -Path $catroot2
         if ($r.Scheduled) { $deferred = $true }
-        if ($r.Error)     { & $log "catroot2: $($r.Error)"; $failed = $true }
+        if ($r.Error)     { & $log "catroot2: $($r.Error)" Error; $failed = $true }
     }
 
     # --- BITS transfer queue: drop stuck transfers by clearing qmgr* ------------------------------
-    $programData = [Environment]::GetFolderPath('CommonApplicationData')
-    if ([string]::IsNullOrWhiteSpace($programData)) { $programData = $env:ALLUSERSPROFILE }
-    $bitsQueue = if (-not [string]::IsNullOrWhiteSpace($programData)) { Join-Path $programData 'Microsoft\Network\Downloader' } else { $null }
     if ($bitsQueue -and (Test-Path -LiteralPath $bitsQueue)) {
         Write-Host "Clearing BITS transfer queue..."
-        foreach ($q in (Get-ChildItem -LiteralPath $bitsQueue -Filter 'qmgr*' -Force -ErrorAction SilentlyContinue)) {
-            $r = Remove-PathReliable -Path $q.FullName
-            if ($r.Scheduled) { $deferred = $true }
-            if ($r.Error)     { & $log "BITS queue $($q.Name): $($r.Error)" }
+        $locked = @(foreach ($q in (Get-ChildItem -LiteralPath $bitsQueue -Filter 'qmgr*' -Force -ErrorAction SilentlyContinue)) {
+            $r = Remove-PathReliable -Path $q.FullName -BestEffort
+            if ($r.Error) { & $log "BITS queue $($q.Name): $($r.Error)" }
+            elseif (-not $r.Deleted) { $q.FullName }
+        })
+        if ($locked) {
+            try { $null = Register-PendingDelete -Path $locked; $deferred = $true }
+            catch { & $log "BITS queue: locked files could not be queued for reboot: $_" Warning }
         }
     }
 
@@ -1636,7 +1588,11 @@ function Invoke-WindowsUpdateCleanup {
     }
 
     # --- restart services -------------------------------------------------------------------------
-    Get-Service -ErrorAction SilentlyContinue $servicesStart | Start-Service -ErrorAction SilentlyContinue
+    if ($stopped) {
+        Get-Service -Name $stopped -ErrorAction SilentlyContinue | Start-Service -ErrorAction SilentlyContinue
+        $notRestarted = @(Get-Service -Name $stopped -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Running' } | ForEach-Object { $_.Name })
+        if ($notRestarted) { & $log "Not running again after the cleanup: $($notRestarted -join ', ')." Warning }
+    }
 
     $summary = if ($failed) { 'Windows Update Cleanup completed with errors - review the log.' }
                elseif ($deferred) { 'Windows Update Cleanup complete; some locked items are scheduled for removal on the next reboot.' }
@@ -1650,70 +1606,43 @@ function Invoke-WindowsUpdateCleanup {
 }
 
 function Repair-CCM {
-    [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$localTempPath,
-
-        [Parameter(Mandatory=$true, Position=1)]
+        [Parameter(Mandatory=$true)]
         [string]$RepairCCMLog,
 
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$Quiet,
+        # Where the copy of ccmsetup.log is stored, next to the step log.
+        [Parameter(Mandatory=$true)]
+        [string]$CCMSetupLogCopy,
 
-        [Parameter(Mandatory=$true, Position=3)]
-        [switch]$VerboseArg
-
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases
     )
-    if ($VerboseArg) {$PSCmdlet.MyInvocation.BoundParameters['Verbose']=$true}
 
-    if ($Quiet) {
-        $PSCmdlet.MyInvocation.BoundParameters['Verbose']=$false
+    $log = { param($m, $s = 'Info') Write-StepLogLine $RepairCCMLog $m 'RepairCCM' $s }
+
+    if (-not $Bases.Windows) {
+        Write-Host "Windows directory could not be resolved; CCM repair skipped."
+        & $log "Windows directory could not be resolved; the CCM client cannot be located." Error
+        return 1
     }
-
-    function Write-RepairCCMLog {
-        param([string]$Message)
-        Add-Content -Path $RepairCCMLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$Message"
-    }
-
-    # Resolve the Windows directory from the OS (robust against an empty $env:windir), with a
-    # last-resort default; used only to LOCATE the CCM client and its logs (no deletions here).
-    $winDir = [Environment]::GetFolderPath('Windows')
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:windir }
-    if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
-    if ([string]::IsNullOrWhiteSpace($winDir) -or -not (Test-Path -LiteralPath $winDir -PathType Container)) { $winDir = 'C:\Windows' }
-
+    $winDir = $Bases.Windows
     $ccmrepairexe = Join-Path $winDir 'CCM\ccmrepair.exe'
-    $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
-
-    # A cache path is only safe to clear if it is absolute, below a drive root, not the Windows
-    # directory or System32, and exists (no folder-name requirement - a relocated cache can be
-    # custom-named). Guards against an empty/garbage value becoming a root-level delete.
-    $isSafeCache = {
-        param($p, $win)
-        if ([string]::IsNullOrWhiteSpace($p)) { return $false }
-        $n = $p.TrimEnd('\')
-        if ($n -notmatch '^[A-Za-z]:\\[^\\]+') { return $false }
-        $w = $win.TrimEnd('\')
-        if (($n -ieq $w) -or ($n -ieq ((Join-Path $w 'System32').TrimEnd('\')))) { return $false }
-        return (Test-Path -LiteralPath $n -PathType Container)
-    }
 
     if (-not (Test-Path $ccmrepairexe)) {
         Write-Host "CCMRepair executable not found."
-        Write-RepairCCMLog "CCMRepair executable not found at $ccmrepairexe."
+        & $log "CCMRepair executable not found at $ccmrepairexe." Error
         return 1
     }
 
     try {
         # Restart SCCM Client Service
-        if (-not $Quiet) { Write-Host "Restarting SCCM Service..." }
-        Write-RepairCCMLog "Restarting SCCM Service..."
+        Write-Host "Restarting SCCM Service..."
+        & $log "Restarting SCCM Service..."
 
         $stopProcessErrors = $null
         Stop-Process -Name SCClient,CcmExec -Force -ErrorAction SilentlyContinue -ErrorVariable stopProcessErrors
         foreach ($stopProcessError in $stopProcessErrors) {
-            Write-RepairCCMLog "ERROR: Failed to stop process: $stopProcessError"
+            & $log "Failed to stop process: $stopProcessError" Error
         }
 
         # If the client is not registered in WMI (root\ccm unreachable), re-register its WMI classes
@@ -1722,48 +1651,43 @@ function Repair-CCM {
         $ccmDir   = Split-Path $ccmrepairexe -Parent
         $ccmWmiOk = try { [bool](Get-CimInstance -Namespace 'root\ccm' -ClassName SMS_Client -ErrorAction Stop) } catch { $false }
         if (-not $ccmWmiOk) {
-            if (-not $Quiet) { Write-Host "CCM is not registered in WMI; re-registering client MOFs..." }
-            Write-RepairCCMLog "CCM not registered in WMI (root\ccm unreachable). Re-registering WMI classes via mofcomp from '$ccmDir'..."
+            Write-Host "CCM is not registered in WMI; re-registering client MOFs..."
+            & $log "CCM not registered in WMI (root\ccm unreachable). Re-registering WMI classes via mofcomp from '$ccmDir'..."
             if (Test-Path -LiteralPath $ccmDir -PathType Container) {
                 $mofcomp = Join-Path $winDir 'System32\wbem\mofcomp.exe'
                 Get-ChildItem -LiteralPath $ccmDir -Filter '*.mof' -File -ErrorAction SilentlyContinue | ForEach-Object {
                     & $mofcomp $_.FullName 2>&1 | Out-Null
                 }
                 $ccmWmiOk = try { [bool](Get-CimInstance -Namespace 'root\ccm' -ClassName SMS_Client -ErrorAction Stop) } catch { $false }
-                Write-RepairCCMLog "WMI re-registration attempted; root\ccm accessible now: $ccmWmiOk."
+                & $log "WMI re-registration attempted; root\ccm accessible now: $ccmWmiOk."
             } else {
-                Write-RepairCCMLog "CCM directory '$ccmDir' not found; cannot re-register WMI classes."
+                & $log "CCM directory '$ccmDir' not found; cannot re-register WMI classes." Warning
             }
         } else {
-            Write-RepairCCMLog "CCM is registered in WMI (root\ccm accessible)."
+            & $log "CCM is registered in WMI (root\ccm accessible)."
         }
 
         $restartServiceErrors = $null
         Restart-Service CcmExec -Force -ErrorAction SilentlyContinue -ErrorVariable restartServiceErrors
         foreach ($restartServiceError in $restartServiceErrors) {
-            Write-RepairCCMLog "ERROR: Failed to restart service CcmExec: $restartServiceError"
+            & $log "Failed to restart service CcmExec: $restartServiceError" Error
         }
 
         Start-Sleep -Seconds 10
 
         # Run SCCM Client Repair
-        if (-not $Quiet) { Write-Host "Starting CCMRepair... This may take a while (~30min)." }
-        Write-RepairCCMLog "Starting CCMRepair..."
+        Write-Host "Starting CCMRepair... This may take a while (~30min)."
+        & $log "Starting CCMRepair..."
         # Run with an enforced ceiling so a hung ccmrepair can't block the whole repair run.
         $ccmRepairMaxMinutes = 45
-        $ccmProc  = Start-Process -FilePath $ccmrepairexe -PassThru -NoNewWindow -ErrorAction Stop
-        $ccmStart = Get-Date
-        while (-not $ccmProc.HasExited) {
-            Start-Sleep -Seconds 15
-            if (((Get-Date) - $ccmStart).TotalMinutes -gt $ccmRepairMaxMinutes) {
-                Write-Warning "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
-                Write-RepairCCMLog "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
-                try { $ccmProc.Kill(); $ccmProc.WaitForExit(30000) } catch {}
-                break
-            }
+        $ccmProc = Start-Process -FilePath $ccmrepairexe -PassThru -NoNewWindow -ErrorAction Stop
+        if ($ccmProc.WaitForExit($ccmRepairMaxMinutes * 60000)) {
+            & $log "CCMRepair process finished."
+        } else {
+            Write-Warning "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
+            & $log "CCMRepair exceeded $ccmRepairMaxMinutes minutes; terminating it."
+            try { $ccmProc.Kill(); [void]$ccmProc.WaitForExit(30000) } catch { }
         }
-        $ccmProc.WaitForExit()
-        Write-RepairCCMLog "CCMRepair process finished."
 
         # Print Repair Result
         $ccmSetupLogFolder = Join-Path $winDir 'ccmsetup\Logs'
@@ -1776,57 +1700,37 @@ function Repair-CCM {
                     # only print if logmessage starts with "CcmSetup is exiting with return code"
                     if ($logMessage -like "CcmSetup is exiting with return code*" -or $logMessage -like "CcmSetup failed with error code*") {
                         Write-Host "Log Message: $logMessage"
-                        Write-RepairCCMLog "ccmsetup.log result: $logMessage"
+                        & $log "ccmsetup.log result: $logMessage"
                     }
                 }
             }
-            # copy logfile to localtemppath
-            Copy-Item -Path "$ccmSetupLogFolder\$ccmsetupLogFile" -Destination $localTempPath -Force
-            if ( Test-Path "$localTempPath\$ccmsetupLogFile") {
-                Rename-Item -Path "$localTempPath\$ccmsetupLogFile" -NewName "CCMSetup_$timestamp.log" -Force
-                Write-RepairCCMLog "Copied $ccmsetupLogFile to $localTempPath as CCMSetup_$timestamp.log."
-            } else {
-                Write-Host "CCMSetup log file not found in the expected Temp location."
-                Write-RepairCCMLog "CCMSetup log file not found in the expected Temp location ($localTempPath)."
+            try {
+                Copy-Item -LiteralPath "$ccmSetupLogFolder\$ccmsetupLogFile" -Destination $CCMSetupLogCopy -Force -ErrorAction Stop
+                & $log "Copied $ccmsetupLogFile to $CCMSetupLogCopy."
+            } catch {
+                Write-Host "CCMSetup log file could not be copied."
+                & $log "CCMSetup log file could not be copied to ${CCMSetupLogCopy}: $_" Warning
             }
         } else {
             Write-Host "CCMSetup log file not found."
-            Write-RepairCCMLog "CCMSetup log file not found at $ccmSetupLogFolder\$ccmsetupLogFile."
+            & $log "CCMSetup log file not found at $ccmSetupLogFolder\$ccmsetupLogFile."
         }
 
         # Clear SCCM Cache
-        if (-not $Quiet) { Write-Host "Clearing SCCM Cache..." }
-        Write-RepairCCMLog "Clearing SCCM Cache..."
-        # ConfigMgr client cache (relocatable). The WMI CacheConfig class can come back empty even on a
-        # healthy client, so try WMI -> UIResourceMgr COM (what Software Center reads) -> registry
-        # CacheConfig -> default under Windows, and take the first trusted, non-empty path. Cleared only
-        # if it passes the safety guard.
-        $ccmCachePath = $null
-        try { $ccmCachePath = (Get-CimInstance -Namespace 'root\ccm\SoftMgmtAgent' -ClassName CacheConfig -ErrorAction Stop | Select-Object -First 1).Location } catch { $ccmCachePath = $null }
-        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) {
-            try {
-                $ccmUi = New-Object -ComObject UIResource.UIResourceMgr
-                $ccmCachePath = $ccmUi.GetCacheInfo().Location
-                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ccmUi)
-            } catch { }
-        }
-        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) {
-            $ccmCachePath = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\SMS\Mobile Client\Software Distribution\CacheConfig' -Name Location -ErrorAction SilentlyContinue).Location
-        }
-        if ([string]::IsNullOrWhiteSpace($ccmCachePath)) { $ccmCachePath = Join-Path $winDir 'ccmcache' }
-        if (& $isSafeCache $ccmCachePath $winDir) {
-            Get-ChildItem -LiteralPath $ccmCachePath -Force -ErrorAction SilentlyContinue | ForEach-Object {
-                Remove-Item -LiteralPath "\\?\$($_.FullName)" -Recurse -Force -ErrorAction SilentlyContinue
-            }
-            Write-RepairCCMLog "SCCM Cache cleared ($ccmCachePath)."
+        Write-Host "Clearing SCCM Cache..."
+        & $log "Clearing SCCM Cache..."
+        $ccmCachePath = Get-CCMCachePath -Bases $Bases
+        if (Test-SafeCachePath -Path $ccmCachePath -Bases $Bases) {
+            Clear-FolderContentsReliable -Folder $ccmCachePath -BestEffort | Out-Null
+            & $log "SCCM Cache cleared ($ccmCachePath)."
         } else {
-            Write-RepairCCMLog "SCCM Cache folder not found or its path could not be trusted ('$ccmCachePath'). No need to clear."
+            & $log "SCCM Cache folder not found or its path could not be trusted ('$ccmCachePath'). No need to clear."
         }
 
         # Trigger SCCM Cycles
-        if (-not $Quiet) { Write-Host "Triggering SCCM Client Actions..." }
-        Write-RepairCCMLog "Triggering SCCM Client Actions..."
-        $SCCMActions = @{
+        Write-Host "Triggering SCCM Client Actions..."
+        & $log "Triggering SCCM Client Actions..."
+        $SCCMActions = [ordered]@{
             "Hardware Inventory Cycle"                     = "{00000000-0000-0000-0000-000000000001}"
             "Software Inventory Cycle"                     = "{00000000-0000-0000-0000-000000000002}"
             "Discovery Data Collection Cycle"               = "{00000000-0000-0000-0000-000000000003}"
@@ -1839,23 +1743,27 @@ function Repair-CCM {
             "Application Deployment Evaluation Cycle"       = "{00000000-0000-0000-0000-000000000121}"
         }
 
+        $failedActions = 0
         foreach ($Action in $SCCMActions.GetEnumerator()) {
             Write-Host "  - $($Action.Key)"
-            Write-RepairCCMLog "Triggering: $($Action.Key)..."
+            & $log "Triggering: $($Action.Key)..."
             try {
-                Invoke-WmiMethod -Namespace "root\ccm" -Class SMS_Client -Name TriggerSchedule -ArgumentList $Action.Value -ErrorAction Stop | Out-Null
-                Write-RepairCCMLog "  - OK: $($Action.Key)"
+                Invoke-CimMethod -Namespace 'root\ccm' -ClassName SMS_Client -MethodName TriggerSchedule -Arguments @{ sScheduleID = $Action.Value } -ErrorAction Stop | Out-Null
+                & $log "  - OK: $($Action.Key)"
             } catch {
-                Write-RepairCCMLog "  - ERROR triggering '$($Action.Key)': $_"
+                $failedActions++
+                & $log "  - triggering '$($Action.Key)' failed: $_" Error
             }
         }
-        Write-Host "All SCCM Client Actions triggered."
-        Write-RepairCCMLog "All SCCM Client Actions triggered."
+        $triggerSummary = if ($failedActions -eq 0) { "All SCCM Client Actions triggered." }
+                          else { "Triggered $($SCCMActions.Count - $failedActions) of $($SCCMActions.Count) SCCM Client Actions; $failedActions failed (see log)." }
+        Write-Host $triggerSummary
+        & $log $triggerSummary
     } catch {
         $errorMessage = "Failed to repair CCM: $_"
         Write-Error $errorMessage
-        Write-RepairCCMLog "ERROR: $errorMessage"
-        return 2
+        & $log $errorMessage Error
+        return 1
     }
     return 0
 }
@@ -1867,169 +1775,143 @@ function Repair-WMIRepository {
     with 'winmgmt /verifyrepository'; if it reports inconsistent, runs 'winmgmt /salvagerepository'
     and re-verifies. It deliberately never runs '/resetrepository', which is destructive and can break
     third-party WMI providers (SCCM, AV, monitoring). Self-contained so it can be shipped to a remote
-    session via ${function:Repair-WMIRepository}. Returns 0 (consistent or successfully salvaged) or
-    1 (still inconsistent / could not complete).
+    session. Returns 0 (consistent or successfully salvaged) or 1 (still inconsistent / could not
+    complete).
     #>
-    [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory=$true)]
         [string]$WMIRepairLog,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [switch]$Quiet,
-
-        [Parameter(Mandatory=$true, Position=2)]
-        [switch]$VerboseArg
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases
     )
-    if ($VerboseArg) { $PSCmdlet.MyInvocation.BoundParameters['Verbose'] = $true }
-    if ($Quiet)      { $PSCmdlet.MyInvocation.BoundParameters['Verbose'] = $false }
 
-    function Write-WMIRepairLog {
-        param([string]$Message)
-        Add-Content -Path $WMIRepairLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - INFO:`r`n`t$Message"
-    }
+    $log = { param($m, $s = 'Info') Write-StepLogLine $WMIRepairLog $m 'WMIRepair' $s }
 
     # winmgmt sets a NON-ZERO exit code when the repository is inconsistent and 0 when consistent - a
     # locale-independent signal, unlike the (localised) verdict text, so the EXIT CODE drives the
-    # decision and the text is only captured for the log. winmgmt.exe is a service stub, though: it
-    # does NOT expose its exit code through Start-Process -PassThru (the ExitCode comes back empty even
-    # after WaitForExit) - only the call operator ($LASTEXITCODE) or -Wait capture it. Run it in a
-    # background job so the call operator gets the real code while Wait-Job still enforces a hard
-    # timeout against a wedged WMI service. Returns @{ ExitCode; Output; TimedOut }.
+    # decision and the text is only captured for the log. The time limit guards against a wedged WMI
+    # service. Returns @{ ExitCode; Output; TimedOut }.
     $invokeWinmgmt = {
         param([string]$WinmgmtArg, [int]$TimeoutSec)
-        $winDir = [Environment]::GetFolderPath('Windows')
-        if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = $env:SystemRoot }
-        if ([string]::IsNullOrWhiteSpace($winDir)) { $winDir = 'C:\Windows' }
-        $winmgmt = Join-Path $winDir 'System32\wbem\winmgmt.exe'
-        $job = Start-Job -ScriptBlock {
-            param($exe, $a)
-            $o = & $exe $a 2>&1 | Out-String
-            [PSCustomObject]@{ Code = $LASTEXITCODE; Out = $o }
-        } -ArgumentList $winmgmt, $WinmgmtArg
-        if (Wait-Job $job -Timeout $TimeoutSec) {
-            $r = Receive-Job $job
-            Remove-Job $job -Force -ErrorAction SilentlyContinue
-            $code = $r.Code
-            if ($null -eq $code) { $code = 0 }
-            return @{ ExitCode = [int]$code; Output = ([string]$r.Out).Trim(); TimedOut = $false }
-        } else {
-            Stop-Job  $job -ErrorAction SilentlyContinue
-            Remove-Job $job -Force -ErrorAction SilentlyContinue
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList (Join-Path $Bases.Windows 'System32\wbem\winmgmt.exe'), $WinmgmtArg
+        $startInfo.UseShellExecute        = $false
+        $startInfo.CreateNoWindow         = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError  = $true
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+        # both streams are read asynchronously so a full pipe can't stall the process
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+            try { $process.Kill() } catch { }
             return @{ ExitCode = -2; Output = 'winmgmt timed out'; TimedOut = $true }
         }
+        @{ ExitCode = $process.ExitCode; Output = ($stdout.Result + $stderr.Result).Trim(); TimedOut = $false }
+    }
+
+    if (-not $Bases.Windows) {
+        & $log "Windows directory could not be resolved; winmgmt cannot be located." Error
+        return 1
     }
 
     try {
-        if (-not $Quiet) { Write-Host "Verifying WMI repository (winmgmt /verifyrepository)..." }
-        Write-WMIRepairLog "Verifying WMI repository (winmgmt /verifyrepository)..."
+        Write-Host "Verifying WMI repository (winmgmt /verifyrepository)..."
+        & $log "Verifying WMI repository (winmgmt /verifyrepository)..."
         $verify = & $invokeWinmgmt '/verifyrepository' 60
-        Write-WMIRepairLog "verifyrepository exit=$($verify.ExitCode); output:`r`n`t$($verify.Output)"
+        & $log "verifyrepository exit=$($verify.ExitCode); output:`r`n`t$($verify.Output)"
 
         if ($verify.TimedOut) {
             Write-Warning "WMI /verifyrepository timed out; the WMI service may be wedged."
-            Write-WMIRepairLog "verifyrepository timed out. Aborting WMI repair (non-destructive step)."
+            & $log "verifyrepository timed out. Aborting WMI repair (non-destructive step)."
             return 1
         }
 
         if ($verify.ExitCode -eq 0) {
-            if (-not $Quiet) { Write-Host "WMI repository is consistent; no repair needed." }
-            Write-WMIRepairLog "WMI repository is consistent (verify exit 0); no repair needed."
+            Write-Host "WMI repository is consistent; no repair needed."
+            & $log "WMI repository is consistent (verify exit 0); no repair needed."
             return 0
         }
 
-        if (-not $Quiet) { Write-Host "WMI repository is inconsistent; salvaging (winmgmt /salvagerepository)..." }
-        Write-WMIRepairLog "WMI repository reported inconsistent (verify exit $($verify.ExitCode)). Running winmgmt /salvagerepository..."
+        Write-Host "WMI repository is inconsistent; salvaging (winmgmt /salvagerepository)..."
+        & $log "WMI repository reported inconsistent (verify exit $($verify.ExitCode)). Running winmgmt /salvagerepository..."
         $salvage = & $invokeWinmgmt '/salvagerepository' 300
-        Write-WMIRepairLog "salvagerepository exit=$($salvage.ExitCode); output:`r`n`t$($salvage.Output)"
+        & $log "salvagerepository exit=$($salvage.ExitCode); output:`r`n`t$($salvage.Output)"
         if ($salvage.TimedOut) {
             Write-Warning "WMI /salvagerepository timed out; the WMI service may be wedged."
-            Write-WMIRepairLog "salvagerepository timed out. WMI repository still needs attention."
+            & $log "salvagerepository timed out. WMI repository still needs attention."
             return 1
         }
 
         # The salvage command's own exit code is not conclusive; re-verify to confirm consistency.
-        if (-not $Quiet) { Write-Host "Re-verifying WMI repository after salvage..." }
-        Write-WMIRepairLog "Re-verifying WMI repository after salvage..."
+        Write-Host "Re-verifying WMI repository after salvage..."
+        & $log "Re-verifying WMI repository after salvage..."
         $reverify = & $invokeWinmgmt '/verifyrepository' 60
-        Write-WMIRepairLog "post-salvage verifyrepository exit=$($reverify.ExitCode); output:`r`n`t$($reverify.Output)"
+        & $log "post-salvage verifyrepository exit=$($reverify.ExitCode); output:`r`n`t$($reverify.Output)"
 
         if (-not $reverify.TimedOut -and $reverify.ExitCode -eq 0) {
-            if (-not $Quiet) { Write-Host "WMI repository salvaged; now consistent." }
-            Write-WMIRepairLog "WMI repository salvaged successfully; re-verify reports consistent."
+            Write-Host "WMI repository salvaged; now consistent."
+            & $log "WMI repository salvaged successfully; re-verify reports consistent."
             return 0
         }
 
         Write-Warning "WMI repository is still inconsistent after salvage."
-        Write-WMIRepairLog "WMI repository still inconsistent after salvage. A manual 'winmgmt /resetrepository' may be required; not attempted (non-destructive step)."
+        & $log "WMI repository still inconsistent after salvage. A manual 'winmgmt /resetrepository' may be required; not attempted (non-destructive step)."
         return 1
     } catch {
         $err = "An error occurred during WMI repository repair:`r`n$_"
         Write-Warning $err
-        Write-WMIRepairLog "ERROR: $err"
+        & $log $err Error
         return 1
     }
 }
 
 function Start-ZipFileCreation {
+    <#
+    Zips the CBS (and, unless -noDism, the DISM) system log into $ZipFile. The logs are copied into
+    the temp folder first because the live files stay open; the copies are deleted afterwards (queued
+    for the next reboot if still locked). A failure is written to $ZipErrorLog. Self-contained apart
+    from Write-CMTraceLog, Remove-PathReliable and Register-PendingDelete, so it can run as a
+    background job on the target.
+    #>
     param (
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$localTempPath,
+        [Parameter(Mandatory=$true)]
+        [string]$TempPath,
 
-        [Parameter(Mandatory=$true, Position=1)]
-        [string]$zipFile,
+        [Parameter(Mandatory=$true)]
+        [string]$ZipFile,
 
-        [Parameter(Mandatory=$true, Position=2)]
-        [string]$zipErrorLog,
+        [Parameter(Mandatory=$true)]
+        [string]$ZipErrorLog,
 
-        [Parameter(Mandatory=$true, Position=3)]
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Bases,
+
         [switch]$noDism
     )
-
+    $filesToZip = @()
     try {
-        $winDir = [Environment]::GetFolderPath('Windows')
-        if ([string]::IsNullOrWhiteSpace($winDir) -or -not (Test-Path -LiteralPath $winDir -PathType Container)) { $winDir = if ($env:windir) { $env:windir } else { 'C:\Windows' } }
-        $cbsLog = Join-Path $winDir 'Logs\CBS\CBS.log'
-        $dismLog = Join-Path $winDir 'Logs\dism\dism.log'
-        $filesToZip = @()
-
-        # Copy CBS.log to the temporary directory if it exists
-        if (Test-Path $cbsLog) {
-            Copy-Item -Path $cbsLog -Destination $localtempPath
-            $filesToZip += (Join-Path -Path $localtempPath -ChildPath "CBS.log")
-        }
-
-        # Copy DISM.log to the temporary directory if it exists and the noDism flag is not set
-        if (-not $noDism) {
-            if (Test-Path $dismLog) {
-                Copy-Item -Path $dismLog -Destination $localtempPath
-                $filesToZip += (Join-Path -Path $localtempPath -ChildPath "dism.log")
+        if (-not $Bases.Windows) { throw "the Windows directory could not be resolved" }
+        $sources = @(Join-Path $Bases.Windows 'Logs\CBS\CBS.log')
+        if (-not $noDism) { $sources += Join-Path $Bases.Windows 'Logs\dism\dism.log' }
+        foreach ($source in $sources) {
+            if (Test-Path -LiteralPath $source) {
+                Copy-Item -LiteralPath $source -Destination $TempPath -Force -ErrorAction Stop
+                $filesToZip += Join-Path $TempPath (Split-Path $source -Leaf)
             }
         }
-
-        # Delete existing zip file if it exists
-        if (Test-Path $zipFile) {
-            Remove-Item -Path $zipFile -Force
-        }
-
-        # Create a new zip file
         if ($filesToZip.Count -gt 0) {
-            Compress-Archive -Path $filesToZip -DestinationPath $zipFile -Force
+            Compress-Archive -LiteralPath $filesToZip -DestinationPath $ZipFile -Force -ErrorAction Stop
         }
-
-        # Remove the copied logs from the temporary directory
-        foreach ($file in $filesToZip) {
-            if (Test-Path $file) {
-                Remove-Item -Path $file -Force
-            }
-        }
+        $exitCode = 0
     } catch {
         $errorMessage = "An error occurred while creating the zip file: $_"
-        Add-Content -Path $zipErrorLog -Value "[$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss.fff')] - ERROR:`r`n$errorMessage"
-        Write-Error $message
-        return 1
+        Write-CMTraceLog $errorMessage 'ZipCreation' $ZipErrorLog Error
+        Write-Error $errorMessage
+        $exitCode = 1
     }
-    return 0
+    foreach ($file in $filesToZip) { $null = Remove-PathReliable -Path $file }
+    return $exitCode
 }
 
 function Test-DismSfcStepIncomplete {
@@ -2038,26 +1920,28 @@ function Test-DismSfcStepIncomplete {
     warrants a reboot re-run. Returns $true when: the step was timed out (-2) or terminated
     externally (-3); its captured log is missing or empty (it never really started); its log lacks
     the tool's completion marker (killed mid-run); or the log reports a reboot-pending / could-not-
-    repair condition. The log is read from the path given (a UNC path for a remote target).
+    repair condition. DISM runs with /English; for SFC the CBS.log summary line written by
+    Invoke-SFC decides, the English console text is only a fallback when CBS.log was unreadable.
     #>
     param(
         [Parameter(Mandatory=$true)] [int]$ResultCode,
-        [Parameter(Mandatory=$true)] [string]$LogPath,
+        [AllowEmptyString()] [AllowNull()] [string]$Content,
         [Parameter(Mandatory=$true)] [ValidateSet('SFC','DISM')] [string]$Kind
     )
     if ($ResultCode -eq -4) { return $false }          # requested-but-not-executed: did not run, fine
     if ($ResultCode -eq -2 -or $ResultCode -eq -3) { return $true }   # timed out / terminated externally
+    if ([string]::IsNullOrWhiteSpace($Content)) { return $true }      # empty / could not start
 
-    $content = if (Test-Path -LiteralPath $LogPath) { Get-Content -LiteralPath $LogPath -Raw -ErrorAction SilentlyContinue } else { $null }
-    if ([string]::IsNullOrWhiteSpace($content)) { return $true }      # empty / could not start
-
-    if ($content -match 'system repair pending|unable to fix some of them|could not perform the requested operation') { return $true }
+    if ($Kind -eq 'SFC' -and $Content -match 'Repair-System SFC result \(CBS\.log\): Finished=(\w+); Repaired=\d+; Unrepairable=(\d+)') {
+        return ($Matches[1] -ne 'True' -or [int]$Matches[2] -gt 0)
+    }
+    if ($Content -match 'system repair pending|unable to fix some of them|could not perform the requested operation') { return $true }
 
     $completed = if ($Kind -eq 'SFC') {
-        ($content -match 'Windows Resource Protection') -and
-        ($content -match 'did not find any integrity violations|successfully repaired them|found corrupt files|Verification 100% complete')
+        ($Content -match 'Windows Resource Protection') -and
+        ($Content -match 'did not find any integrity violations|successfully repaired them|found corrupt files|Verification 100% complete')
     } else {
-        $content -match 'The operation completed successfully|No component store corruption detected|The component store is repairable|Component Store Cleanup Recommended'
+        $Content -match 'The operation completed successfully|No component store corruption detected|The component store is repairable|Component Store Cleanup Recommended'
     }
     return (-not $completed)
 }
@@ -2065,7 +1949,7 @@ function Test-DismSfcStepIncomplete {
 function Invoke-DismSfcRebootRepair {
     <#
     Entry point for the scheduled reboot re-run. Runs at next boot as SYSTEM. Re-runs the full
-    conditional DISM + SFC flow (ScanHealth -> RestoreHealth if repairable -> AnalyzeComponentStore ->
+    conditional DISM + SFC flow (RestoreHealth -> AnalyzeComponentStore ->
     StartComponentCleanup if recommended -> SFC) and writes a CMTrace Repair-System log next to itself.
     FAIL-SAFE: it deletes its own scheduled task FIRST, so it runs at most once even if it hangs or the
     machine reboots mid-repair, and it never schedules another run. Self-contained for bundling into a
@@ -2081,54 +1965,48 @@ function Invoke-DismSfcRebootRepair {
     try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop }
     catch { try { & schtasks.exe /Delete /TN $TaskName /F 2>&1 | Out-Null } catch {} }
 
-    New-Folder -FolderPath $RepairFolder
-    $pc  = $env:COMPUTERNAME
-    $ts  = (Get-Date).ToString('yyyy-MM-dd_HH-mm')
-    $masterLog = Join-Path $RepairFolder "SystemRepair_${pc}_${ts}_reboot-rerun.log"
+    if (-not (Test-Path -LiteralPath $RepairFolder)) { New-SecureDirectory -Path $RepairFolder -UsersRead }
+    $pc        = $env:COMPUTERNAME
+    $runPrefix = Join-Path $RepairFolder "$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')_${pc}_RepairSystem"
+    $masterLog = "${runPrefix}_RebootRerun.log"
+    $stepLogs  = [System.Collections.Generic.List[string]]::new()
 
-    Write-RepairLog -Message "Repair-System reboot re-run started (DISM/SFC);" -Component "RebootRerun" -LogPath $masterLog -StartLogEntry
-    Write-RepairLog -Message "Target: $pc; Reason: a DISM/SFC step did not complete during the previous run; single automatic attempt;" -Component "RebootRerun" -LogPath $masterLog -EndLogEntry
+    Write-CMTraceLog -Message "Repair-System reboot re-run started (DISM/SFC);`r`nTarget: $pc; Reason: a DISM/SFC step did not complete during the previous run; single automatic attempt;" -Component "RebootRerun" -LogPath $masterLog
 
-    $scanLog    = Join-Path $RepairFolder "${ts}_DISM_scanHealth.log"
-    $restoreLog = Join-Path $RepairFolder "${ts}_DISM_restoreHealth.log"
-    $analyzeLog = Join-Path $RepairFolder "${ts}_DISM_analyze-component.log"
-    $cleanupLog = Join-Path $RepairFolder "${ts}_DISM_componentStore-cleanup.log"
-    $sfcLog     = Join-Path $RepairFolder "${ts}_sfc-scannow.log"
-
-    $scanExit = [int]((Invoke-DISMScan $scanLog $ChangeTimeout $false $false) | Select-Object -Last 1)
-    Write-RepairLog -Message "DISM ScanHealth completed; ExitCode=$scanExit;" -Component "DISM-ScanHealth" -LogPath $masterLog
-    Start-LogAppendJob -StepLogPath $scanLog -MasterLogPath $masterLog -StepName "DISM-ScanHealth" -Component "DISM-ScanHealth" -Sync
-
-    if ($scanExit -eq 0 -and (Get-DISMScanResult -dismScanLog $scanLog) -eq 1) {
-        $restoreExit = [int]((Invoke-DISMRestore $restoreLog $ChangeTimeout $false $false) | Select-Object -Last 1)
-        Write-RepairLog -Message "DISM RestoreHealth completed; ExitCode=$restoreExit;" -Component "DISM-RestoreHealth" -LogPath $masterLog
-        Start-LogAppendJob -StepLogPath $restoreLog -MasterLogPath $masterLog -StepName "DISM-RestoreHealth" -Component "DISM-RestoreHealth" -Sync
+    # Runs one DISM/SFC step, embeds its log and returns its result code and log content.
+    $runStep = {
+        param($worker, $component, $stepName)
+        $stepLog = "${runPrefix}_$component.log"
+        $stepLogs.Add($stepLog)
+        $exitCode = [int]((& $worker -LogPath $stepLog -ChangeTimeout $ChangeTimeout) | Select-Object -Last 1)
+        $content = Get-Content -LiteralPath $stepLog -Raw -ErrorAction SilentlyContinue
+        Write-CMTraceLog -Message "$stepName completed; ExitCode=$exitCode;" -Component $component -LogPath $masterLog
+        Add-RepairStepLog -Content $content -MasterLogPath $masterLog -StepName $component -Component $component
+        $errLog = $stepLog -replace '\.log$', '_stderr.log'
+        if ((Test-Path -LiteralPath $errLog) -and (Get-Item -LiteralPath $errLog).Length -gt 0) {
+            Write-CMTraceLog -Message "$stepName wrote to stderr: $errLog" -Component $component -LogPath $masterLog -Severity Warning
+        }
+        @{ ExitCode = $exitCode; Content = $content }
     }
 
-    $analyzeExit = [int]((Invoke-DISMAnalyzeComponentStore $analyzeLog $ChangeTimeout $false $false) | Select-Object -Last 1)
-    Write-RepairLog -Message "DISM AnalyzeComponentStore completed; ExitCode=$analyzeExit;" -Component "DISM-Analyze" -LogPath $masterLog
-    Start-LogAppendJob -StepLogPath $analyzeLog -MasterLogPath $masterLog -StepName "DISM-AnalyzeComponentStore" -Component "DISM-Analyze" -Sync
-
-    if ($analyzeExit -eq 0 -and (Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeLog)) {
-        $cleanupExit = [int]((Invoke-DISMComponentStoreCleanup $cleanupLog $ChangeTimeout $false $false) | Select-Object -Last 1)
-        Write-RepairLog -Message "DISM ComponentStoreCleanup completed; ExitCode=$cleanupExit;" -Component "DISM-ComponentCleanup" -LogPath $masterLog
-        Start-LogAppendJob -StepLogPath $cleanupLog -MasterLogPath $masterLog -StepName "DISM-ComponentStoreCleanup" -Component "DISM-ComponentCleanup" -Sync
+    $null = & $runStep 'Invoke-DISMRestore' 'DISM-RestoreHealth' 'DISM RestoreHealth'
+    $analyze = & $runStep 'Invoke-DISMAnalyzeComponentStore' 'DISM-Analyze' 'DISM AnalyzeComponentStore'
+    if ($analyze.ExitCode -eq 0 -and (Get-DISMAnalyzeComponentStoreResult -Content $analyze.Content)) {
+        $null = & $runStep 'Invoke-DISMComponentStoreCleanup' 'DISM-ComponentCleanup' 'DISM ComponentStoreCleanup'
+    } elseif ($analyze.ExitCode -eq 3010 -and (Get-DISMAnalyzeComponentStoreResult -Content $analyze.Content)) {
+        Write-CMTraceLog -Message "A component store cleanup is recommended, but a restart is pending; StartComponentCleanup postponed. Restart $pc and run Repair-System -IncludeComponentCleanup." -Component "DISM-ComponentCleanup" -LogPath $masterLog -Severity Warning
     }
+    $null = & $runStep 'Invoke-SFC' 'SFC' 'SFC /scannow'
 
-    $sfcExit = [int]((Invoke-SFC $sfcLog $ChangeTimeout $false $false) | Select-Object -Last 1)
-    Write-RepairLog -Message "SFC /scannow completed; ExitCode=$sfcExit;" -Component "SFC" -LogPath $masterLog
-    Start-LogAppendJob -StepLogPath $sfcLog -MasterLogPath $masterLog -StepName "SFC" -Component "SFC" -Sync
+    Write-CMTraceLog -Message "Repair-System reboot re-run completed;`r`nNo further re-runs are scheduled (single attempt by design). Log: $masterLog;" -Component "RebootRerun" -LogPath $masterLog
 
-    Write-RepairLog -Message "Repair-System reboot re-run completed;" -Component "RebootRerun" -LogPath $masterLog -StartLogEntry
-    Write-RepairLog -Message "No further re-runs are scheduled (single attempt by design). Log: $masterLog;" -Component "RebootRerun" -LogPath $masterLog -EndLogEntry
-
-    # self-cleanup: the per-step logs were embedded into the master log above (same as the main
-    # Repair-System run, which deletes them after embedding), so remove them and the generated
-    # script - only the master reboot-rerun log stays.
-    foreach ($stepLog in @($scanLog, $restoreLog, $analyzeLog, $cleanupLog, $sfcLog)) {
-        try { if (Test-Path -LiteralPath $stepLog) { Remove-Item -LiteralPath $stepLog -Force -ErrorAction SilentlyContinue } } catch {}
+    # self-cleanup: the step logs are embedded in the master log, so remove them and the generated
+    # script's folder (queued for the next reboot if locked) - the master log and any non-empty stderr stay.
+    foreach ($file in @($stepLogs) + (Split-Path -Path $SelfScriptPath -Parent)) {
+        if ((Remove-PathReliable -Path $file).Scheduled) {
+            Write-CMTraceLog -Message "$file is locked; queued for deletion on the next restart." -Component "RebootRerun" -LogPath $masterLog
+        }
     }
-    try { if (Test-Path -LiteralPath $SelfScriptPath) { Remove-Item -LiteralPath $SelfScriptPath -Force -ErrorAction SilentlyContinue } } catch {}
 }
 
 function Register-RebootRepairTask {
@@ -2140,46 +2018,80 @@ function Register-RebootRepairTask {
     $null on failure (registration failure is never fatal to the calling run).
     #>
     param(
-        [Parameter(Mandatory=$true)]  [decimal]$ChangeTimeout,
-        [Parameter(Mandatory=$false)] [hashtable]$InvokeParams = @{},
-        [Parameter(Mandatory=$false)] [switch]$Remote
+        [Parameter(Mandatory=$true)] [decimal]$ChangeTimeout,
+        [Parameter(Mandatory=$true)] [hashtable]$Target
     )
-    $repairFolder = 'C:\_IT-RebootRepair'
-    $scriptPath   = Join-Path $repairFolder 'RepairSystem-RebootRerun.ps1'
-    $taskName     = 'RepairSystem-RebootRerun'
+    $taskName = 'RepairSystem-RebootRerun'
 
-    # Bundle the worker functions + the orchestrator into one script, then append the entry call.
-    $bundle = @('New-Folder','Write-RepairLog','Start-LogAppendJob','Write-StepLogEntry',
-                'Get-RepairSystemProcessResult','Invoke-DISMScan','Get-DISMScanResult','Invoke-DISMRestore',
+    # Bundle the worker functions + the orchestrator into one script, then append the entry call. The
+    # log folder and the script's own path are resolved on the target when it runs.
+    $bundle = @('New-SecureDirectory','Write-CMTraceLog','Add-RepairStepLog',
+                'Get-RepairSystemProcessResult','Remove-PathReliable','Register-PendingDelete','Invoke-RepairTool',
+                'Invoke-DISMRestore',
                 'Invoke-DISMAnalyzeComponentStore','Get-DISMAnalyzeComponentStoreResult',
-                'Invoke-DISMComponentStoreCleanup','Invoke-SFC','Invoke-DismSfcRebootRepair')
+                'Invoke-DISMComponentStoreCleanup','Get-SfcCbsSummary','Invoke-SFC','Invoke-DismSfcRebootRepair')
     $scriptText = "# Auto-generated by Repair-System; single-shot DISM/SFC reboot re-run. Safe to delete.`r`n"
     foreach ($n in $bundle) { $scriptText += "function $n {`r`n" + (Get-Item "function:$n").ScriptBlock.ToString() + "`r`n}`r`n" }
-    $scriptText += "`r`nInvoke-DismSfcRebootRepair -RepairFolder '$repairFolder' -TaskName '$taskName' -SelfScriptPath '$scriptPath' -ChangeTimeout $ChangeTimeout`r`n"
+    $scriptText += "`r`nInvoke-DismSfcRebootRepair -RepairFolder `"`$env:SystemDrive\_IT-RebootRepair`" -TaskName '$taskName' -SelfScriptPath `$PSCommandPath -ChangeTimeout $ChangeTimeout`r`n"
 
-    $register = {
-        param($repairFolder, $scriptPath, $taskName, $scriptText)
-        if (-not (Test-Path -LiteralPath $repairFolder)) { New-Item -ItemType Directory -Path $repairFolder -Force | Out-Null }
-        Set-Content -LiteralPath $scriptPath -Value $scriptText -Encoding UTF8 -Force
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
-        $trigger   = New-ScheduledTaskTrigger -AtStartup
-        $trigger.Delay = 'PT2M'   # let the servicing stack settle before DISM runs
-        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-        $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 3)
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-    }
-
+    $install = New-RemoteFunctionScriptBlock -FunctionName 'New-SecureDirectory', 'Install-RebootRepairTask' -EntryPoint 'Install-RebootRepairTask'
+    $params  = @{ ScriptText = $scriptText; TaskName = $taskName }
     try {
-        if ($Remote) {
-            Invoke-Command @InvokeParams -ScriptBlock $register -ArgumentList $repairFolder, $scriptPath, $taskName, $scriptText -ErrorAction Stop
-        } else {
-            & $register $repairFolder $scriptPath $taskName $scriptText
+        if ($Target.Session) {
+            return Invoke-Command -Session $Target.Session -ScriptBlock $install -ArgumentList $params -ErrorAction Stop
         }
-        return [PSCustomObject]@{ Folder = $repairFolder; Script = $scriptPath; Task = $taskName }
+        return & $install $params
     } catch {
         Write-Warning "Could not register the reboot re-run task on the target: $_"
         return $null
     }
+}
+
+function Install-RebootRepairTask {
+    <#
+    Runs on the target: writes the re-run script and registers the task that runs it as SYSTEM at the
+    next boot. Every folder SYSTEM uses must be writable by SYSTEM and Administrators only, or any user
+    could plant code or redirect its writes:
+    - the script goes into a fresh folder under ProgramData; Directory.Delete removes a planted junction
+      itself instead of following it, and fails safe on a folder the user locked against Administrators
+    - the logs stay where earlier runs put them, readable by users; an existing folder is refused if it is
+      a junction and otherwise gets Administrators as owner and the restricted ACL back
+    #>
+    param(
+        [Parameter(Mandatory=$true)] [string]$ScriptText,
+        [Parameter(Mandatory=$true)] [string]$TaskName
+    )
+    $ErrorActionPreference = 'Stop'   # a failed registration must reach the caller's catch, locally too
+    $workDir   = Join-Path $env:ProgramData 'RepairSystem-RebootRerun'
+    $logFolder = "$env:SystemDrive\_IT-RebootRepair"
+
+    if (-not (Test-Path -LiteralPath $logFolder)) {
+        New-SecureDirectory -Path $logFolder -UsersRead
+    } else {
+        if ((Get-Item -LiteralPath $logFolder -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "$logFolder is a junction or symbolic link; remove it and run Repair-System again."
+        }
+        $acl = New-Object System.Security.AccessControl.DirectorySecurity
+        $acl.SetOwner((New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'))
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($rule in @(@('S-1-5-18', 'FullControl'), @('S-1-5-32-544', 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))) {
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+                (New-Object System.Security.Principal.SecurityIdentifier $rule[0]), $rule[1], 'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+        }
+        Set-Acl -LiteralPath $logFolder -AclObject $acl
+    }
+
+    if (Test-Path -LiteralPath $workDir) { [System.IO.Directory]::Delete($workDir, $true) }
+    New-SecureDirectory -Path $workDir
+    $scriptPath = Join-Path $workDir 'RepairSystem-RebootRerun.ps1'
+    Set-Content -LiteralPath $scriptPath -Value $ScriptText -Encoding UTF8 -Force
+    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    $trigger   = New-ScheduledTaskTrigger -AtStartup
+    $trigger.Delay = 'PT1M'   # let the servicing stack settle before DISM runs
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 3)
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    [PSCustomObject]@{ Folder = $logFolder; Script = $scriptPath; Task = $TaskName }
 }
 
 function Repair-RemoteSystem {
@@ -2208,19 +2120,18 @@ function Repair-System {
     Repairs the system by running SFC and DISM commands locally or on a remote computer.
 
     .DESCRIPTION
-    This function performs a series of system repair commands locally or on a remote computer. It first checks the availability of the remote machine by pinging it.
+    This function performs a series of system repair commands locally or on a remote computer. A remote computer is reached through a single PowerShell remoting session (WinRM) that is used for every step; no administrative file share is needed.
     Then, depending on the options specified, it executes `sfc /scannow` and  `DISM` commands to scan and repair the Windows image.
 
     Optional steps clean up the Windows Component Store, reset the Windows Update client (history-preserving), clear the content/download caches of the installed software-distribution systems (ConfigMgr / Adaptiva / Intune / Windows Update), and repair the ConfigMgr client. If a DISM/SFC step does not complete, a one-shot repair is scheduled to re-run the full DISM + SFC pass once after the next reboot (unless `-NoRebootRepair` is specified).
 
-    Progress and status are printed to the local console. Step outputs are written to temporary log files, then consolidated into a single master repair log (`SystemRepair_<PC>_<date>.log`) in CMTrace-compatible format; individual step log files are removed after embedding. On remote runs, the master log and a CBS/DISM system log archive are transferred to the local machine.
+    Progress and status are printed to the local console. Step outputs are written to temporary log files on the device, then consolidated into a single repair log (`<yyyy-MM-dd_HH-mm-ss>_<PC>_RepairSystem.log`) in CMTrace-compatible format; individual step log files (`..._RepairSystem_<Step>.log`) are removed after embedding. Output a DISM/SFC step writes to stderr is kept as `..._RepairSystem_<Step>_stderr.log` (an empty capture is removed). On remote runs the repair log is written on the local machine, and the CBS/DISM system log archive (`..._RepairSystem_CBS-DISM.zip`), its error log if zipping failed, the ccmsetup.log copy and any stderr captures are copied from the device; only the files of this run are removed from the device. The run ends with a summary of the outcome: success, steps that need a restart, steps that did not complete (and whether a re-run after restart was scheduled), and steps that reported errors. With -Verbose, each step's console and verbose output is also recorded in `..._RepairSystem_Verbose.log` on the device, which is copied back like the other files of the run.
 
     .PARAMETER ComputerName
-    The hostname or IP address of the remote computer where the system repair will be performed.
+    The hostname or IP address of the remote computer where the system repair will be performed. Accepts pipeline input; several computers are repaired one after another, each returning its own result object.
 
     .PARAMETER remoteShareDrive
-    The ShareDrive of the Remote-Device on which Windows is installed. If non is provided, Default-Value 'C$' will be used
-    The Command `Repair-System -ComputerName SomeDevice -remoteShareDrive D$` will result in Network-Path `\\SomeDevice\D$\`
+    No longer used: logs are read and copied through the PowerShell remoting session, not through an administrative share. Still accepted so existing commands keep working.
 
     .PARAMETER noSfc
     When specified, the `SCF /SCANNOW` command is skipped.
@@ -2229,7 +2140,7 @@ function Repair-System {
     When specified, the `DISM` commands are skipped.
 
     .PARAMETER Quiet
-    Suppresses console output on the local machine. The output is logged to files on the remote machine instead.
+    Suppresses all console output (progress, warnings, the summary and the detailed exit code line); only errors and the result object remain, eg. for scheduled or scripted runs. Everything is still written to the repair log. The confirmation prompt of -IncludeLegacyRepair is still shown; use -Force to bypass it.
 
     .PARAMETER IncludeComponentCleanup
     When specified, performs `DISM /Online /Cleanup-Image /AnalyzeComponentStore` and, if recommended, performs `DISM /Online /Cleanup-Image /StartComponentCleanup`.
@@ -2248,14 +2159,18 @@ function Repair-System {
     folder (keeping the update history / DataStore when it is healthy - see -ResetUpdateHistory), resets catroot2,
     and clears the BITS transfer queue. Anything held open by a process is scheduled for removal on the next reboot.
     If any item is deferred to reboot, the step reports code 3010 ("Success (restart required)").
+    Only the services Microsoft's Windows Update reset stops are stopped, and only those that were running are
+    started again. An update or MSI installation in progress is waited for up to 10 minutes; if it is still running
+    then, no service is stopped and the reset is carried out at the next boot instead (3010; -IncludeLegacyRepair is
+    then not run). A running ConfigMgr task sequence (TSManager.exe) is stopped first.
 
     .PARAMETER ChangeTimeout
     Multiplicator
-    Use decimal value to change when DISM/SFC and Windows Update Diagnostics will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
+    Use decimal value to change when the DISM/SFC steps will timeout (value `-ChangeTimeout 2` will double the time, `-ChangeTimeout 0.5` will half it).
     Range = 0.25 - 10.0
 
     .PARAMETER KeepLogs
-    When specified, individual step log files are retained alongside the master log instead of being deleted after their content is embedded. On remote runs, step logs remain on the remote device and the full set (step logs + master log) is transferred to the Client.
+    When specified, individual step log files are retained alongside the repair log instead of being deleted after their content is embedded. On remote runs, the files of this run stay on the remote device and are also copied to the Client.
 
     .PARAMETER init
     When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
@@ -2263,8 +2178,7 @@ function Repair-System {
 
     Configuration-File Template:
     ```
-    ShareDrive=C$                                       # ShareDrive-Letter of the Remote-Device on which Windows is installed
-    TempDirName=_IT-temp                                # Name of the temporary Directory on the Remote-Device
+    TempDirName=_IT-temp                                # Name of the temporary Directory on the target device (below its system drive); a single folder name
     FinalDestinationPath=C:\remote-Files                # Path where the Logs and Files will be copied to on the executing Client
     ```
 
@@ -2300,7 +2214,9 @@ function Repair-System {
     By default, if any DISM/SFC step does not complete during the run (it timed out, was terminated, produced an
     empty/incomplete log, or reported a reboot-pending/could-not-repair state), a one-shot scheduled task is
     registered on the target that re-runs the full DISM + SFC pass once after the next reboot and writes its own
-    Repair-System log under C:\_IT-RebootRepair. The task deletes itself before running (single attempt, no loop).
+    Repair-System log under <SystemDrive>\_IT-RebootRepair. The task deletes itself before running (single attempt, no loop).
+    The task's script lives in <ProgramData>\RepairSystem-RebootRerun; both folders are writable by SYSTEM and
+    Administrators only.
     Specify -NoRebootRepair to disable this automatic reboot re-run.
 
     .PARAMETER AnalyzeExitCode
@@ -2317,13 +2233,13 @@ function Repair-System {
         ComputerName     [string] Target device the repair ran on.
         LogPath          [string] Full path to the master repair log. $null for early-exit (pre-log) failures.
         Actions          [PSCustomObject] Which steps were requested: DISMScanHealth, DISMRestoreHealth,
-                                          DISMAnalyzeComponentStore, DISMComponentCleanup, SFC, SCCMCleanup,
-                                          WindowsUpdateCleanup, RepairCCM — each a [bool]. (SCCMCleanup
+                                          DISMAnalyzeComponentStore, DISMComponentCleanup, SFC, WMIRepair,
+                                          SCCMCleanup, WindowsUpdateCleanup, RepairCCM — each a [bool]. (SCCMCleanup
                                           reflects the -ContentCacheCleanup step; the property name is kept
                                           for backwards compatibility.)
         Analysis         [PSCustomObject[]] Per-step breakdown: Position, Label, Value, Status.
-                                            Status is one of: Success, Not requested, Skipped (not needed),
-                                            Skipped (connection lost), Success (restart required), Timed out,
+                                            Status is one of: Success, Not requested, Not run (connection lost), Skipped (not needed),
+                                            Postponed (restart required), Skipped (connection lost), Success (restart required), Timed out,
                                             Terminated externally, or the step's known-code description for
                                             other failures.
 
@@ -2361,12 +2277,6 @@ function Repair-System {
     Repair-System
 
     Runs the `sfc /scannow` and `DISM` commands on the local computer. Minimal Outputs are shown on the console and logged to files.
-
-    .EXAMPLE
-    Repair-System -ComputerName SomeDevice -remoteShareDrive D$
-
-    Will connect to `\\SomeDevice\D$\`. This can be used if the SystemRoot (installation of Windows) is either not on Drive C:,
-    or if the Share-Drive has a different Name (eg access via `\\SomeDevice\C\` instead of C$)
 
     .EXAMPLE
     Repair-System <remote-device> -noDism
@@ -2438,7 +2348,7 @@ function Repair-System {
 
     The step positions follow the order the steps actually run in (DISM before SFC):
     Position 0: Startup (parameter/network/WinRM/elevation/config errors), or a connection-lost code if the remote connection was lost mid-execution
-    Position 1: DISM ScanHealth
+    Position 1: DISM ScanHealth (no longer run - RestoreHealth scans the image itself; always 0)
     Position 2: DISM RestoreHealth
     Position 3: DISM AnalyzeComponentStore
     Position 4: DISM StartComponentCleanup
@@ -2449,7 +2359,7 @@ function Repair-System {
     Position 9: Repair CCM
     Position 10: Zip CBS/DISM Logs
 
-    For the DISM and SFC steps (Positions 1-5) specifically, a raw process exit code is only
+    For the DISM and SFC steps (Positions 2-5) specifically, a raw process exit code is only
     trusted if it is either a clean success or the process had a fair chance to run. A clean exit
     (code 0) is always trusted, however quickly it arrives - some steps (e.g. AnalyzeComponentStore)
     legitimately finish in seconds. If Repair-System itself killed the process for exceeding its
@@ -2457,27 +2367,29 @@ function Repair-System {
     from any real DISM/SFC exit code). If the process exited on its own with a NON-ZERO code in
     well under 30 seconds - implausibly fast for a real scan/repair to have failed legitimately -
     that field instead reads -3 ("likely terminated externally, e.g. via Task Manager - its own
-    exit code could not be trusted"). AnalyzeComponentStore is the exception to that last rule: it
-    returns a NON-ZERO code precisely when it recommends a cleanup, a normal success, so a
-    self-completed analysis that produced a Yes/No verdict is recorded as 0 (not -3) and
-    StartComponentCleanup then runs as recommended.
+    exit code could not be trusted"). AnalyzeComponentStore returns 0 for a finished analysis
+    (whether or not it recommends a cleanup) and 3010 when a restart is pending.
 
     Except for Position 0, the detailed exit code field is the return value of the corresponding
     command. If a step was requested but deliberately did not run because it was not necessary
-    (RestoreHealth when ScanHealth finds no corruption; StartComponentCleanup when
+    (StartComponentCleanup when
     AnalyzeComponentStore recommends none) or because a prerequisite step did not complete, the
     field reads -4 ("requested but not executed" - reported as "Skipped (not needed)", not counted
-    as a failure). If a step was not requested at all, or was not reached because the remote
-    connection was lost, the field is 0. Only a startup failure causes an immediate exit; all
-    other step failures are recorded but do not interrupt the remaining steps.
+    as a failure). If StartComponentCleanup is recommended but AnalyzeComponentStore reports a
+    pending restart (3010), the cleanup is postponed and the field reads -5 ("Postponed (restart
+    required)"): restart the device and run Repair-System -IncludeComponentCleanup again. If a
+    step was not requested at all, or was not reached because the remote connection was lost,
+    the field is 0. Only a startup failure causes an immediate exit; all other step failures are
+    recorded but do not interrupt the remaining steps.
 
-    These three out-of-band values (-2, -3, -4) are shown as their small signed numbers in the
+    These out-of-band values (-2, -3, -4, -5) are shown as their small signed numbers in the
     result object's Analysis and in -AnalyzeExitCode output; inside the packed DetailedExitCode
-    string they are the 32-bit two's-complement hex fields FFFFFFFE, FFFFFFFD and FFFFFFFC.
+    string they are the 32-bit two's-complement hex fields FFFFFFFE, FFFFFFFD, FFFFFFFC and
+    FFFFFFFB.
 
     Author: Wolfram Halatschek
     E-Mail: dev@kMarflow.com
-    Date: 2026-08-15
+    Date: 2026-10-06
     #>
 
     [CmdletBinding(DefaultParameterSetName='Default')]
@@ -2485,7 +2397,7 @@ function Repair-System {
         [Parameter(Mandatory=$false, Position=0, ValueFromPipelineByPropertyName=$true, ValueFromPipeline=$true, ParameterSetName='Default')]
         [string]$ComputerName,
 
-        [Parameter(Mandatory=$false,Position=0, ParameterSetName='Default')]
+        [Parameter(Mandatory=$false, ParameterSetName='Default')]
         [string]$remoteShareDrive,
 
         [Parameter(Mandatory = $false, ParameterSetName='Default')]
@@ -2543,588 +2455,488 @@ function Repair-System {
 
     )
 
-    if ($PSCmdlet.ParameterSetName -eq 'Analyze') {
-        Write-RepairSystemExitCodeAnalysis -Code $AnalyzeExitCode
-        return
-    }
-
-    [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0,0 #Startup, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SFC, WMI Repository Repair, Content Cache Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
-
-    $ComputerName = $ComputerName.Trim()
-    $targetDevice   = $env:COMPUTERNAME
-    $requestedSteps = @(
-        $true,                                        # [0] Startup - always
-        (-not $noDism),                               # [1] DISM ScanHealth
-        (-not $noDism),                               # [2] DISM RestoreHealth
-        (-not $noDism),                               # [3] DISM AnalyzeComponentStore
-        (-not $noDism -and $IncludeComponentCleanup), # [4] DISM ComponentCleanup
-        (-not $noSfc),                                # [5] SFC
-        $RepairWMI.IsPresent,                         # [6] WMI Repository Repair
-        $ContentCacheCleanup.IsPresent,               # [7] Content Cache Cleanup
-        $WindowsUpdateCleanup.IsPresent,              # [8] WU Cleanup
-        $RepairCCM.IsPresent,                         # [9] CCM Repair
-        (-not $noSfc -or -not $noDism)                # [10] Zip Logs
-    )
-    if ($ComputerName -and ($ComputerName -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
-        Write-Error "Invalid ComputerName format: '$ComputerName'.`r`nValid Windows hostnames must:
-        - Only contain letters (A-Z, a-z), numbers (0-9), hyphens (-), underscores (_), and dots (.)
-        - Not contain spaces or special characters
-        - Not start or end with a hyphen or dot
-        - Each label (separated by dots) must be 1-63 characters
-        - The full name must be 1-255 characters
-        - Alternatively, a valid IPv4 address (e.g. 192.168.1.1) is allowed."
-        $ExitCode[0]=1
-        Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-        return
-    }
-
-    $confFile="$PSScriptRoot\RepairSystem.conf"
-    $tempFolder="_IT-temp"
-    $FinalDestinationPath = "$env:SystemDrive\remote-Files"
-    $ShareDrive="C$"
-    if($init){
-        # create in Module-Path a ReparSystem.conf file
-        if(-not (Test-Path $confFile)){
+    process {
+        # -Quiet: run the same repair once more with host output and warnings redirected away, so every
+        # step (local or remote) stays silent; errors and the result object remain.
+        if ($Quiet) {
+            $forward = @{}
+            foreach ($key in $PSBoundParameters.Keys) { $forward[$key] = $PSBoundParameters[$key] }
+            $forward.Remove('Quiet')
+            # Errors are re-raised from this call so they point at the caller's command line.
+            $script:RepairSystemQuietRun = $true
             try {
-                New-Item -Path $confFile -ItemType File -Force
-                Add-Content -Path $confFile -Value "ShareDrive=$ShareDrive"
-                Add-Content -Path $confFile -Value "TempDirName=$TempDirName"
-                Add-Content -Path $confFile -Value "FinalDestinationPath=$FinalDestinationPath"
-            } catch {
-                Write-Error "Error creating Config-File. Please check if the Module-Path is writable`r`n `r`n$_"
-                $global:LASTEXITCODE = 1
-                return
+                Repair-System @forward 6>$null 3>$null 2>&1 | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        $PSCmdlet.WriteError((New-Object System.Management.Automation.ErrorRecord $_.Exception, $_.FullyQualifiedErrorId, $_.CategoryInfo.Category, $_.TargetObject))
+                    } else {
+                        $_
+                    }
+                }
+            } finally {
+                $script:RepairSystemQuietRun = $false
             }
-        } else {
-            Write-Warning "Config-File already exists. If you want to reset the Config-File, please delete it manually"
+            return
         }
-        $global:LASTEXITCODE = 0
-        return
-    }
 
-    $remote=$false
-    $remoteConnectionLost=$false
-    $shareDrivePath=""
-    $remoteTempPath=""
-    # check if verbose param is set in command execution
-    $VerboseOption = if ($PSCmdlet.MyInvocation.BoundParameters['Verbose']) { $true } else { $false }
-    $invokeParams =@{}
+        if ($PSCmdlet.ParameterSetName -eq 'Analyze') {
+            Write-RepairSystemExitCodeAnalysis -Code $AnalyzeExitCode
+            return
+        }
 
-    if($ComputerName -ne "" -and $ComputerName -ne $env:COMPUTERNAME -and $ComputerName -ne "localhost"){
-        $remote=$true
-        $targetDevice = $ComputerName
-    }
+        [int[]]$ExitCode = 0,0,0,0,0,0,0,0,0,0,0 #Startup, DISM Scan, DISM Restore, Analyze Component, Component Cleanup, SFC, WMI Repository Repair, Content Cache Cleanup, Windows Update Cleanup, Repair CCM, Zip CBS/DISM Logs
 
-    if (-not $remote) {
-        $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-        $isElevated = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-        if ( -not $isElevated ) {
-            $("") ; Write-Warning "`r`nThis script must be run with administrative privileges. Please restart the script in an elevated PowerShell session.`r`n"
-            Pause ; $("")
-            $ExitCode[0]=5
+        $ComputerName = $ComputerName.Trim()
+        $targetDevice   = $env:COMPUTERNAME
+        $requestedSteps = @(
+            $true,                                        # [0] Startup - always
+            $false,                                       # [1] DISM ScanHealth - no longer run: RestoreHealth scans itself
+            (-not $noDism),                               # [2] DISM RestoreHealth
+            (-not $noDism -and $IncludeComponentCleanup), # [3] DISM AnalyzeComponentStore
+            (-not $noDism -and $IncludeComponentCleanup), # [4] DISM ComponentCleanup
+            (-not $noSfc),                                # [5] SFC
+            $RepairWMI.IsPresent,                         # [6] WMI Repository Repair
+            $ContentCacheCleanup.IsPresent,               # [7] Content Cache Cleanup
+            $WindowsUpdateCleanup.IsPresent,              # [8] WU Cleanup
+            $RepairCCM.IsPresent,                         # [9] CCM Repair
+            (-not $noSfc -or -not $noDism)                # [10] Zip Logs
+        )
+        if ($ComputerName -and ($ComputerName -notmatch '^(([a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*)|((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))$')) {
+            Write-Error "Invalid ComputerName format: '$ComputerName'.`r`nValid Windows hostnames must:
+            - Only contain letters (A-Z, a-z), numbers (0-9), hyphens (-), underscores (_), and dots (.)
+            - Not contain spaces or special characters
+            - Not start or end with a hyphen or dot
+            - Each label (separated by dots) must be 1-63 characters
+            - The full name must be 1-255 characters
+            - Alternatively, a valid IPv4 address (e.g. 192.168.1.1) is allowed."
+            $ExitCode[0]=1
             Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
             return
         }
-    } else {
-        $invokeParams.ComputerName = $ComputerName
-        if ($Credentials) {
-            $invokeParams.Credential = $Credentials
-        }
-    }
 
-    # Validation to ensure -IncludeComponentCleanup is not used with -noDism
-    if ($noDism -and $IncludeComponentCleanup) {
-        Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
-        $ExitCode[0]=7
-        Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-        return
-    }
-
-    # Resolve the legacy-repair opt-in once, up front - so we never prompt in the middle of a long
-    # run, and so a remote target is authorized here on the local console. -Force skips the prompt;
-    # a non-interactive session without -Force skips legacy repair rather than blocking on a prompt.
-    $legacyRepairConfirmed = $false
-    if ($WindowsUpdateCleanup -and $IncludeLegacyRepair) {
-        if ($Force) {
-            $legacyRepairConfirmed = $true
-        } elseif ([Environment]::UserInteractive) {
-            Write-Warning "-IncludeLegacyRepair runs invasive legacy repairs on ${targetDevice}: re-registering Windows Update DLLs, resetting the Winsock catalog, and rewriting the wuauserv/bits service security descriptors. These can affect networking and require a reboot."
-            $answer = Read-Host "Type 'YES' to proceed with legacy repair (anything else skips it)"
-            $legacyRepairConfirmed = ($answer -eq 'YES')
-            if (-not $legacyRepairConfirmed) { Write-Warning "Legacy Windows Update repair skipped." }
-        } else {
-            Write-Warning "-IncludeLegacyRepair requires -Force in a non-interactive session; skipping legacy repair."
-        }
-    }
-
-    # Set up paths and file names for logging
-    $currentDateTime = (Get-Date).ToString("yyyy-MM-dd_HH-mm")
-
-
-    if (Test-Path $confFile) {
-        $confData = Get-Content -Path $confFile
-        foreach ($line in $confData) {
-            if ($line -match 'ShareDrive=(.*)') {
-                $shareDrive = $Matches[1]
-            } elseif ($line -match 'TempDirName=(.*)') {
-                $tempFolder = $Matches[1]
-            } elseif ($line -match 'FinalDestinationPath=(.*)') {
-                $finalDestinationPath = $Matches[1]
+        $confFile="$PSScriptRoot\RepairSystem.conf"
+        $tempFolder="_IT-temp"
+        $FinalDestinationPath = "$env:SystemDrive\remote-Files"
+        if($init){
+            if(-not (Test-Path $confFile)){
+                try {
+                    Set-Content -Path $confFile -Value "TempDirName=$tempFolder","FinalDestinationPath=$FinalDestinationPath" -ErrorAction Stop
+                } catch {
+                    Write-Error "Error creating Config-File. Please check if the Module-Path is writable`r`n `r`n$_"
+                    $global:LASTEXITCODE = 1
+                    return
+                }
             } else {
-                Write-Warning "Invalid line in config file $confFile : `t$line`r`n`tAllowed Variables: ShareDrive, TempDirName, FinalDestinationPath"
+                Write-Warning "Config-File already exists. If you want to reset the Config-File, please delete it manually"
+            }
+            $global:LASTEXITCODE = 0
+            return
+        }
+
+        $remote = $ComputerName -ne "" -and $ComputerName -ne $env:COMPUTERNAME -and $ComputerName -ne "localhost"
+        if ($remote) { $targetDevice = $ComputerName }
+
+        if (-not $remote) {
+            $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+            if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                Write-Error "Repair-System must be run with administrative privileges. Please restart it in an elevated PowerShell session."
+                $ExitCode[0]=5
+                Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
+                return
+            }
+        }
+
+        # Validation to ensure -IncludeComponentCleanup is not used with -noDism
+        if ($noDism -and $IncludeComponentCleanup) {
+            Write-Error "The parameter -IncludeComponentCleanup cannot be used in combination with -noDism."
+            $ExitCode[0]=7
+            Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
+            return
+        }
+
+        # Resolve the legacy-repair opt-in once, up front - so we never prompt in the middle of a long
+        # run, and so a remote target is authorized here on the local console. -Force skips the prompt;
+        # a non-interactive session without -Force skips legacy repair rather than blocking on a prompt.
+        $legacyRepairConfirmed = $false
+        if ($WindowsUpdateCleanup -and $IncludeLegacyRepair) {
+            if ($Force) {
+                $legacyRepairConfirmed = $true
+            } elseif ([Environment]::UserInteractive) {
+                Write-Warning "-IncludeLegacyRepair runs invasive legacy repairs on ${targetDevice}: re-registering Windows Update DLLs, resetting the Winsock catalog, and rewriting the wuauserv/bits service security descriptors. These can affect networking and require a reboot."
+                $answer = Read-Host "Type 'YES' to proceed with legacy repair (anything else skips it)"
+                $legacyRepairConfirmed = ($answer -eq 'YES')
+                if (-not $legacyRepairConfirmed) { Write-Warning "Legacy Windows Update repair skipped." }
+            } else {
+                Write-Warning "-IncludeLegacyRepair requires -Force in a non-interactive session; skipping legacy repair."
+            }
+        }
+
+        if (Test-Path $confFile) {
+            # Blank lines, '#' comment lines and trailing ' # comments' are ignored.
+            $configError = $null
+            foreach ($line in Get-Content -Path $confFile) {
+                $line = ($line -replace '(^|\s)#.*$', '').Trim()
+                if (-not $line) { continue }
+                $key, $value = $line -split '=', 2
+                $value = "$value".Trim()
+                switch ($key.Trim()) {
+                    'TempDirName'          { $tempFolder = $value }
+                    'FinalDestinationPath' { $finalDestinationPath = $value }
+                    'ShareDrive'           { }   # no longer used (logs are read through the session); accepted so older Config-Files keep working
+                    default { $configError = "Invalid line in config file $confFile : `t$line`r`n`tAllowed Variables: TempDirName, FinalDestinationPath" }
+                }
+                if ($configError) { break }
+            }
+            # TempDirName becomes <SystemDrive>\<TempDirName> on the target, so anything but a single plain
+            # folder name could point the temp folder (and its cleanup) at the drive root.
+            if (-not $configError -and (($tempFolder -notmatch '^[^\\/:*?"<>|]+$') -or ($tempFolder -match '^\.+$'))) {
+                $configError = "Invalid TempDirName '$tempFolder' in config file $confFile : a single folder name is required."
+            }
+            if (-not $configError -and [string]::IsNullOrWhiteSpace($finalDestinationPath)) {
+                $configError = "FinalDestinationPath in config file $confFile must not be empty."
+            }
+            if ($configError) {
+                Write-Warning $configError
                 $ExitCode[0]=6
                 Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
                 return
             }
         }
-    }
 
-    if($remote){
-        # Ping the remote computer to check availability. -Quiet returns $true/$false for a normal
-        # unreachable host, but name-resolution failures still throw with -ErrorAction Stop - catch
-        # those and treat them as unreachable rather than letting the exception escape.
-        try {
-            $pingResult = Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop
-        } catch {
-            $pingResult = $false
-        }
-
-        if (-not $pingResult) {
-            Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
-            $ExitCode[0]=2
-            Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-            return
-        }
-
-        if($remoteShareDrive -ne ""){
-            $shareDrive=$remoteShareDrive
-        }
-        $shareDrivePath="\\$ComputerName\$shareDrive"
-        $remoteTempPath = "$shareDrivePath\$tempFolder"
-    }
-
-
-    $localTempPath="C:\$tempFolder"
-    $FinalDestinationPath="$FinalDestinationPath\$ComputerName"
-    $dismScanLog = ""
-    $dismRestoreLog = ""
-    $analyzeComponentLog = ""
-    $componentCleanupLog = ""
-
-    New-Folder -FolderPath $finalDestinationPath
-
-    if($remote){
-        # Check if the remote computer is reachable via WinRM
-        $winRMexit = ""
-        try{
-            Invoke-Command @invokeParams -ScriptBlock {
-                Write-Host "Connected to $env:COMPUTERNAME"
-            } -Verbose:$VerboseOption -ErrorAction Stop
-        } catch {
-            $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration.`r`n `r`n `r`nError: $_"
-            Write-Error $winRMexit
-            Add-Content -Path "$finalDestinationPath\remoteConnectError_$currentDateTime.log" -Value "[$currentDateTime] - ERROR:`r`n$winRMexit"
-            $ExitCode[0]=3
-            Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
-            return
-        }
-    }
-
-    if ($remote) {
-        Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:New-Folder} -ArgumentList @($localTempPath) -ComputerName $ComputerName -StepName 'Creating remote temp folder' -ConnectionLost ([ref]$remoteConnectionLost) | Out-Null
-    } else {
-        New-Folder -FolderPath $localTempPath
-    }
-
-    $masterLogPath = if ($remote) {
-        "$finalDestinationPath\SystemRepair_${ComputerName}_${currentDateTime}.log"
-    } else {
-        "$localTempPath\SystemRepair_$($env:COMPUTERNAME)_${currentDateTime}.log"
-    }
-    $logAppendJobs = [System.Collections.Generic.List[System.Management.Automation.Job]]::new()
-    $stepLogPaths  = [System.Collections.Generic.List[string]]::new()
-
-    # Deletes a step log immediately after it is no longer needed.
-    # Local+KeepLogs=false  → remove local file.
-    # Remote+KeepLogs=false → remove from remote via UNC.
-    # KeepLogs=true         → skip now; remote copies are removed from $finalDestinationPath at the end.
-    $removeStepLog = {
-        param([string]$Path)
-        if ([string]::IsNullOrEmpty($Path) -or $KeepLogs) { return }
-        Remove-Item -Path $(if ($remote) { "$remoteTempPath\$(Split-Path $Path -Leaf)" } else { $Path }) `
-                    -Force -ErrorAction SilentlyContinue
-    }
-
-    Write-RepairLog -Message "Repair-System started;" -Component "RepairSystem" -LogPath $masterLogPath -StartLogEntry
-    Write-RepairLog -Message "Target: $(if ($remote) { $ComputerName } else { $env:COMPUTERNAME }); Remote: $remote;" -Component "RepairSystem" -LogPath $masterLogPath -AddLogEntryData
-    Write-RepairLog -Message "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; RepairWMI: $RepairWMI; ContentCacheCleanup: $ContentCacheCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
-
-    # Tracks whether any DISM/SFC step that ran did not truly complete (timed out, killed, empty or
-    # incomplete log, or reboot-pending) - which triggers the one-shot reboot re-run below.
-    $needsRebootRerun = $false
-    $rebootRerunScheduled = $false
-
-    if (-not $noDism -and -not $remoteConnectionLost) {
-        $dismScanLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_scanHealth.log"
-        $dismScanResult=0
-        Write-RepairLog -Message "Starting DISM ScanHealth..." -Component "DISM-ScanHealth" -LogPath $masterLogPath
-        if($remote){
-            $dismScanBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMScan') -EntryPoint 'Invoke-DISMScan'
-            $dismScanResult = Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $dismScanBlock -ArgumentList @($dismScanLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM ScanHealth' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else { $dismScanResult=Invoke-DISMScan $dismScanLog $ChangeTimeout $Quiet $VerboseOption}
-
-        if (-not $remoteConnectionLost) {
-            $dismScanResult = [int]($dismScanResult | Select-Object -Last 1)
-            $ExitCode[1]=$dismScanResult
-            $dismScanResultString = $dismScanResult.ToString()
-        } else { $ExitCode[1]=5 }
-        Write-RepairLog -Message "DISM ScanHealth completed; ExitCode=$($ExitCode[1]);" -Component "DISM-ScanHealth" -LogPath $masterLogPath
-        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismScanLog -Leaf)" } else { $dismScanLog }) -MasterLogPath $masterLogPath -StepName "DISM-ScanHealth" -Component "DISM-ScanHealth" -Sync
-        $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[1] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismScanLog -Leaf)" } else { $dismScanLog }) -Kind 'DISM')
-
-        if (-not $remoteConnectionLost) {
-
-            $dismRestoreLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_restoreHealth.log"
-            if ($dismScanResultString -eq 0) {
-                $dismScanExit=1
-                $dismRestoreExit=0
-                if($remote){
-                    $dismScanExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Get-DISMScanResult} -ArgumentList @($dismScanLog) -ComputerName $ComputerName -StepName 'DISM ScanHealth result check' -ConnectionLost ([ref]$remoteConnectionLost)
-                } else { $dismScanExit=Get-DISMScanResult -dismScanLog $dismScanLog}
-                if (-not $remoteConnectionLost -and $dismScanExit -eq 1) {
-
-                    Write-RepairLog -Message "Starting DISM RestoreHealth..." -Component "DISM-RestoreHealth" -LogPath $masterLogPath
-                    if ($remote) {
-                        $dismRestoreBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMRestore') -EntryPoint 'Invoke-DISMRestore'
-                        $dismRestoreExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $dismRestoreBlock -ArgumentList @($dismRestoreLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM RestoreHealth' -ConnectionLost ([ref]$remoteConnectionLost)
-                    } else { $dismRestoreExit=Invoke-DISMRestore $dismRestoreLog $ChangeTimeout $Quiet $VerboseOption }
-                    if (-not $remoteConnectionLost) { $ExitCode[2]=$dismRestoreExit } else { $ExitCode[2]=5 }
-                    Write-RepairLog -Message "DISM RestoreHealth completed; ExitCode=$($ExitCode[2]);" -Component "DISM-RestoreHealth" -LogPath $masterLogPath
-                    Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismRestoreLog -Leaf)" } else { $dismRestoreLog }) -MasterLogPath $masterLogPath -StepName "DISM-RestoreHealth" -Component "DISM-RestoreHealth" -Sync
-                    $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[2] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $dismRestoreLog -Leaf)" } else { $dismRestoreLog }) -Kind 'DISM')
-                } elseif (-not $remoteConnectionLost) {
-                    # ScanHealth reported a healthy store, so RestoreHealth was not necessary. Record
-                    # the requested-but-not-executed sentinel so a step that never ran is not
-                    # misreported as a successful repair.
-                    $ExitCode[2]=$script:RepairSystemNotExecutedCode
-                    Write-RepairLog -Message "DISM RestoreHealth not required (no corruption detected); marked as not executed." -Component "DISM-RestoreHealth" -LogPath $masterLogPath
-                }
-            } else {
-                # ScanHealth itself returned an unexpected exit code, so RestoreHealth was not run.
-                if (-not $remoteConnectionLost) { $ExitCode[2]=$script:RepairSystemNotExecutedCode }
-                $message = "DISM ScanHealth returned an unexpected exit code ($dismScanResultString) on $ComputerName. Please review the logs."
-                Write-Verbose $message
-                if ($remote) {
-                    Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock {
-                        param ($logPath, $logMessage)
-                        Add-Content -Path $logPath -Value $logMessage
-                    } -ArgumentList @($dismRestoreLog, $message) -ComputerName $ComputerName -StepName 'Logging DISM ScanHealth result' -ConnectionLost ([ref]$remoteConnectionLost) | Out-Null
-                } else {
-                    Add-Content -Path $dismRestoreLog -Value $message
-                    Write-Output $message
-                }
-            }
-            & $removeStepLog $dismScanLog;    $stepLogPaths.Add($dismScanLog)
-            & $removeStepLog $dismRestoreLog; $stepLogPaths.Add($dismRestoreLog)
-            if (-not $remoteConnectionLost -and $IncludeComponentCleanup) {
-                $analyzeComponentLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_analyze-component.log"
-                $analyzeExit=0
-                Write-RepairLog -Message "Starting DISM AnalyzeComponentStore..." -Component "DISM-Analyze" -LogPath $masterLogPath
-                if ($remote) {
-                    $analyzeBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMAnalyzeComponentStore') -EntryPoint 'Invoke-DISMAnalyzeComponentStore'
-                    $analyzeExit = Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $analyzeBlock -ArgumentList @($analyzeComponentLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM AnalyzeComponentStore' -ConnectionLost ([ref]$remoteConnectionLost)
-                } else { $analyzeExit = Invoke-DISMAnalyzeComponentStore $analyzeComponentLog $ChangeTimeout $Quiet $VerboseOption }
-
-                if ($remoteConnectionLost) { $ExitCode[3]=5 }
-
-                if (-not $remoteConnectionLost) {
-                    $analyzeExit  = [int]($analyzeExit | Select-Object -Last 1)
-                    $ExitCode[3]  = $analyzeExit
-                    Write-RepairLog -Message "DISM AnalyzeComponentStore completed; ExitCode=$($ExitCode[3]);" -Component "DISM-Analyze" -LogPath $masterLogPath
-                    Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $analyzeComponentLog -Leaf)" } else { $analyzeComponentLog }) -MasterLogPath $masterLogPath -StepName "DISM-AnalyzeComponentStore" -Component "DISM-Analyze" -Sync
-                    $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[3] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $analyzeComponentLog -Leaf)" } else { $analyzeComponentLog }) -Kind 'DISM')
-
-                    # Check the output and perform cleanup if recommended
-                    $message = ""
-                    $componentCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_DISM_componentStore-cleanup.log"
-                    if ($analyzeExit -eq 0 -or $analyzeExit -eq "") {
-                        $analyzeResult=$true
-                        if ($remote) {
-                            $analyzeResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Get-DISMAnalyzeComponentStoreResult} -ArgumentList @($analyzeComponentLog) -ComputerName $ComputerName -StepName 'DISM AnalyzeComponentStore result check' -ConnectionLost ([ref]$remoteConnectionLost)
-                        } else { $analyzeResult=Get-DISMAnalyzeComponentStoreResult -analyzeComponentLog $analyzeComponentLog }
-                        $componentCleanupExit=0
-                        if (-not $remoteConnectionLost -and $analyzeResult) {
-
-                            Write-RepairLog -Message "Starting DISM ComponentStoreCleanup..." -Component "DISM-ComponentCleanup" -LogPath $masterLogPath
-                            if ($remote) {
-                                $componentCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-DISMComponentStoreCleanup') -EntryPoint 'Invoke-DISMComponentStoreCleanup'
-                                $componentCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $componentCleanupBlock -ArgumentList @($componentCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'DISM Component Store Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
-                            } else { $componentCleanupExit=Invoke-DISMComponentStoreCleanup $componentCleanupLog $ChangeTimeout $Quiet $VerboseOption }
-                        } elseif (-not $remoteConnectionLost) {
-                            # AnalyzeComponentStore recommended no cleanup, so the step did not run.
-                            # Flag it as requested-but-not-executed rather than leaving 0 (success).
-                            $componentCleanupExit=$script:RepairSystemNotExecutedCode
-                            $message = "No component store cleanup was needed on $ComputerName."
-                            if($remote) {
-                                Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock {
-                                    param ($logPath, $logMessage)
-                                    Add-Content -Path $logPath -Value $logMessage
-                                } -ArgumentList @($componentCleanupLog, $message) -ComputerName $ComputerName -StepName 'Logging Component Store Cleanup result' -ConnectionLost ([ref]$remoteConnectionLost) | Out-Null
-                            } else {
-                                Write-Verbose $message
-                                Add-Content -Path $componentCleanupLog -Value $message
-                            }
-                        }
-
-                        if (-not $remoteConnectionLost) { $ExitCode[4]=$componentCleanupExit } else { $ExitCode[4]=5 }
-                        if ($analyzeResult) {
-                            Write-RepairLog -Message "DISM ComponentStoreCleanup completed; ExitCode=$($ExitCode[4]);" -Component "DISM-ComponentCleanup" -LogPath $masterLogPath
-                            Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $componentCleanupLog -Leaf)" } else { $componentCleanupLog }) -MasterLogPath $masterLogPath -StepName "DISM-ComponentStoreCleanup" -Component "DISM-ComponentCleanup" -Sync
-                            $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[4] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $componentCleanupLog -Leaf)" } else { $componentCleanupLog }) -Kind 'DISM')
-                        }
-                    } else {
-                        # AnalyzeComponentStore did not complete cleanly, so cleanup could not run.
-                        if (-not $remoteConnectionLost) { $ExitCode[4]=$script:RepairSystemNotExecutedCode }
-                        $message = "DISM AnalyzeComponentStore returned an unexpected exit code ($analyzeExit) on $ComputerName. Please review the logs."
-                        Write-Verbose $message
-                        Add-Content -Path $componentCleanupLog -Value $message
-                    }
-                    & $removeStepLog $analyzeComponentLog;  $stepLogPaths.Add($analyzeComponentLog)
-                    & $removeStepLog $componentCleanupLog;  $stepLogPaths.Add($componentCleanupLog)
-                }
-            }
-        }
-    }
-
-    if(-not $noSfc -and -not $remoteConnectionLost){
-        $sfcLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_sfc-scannow.log"
-        $sfcExitCode=0
-        Write-RepairLog -Message "Starting SFC /scannow..." -Component "SFC" -LogPath $masterLogPath
-        if($remote){
-            $sfcBlock = New-RemoteFunctionScriptBlock -FunctionName @('Write-StepLogEntry', 'Get-RepairSystemProcessResult', 'Invoke-SFC') -EntryPoint 'Invoke-SFC'
-            $sfcExitCode= Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $sfcBlock -ArgumentList @($sfcLog, $ChangeTimeout, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'SFC /scannow' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else {$sfcExitCode=Invoke-SFC $sfcLog $ChangeTimeout $Quiet $VerboseOption}
-        if (-not $remoteConnectionLost) { $ExitCode[5]=[int]($sfcExitCode | Select-Object -Last 1) } else { $ExitCode[5]=5 }
-        Write-RepairLog -Message "SFC /scannow completed; ExitCode=$($ExitCode[5]);" -Component "SFC" -LogPath $masterLogPath
-        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $sfcLog -Leaf)" } else { $sfcLog }) -MasterLogPath $masterLogPath -StepName "SFC" -Component "SFC" -Sync
-        $needsRebootRerun = $needsRebootRerun -or (Test-DismSfcStepIncomplete -ResultCode $ExitCode[5] -LogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $sfcLog -Leaf)" } else { $sfcLog }) -Kind 'SFC')
-        & $removeStepLog $sfcLog; $stepLogPaths.Add($sfcLog)
-    }
-
-    # If any DISM/SFC step that ran did not complete cleanly, schedule a single automatic repair to
-    # run after the next reboot (default on; suppressed by -NoRebootRepair). Only when DISM was in
-    # play - the re-run performs the full DISM + SFC pass.
-    if ($needsRebootRerun -and -not $NoRebootRepair -and -not $noDism -and -not $remoteConnectionLost) {
-        Write-RepairLog -Message "A DISM/SFC step did not complete cleanly; scheduling a one-shot reboot re-run..." -Component "RebootRerun" -LogPath $masterLogPath
-        $rebootTask = Register-RebootRepairTask -ChangeTimeout $ChangeTimeout -InvokeParams $invokeParams -Remote:$remote
-        if ($null -ne $rebootTask) {
-            $rebootRerunScheduled = $true
-            Write-RepairLog -Message "Reboot re-run scheduled as task '$($rebootTask.Task)' on $targetDevice; its log will be written under $($rebootTask.Folder) after the next restart." -Component "RebootRerun" -LogPath $masterLogPath
-        } else {
-            Write-RepairLog -Message "Reboot re-run could NOT be scheduled (task registration failed); a manual re-run after restart is recommended." -Component "RebootRerun" -LogPath $masterLogPath
-        }
-    }
-
-    $zipJob      = $null
-    $zipFile     = $null
-    $zipErrorLog = $null
-    if ((-not $noSfc -or -not $noDism) -and -not $remoteConnectionLost) {
-        $zipFile     = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_sys-logs.zip"
-        $zipErrorLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CBS-DISM_zip-errors.log"
-        Write-RepairLog -Message "Starting CBS/DISM log zip in background (after last SFC/DISM step)..." -Component "ZipLogs" -LogPath $masterLogPath
-        try {
-            if ($remote) {
-                $zipJob = Invoke-Command @invokeParams -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList @($localTempPath, $zipFile, $zipErrorLog, $noDism) -AsJob
-            } else {
-                $zipJob = Start-Job -ScriptBlock ${function:Start-ZipFileCreation} -ArgumentList @($localTempPath, $zipFile, $zipErrorLog, $noDism)
-            }
-        } catch {
-            Write-RepairLog -Message "Failed to start zip background job: $_" -Component "ZipLogs" -LogPath $masterLogPath
-        }
-    }
-
-    # WMI Repository Repair runs BEFORE the WMI-dependent Content Cache Cleanup and CCM Repair steps
-    # so those act on a repaired store. Its exit-code field is position 6 (see RepairSystemStepLayouts).
-    if ($RepairWMI -and -not $remoteConnectionLost) {
-        $wmiRepairLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_WMI_repository-repair.log"
-        $wmiRepairResult=0
-        Write-RepairLog -Message "Starting WMI Repository Repair (verify + salvage)..." -Component "WMIRepair" -LogPath $masterLogPath
+        $runStamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+        # Everything on the device runs through $target: in one PSSession for a remote device, in-process
+        # for the local one (see Invoke-RepairStep).
+        $target = @{ ComputerName = $targetDevice; Session = $null; SessionParams = $null; Lost = $false; Quiet = [bool]$script:RepairSystemQuietRun }
         if ($remote) {
-            $wmiRepairResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Repair-WMIRepository} -ArgumentList @($wmiRepairLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'WMI Repository Repair' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else { $wmiRepairResult=Repair-WMIRepository $wmiRepairLog $Quiet $VerboseOption }
-
-        if (-not $remoteConnectionLost) { $ExitCode[6]=[int]($wmiRepairResult | Select-Object -Last 1) } else { $ExitCode[6]=5 }
-        Write-RepairLog -Message "WMI Repository Repair completed; ExitCode=$($ExitCode[6]);" -Component "WMIRepair" -LogPath $masterLogPath
-        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $wmiRepairLog -Leaf)" } else { $wmiRepairLog }) -MasterLogPath $masterLogPath -StepName "WMI-RepositoryRepair" -Component "WMIRepair" -Sync
-        & $removeStepLog $wmiRepairLog; $stepLogPaths.Add($wmiRepairLog)
-    }
-
-    if ($ContentCacheCleanup -and -not $remoteConnectionLost) {
-        $cacheCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_ContentCache_cleanup.log"
-        $cacheCleanupResult=0
-        Write-RepairLog -Message "Starting Content Cache Cleanup (ConfigMgr / Adaptiva / Intune / Windows Update)..." -Component "ContentCacheCleanup" -LogPath $masterLogPath
-        if ($remote) {
-            $cacheCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Remove-PathReliable', 'Invoke-ContentCacheCleanup') -EntryPoint 'Invoke-ContentCacheCleanup'
-            $cacheCleanupResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $cacheCleanupBlock -ArgumentList @($cacheCleanupLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'Content Cache Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else { $cacheCleanupResult=Invoke-ContentCacheCleanup $cacheCleanupLog $Quiet $VerboseOption }
-
-        if (-not $remoteConnectionLost) {
-            $cacheCleanupResult = [int]($cacheCleanupResult | Select-Object -Last 1)
-            $ExitCode[7]=$cacheCleanupResult
-            if ($cacheCleanupResult -eq 3010) {
-                Write-Warning "`r`nContent Cache Cleanup on $targetDevice scheduled some locked cache items for removal on the next reboot. Please restart the device to finish."
-            }
-        } else { $ExitCode[7]=5 }
-        Write-RepairLog -Message "Content Cache Cleanup completed; ExitCode=$($ExitCode[7]);" -Component "ContentCacheCleanup" -LogPath $masterLogPath
-        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $cacheCleanupLog -Leaf)" } else { $cacheCleanupLog }) -MasterLogPath $masterLogPath -StepName "ContentCache-Cleanup" -Component "ContentCacheCleanup" -Sync
-        & $removeStepLog $cacheCleanupLog; $stepLogPaths.Add($cacheCleanupLog)
-    }
-
-    if ($WindowsUpdateCleanup -and -not $remoteConnectionLost) {
-        $updateCleanupLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_WinUpdt-BITS_reset-cleanup.log"
-        $updateCleanupExit=0
-        Write-RepairLog -Message "Starting Windows Update Cleanup..." -Component "WUCleanup" -LogPath $masterLogPath
-        if ($remote) {
-            $updateCleanupBlock = New-RemoteFunctionScriptBlock -FunctionName @('Stop-ServiceSafely', 'Remove-PathReliable', 'Test-DataStoreHealth', 'Invoke-WULegacyRepair', 'Invoke-WindowsUpdateCleanup') -EntryPoint 'Invoke-WindowsUpdateCleanup'
-            $updateCleanupExit=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock $updateCleanupBlock -ArgumentList @($updateCleanupLog, $ChangeTimeout, $Quiet, $VerboseOption, ([bool]$ResetUpdateHistory), $legacyRepairConfirmed) -ComputerName $ComputerName -StepName 'Windows Update Cleanup' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else { $updateCleanupExit=Invoke-WindowsUpdateCleanup $updateCleanupLog $ChangeTimeout $Quiet $VerboseOption ([bool]$ResetUpdateHistory) $legacyRepairConfirmed }
-
-        if (-not $remoteConnectionLost) {
-            $updateCleanupExit = [int]($updateCleanupExit | Select-Object -Last 1)
-            if ($updateCleanupExit -eq 3010) {
-                Write-Warning "`r`nWindows Update Cleanup on $targetDevice scheduled some locked items for removal on the next reboot. Please restart the device to finish."
-            } elseif ($updateCleanupExit -ne 0) {
-                Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $targetDevice. Please review the logs.`r`n`tA Restart of the Device is Adviced! Please try again afterwards"
-            }
-            $ExitCode[8]=$updateCleanupExit
-        } else { $ExitCode[8]=5 }
-        Write-RepairLog -Message "Windows Update Cleanup completed; ExitCode=$($ExitCode[8]);" -Component "WUCleanup" -LogPath $masterLogPath
-        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $updateCleanupLog -Leaf)" } else { $updateCleanupLog }) -MasterLogPath $masterLogPath -StepName "WindowsUpdate-Cleanup" -Component "WUCleanup" -Sync
-        & $removeStepLog $updateCleanupLog; $stepLogPaths.Add($updateCleanupLog)
-    }
-
-    if ($RepairCCM -and -not $remoteConnectionLost) {
-        $repairCCMLog = "$localTempPath\$(Get-Date -Format 'yyyy-MM-dd_HH-mm')_CCM_repair.log"
-        $repairCCMResult=0
-        Write-RepairLog -Message "Starting CCM Client Repair..." -Component "RepairCCM" -LogPath $masterLogPath
-        if ($remote) {
-            $repairCCMResult=Invoke-RemoteStep -InvokeParams $invokeParams -ScriptBlock ${function:Repair-CCM} -ArgumentList @($localTempPath, $repairCCMLog, $Quiet, $VerboseOption) -ComputerName $ComputerName -StepName 'CCM Repair' -ConnectionLost ([ref]$remoteConnectionLost)
-        } else { $repairCCMResult=Repair-CCM $localTempPath $repairCCMLog $Quiet $VerboseOption }
-
-        if (-not $remoteConnectionLost) { $ExitCode[9]=$repairCCMResult } else { $ExitCode[9]=5 }
-        Write-RepairLog -Message "CCM Repair completed; ExitCode=$($ExitCode[9]);" -Component "RepairCCM" -LogPath $masterLogPath
-        Start-LogAppendJob -StepLogPath $(if ($remote) { "$remoteTempPath\$(Split-Path $repairCCMLog -Leaf)" } else { $repairCCMLog }) -MasterLogPath $masterLogPath -StepName "CCM-Repair" -Component "RepairCCM" -Sync
-        & $removeStepLog $repairCCMLog; $stepLogPaths.Add($repairCCMLog)
-        if ($remote) {
-            # Fetch CCMSetup_*.log to local immediately — stored next to the repair log, not embedded
-            $logAppendJobs.Add((Start-Job -ScriptBlock {
-                param($srcDir, $dst, $maxSec)
-                $waited = 0
-                while ($waited -lt $maxSec) {
-                    $f = Get-Item "$srcDir\CCMSetup_*.log" -ErrorAction SilentlyContinue | Select-Object -First 1
-                    if ($f) { Copy-Item -Path $f.FullName -Destination $dst -Force -ErrorAction SilentlyContinue; return }
-                    Start-Sleep -Seconds 5; $waited += 5
-                }
-            } -ArgumentList $remoteTempPath, $finalDestinationPath, 120))
-        }
-    }
-
-
-    # Wait for background CBS/DISM zip job (started after last SFC/DISM step)
-    if ($null -ne $zipJob) {
-        Write-RepairLog -Message "Waiting for CBS/DISM zip background job..." -Component "ZipLogs" -LogPath $masterLogPath
-        try {
-            $zipJobDone = $zipJob | Wait-Job -Timeout 300
-            $zipErrorCode = if ($null -ne $zipJobDone -and $zipJobDone.State -eq 'Completed') {
-                $result = Receive-Job -Job $zipJob -ErrorAction SilentlyContinue
-                if ($null -ne $result) { [int]($result | Select-Object -Last 1) } else { 0 }
-            } else { 1 }
-            $zipJob | Remove-Job -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-RepairLog -Message "Error waiting for zip background job: $_" -Component "ZipLogs" -LogPath $masterLogPath
-            $zipErrorCode = 1
-        }
-        if ($remote -and $zipErrorCode -eq 0) {
+            $target.SessionParams = @{ ComputerName = $ComputerName; SessionOption = (New-PSSessionOption -OpenTimeout 30000) }
+            if ($Credentials) { $target.SessionParams.Credential = $Credentials }
+            $sessionParams = $target.SessionParams
             try {
-                $zipCopySession = New-PSSession @invokeParams -ErrorAction Stop
-                Copy-Item -Path $zipFile -Destination $finalDestinationPath -Force -FromSession $zipCopySession -ErrorAction SilentlyContinue
-                Remove-PSSession $zipCopySession -ErrorAction SilentlyContinue
+                $target.Session = New-PSSession @sessionParams -ErrorAction Stop
             } catch {
-                Write-RepairLog -Message "Failed to copy zip to local immediately: $_" -Component "ZipLogs" -LogPath $masterLogPath
-            }
-        }
-        if (-not $remoteConnectionLost) { $ExitCode[10]=$zipErrorCode } else { $ExitCode[10]=5 }
-    } elseif ($remoteConnectionLost) {
-        $ExitCode[10]=5
-    } else {
-        $ExitCode[10]=0
-    }
-    Write-RepairLog -Message "CBS/DISM zip step completed; ExitCode=$($ExitCode[10]);" -Component "ZipLogs" -LogPath $masterLogPath
-
-    # Wait for all background log-append / fetch jobs BEFORE the bulk copy so that jobs
-    # reading from remote UNC paths finish before -KeepLogs deletion can remove those files.
-    if ($logAppendJobs.Count -gt 0) {
-        Write-RepairLog -Message "Waiting for log-append background jobs ($($logAppendJobs.Count))..." -Component "RepairSystem" -LogPath $masterLogPath
-        $logAppendJobs | Wait-Job -Timeout 120 | Out-Null
-        $logAppendJobs | Remove-Job -Force -ErrorAction SilentlyContinue
-    }
-
-    if($remote) {$path=$finalDestinationPath} else {$path=$localTempPath}
-    $extmsg= "`r`nSystem-Repair performed.`r`n`r`nIf Errors Occurred, or SFC/DISM/WindowsUpdate Cleanup and Diagnostics Jobs were Terminated due to Timeout, please restart the system and run once more."
-    if ($rebootRerunScheduled) {
-        $extmsg += "`r`n`r`n[INFO]`tOne or more DISM/SFC steps did not complete. A one-time repair has been scheduled to run automatically after the next restart of $targetDevice; its log will be saved on that machine under C:\_IT-RebootRepair\ (kept separate from the temp folder so cleanup will not remove it)."
-    }
-    $extmsglLogP ="`r`nLog-Files can be found on this Machine under '$path'`r`nRepair log: $masterLogPath"
-    $extmsgrLogP ="`r`n`tThe Log-Data can be found on the Remote Device on $remoteTempPath"
-    if ($remote){
-        if ($remoteConnectionLost) {
-            $extmsg+= "`r`n[WARNING]`tConnection to $ComputerName was lost during the repair process. Log files could not be copied from the remote device."
-        } else {
-            if (-not (Test-Path -Path $finalDestinationPath)) {
-                New-Item -Path $finalDestinationPath -ItemType Directory -Force
-            }
-            try{
-                $Session = New-PSSession @invokeParams
-                Copy-Item -Path "$localTempPath\*" -Destination $finalDestinationPath -Recurse -Force -FromSession $Session
-
-                # Clear remote _temp folder if copy was successful
-
-                if(-not $KeepLogs){
-                    Invoke-Command @invokeParams -ScriptBlock {
-                        Remove-Item -Path "$using:localTempPath" -Recurse -Force
-                    } -Verbose:$VerboseOption
-                    $extmsg+= $extmsglLogP
+                # Opening the session is the real reachability test (ICMP can be blocked while WinRM is open);
+                # a ping only tells an unreachable device (2) from one without working remoting (3).
+                $reachable = try { Test-Connection -ComputerName $ComputerName -Count 2 -Quiet -ErrorAction Stop } catch { $false }
+                if (-not $reachable) {
+                    Write-Error "Unable to reach $ComputerName. Please check the Device-Name or the network connection to the remote Device."
+                    $ExitCode[0]=2
                 } else {
-                    # KeepLogs=true: keep step logs on the remote device.
-                    # Delete the copies that landed in $finalDestinationPath — content is already in master log.
-                    $stepLogPaths | ForEach-Object {
-                        Remove-Item -Path "$finalDestinationPath\$(Split-Path $_ -Leaf)" -Force -ErrorAction SilentlyContinue
-                    }
-                    $extmsg+= $extmsgrLogP
+                    $winRMexit = "Unable to establish a remote PowerShell session to $ComputerName. Please check the WinRM configuration.`r`n`r`nError: $_"
+                    Write-Error $winRMexit
+                    $connectErrorFolder = Join-Path $FinalDestinationPath $ComputerName
+                    New-Folder -FolderPath $connectErrorFolder
+                    Write-CMTraceLog $winRMexit 'Connect' (Join-Path $connectErrorFolder "${runStamp}_${ComputerName}_RepairSystem_ConnectError.log") Error
+                    $ExitCode[0]=3
                 }
-            } catch {
-                $message = "An error occurred while copying the log files from $ComputerName."
-                Write-Error $message
-                $extmsg+= $extmsgrLogP+"`r`n[ERROR]`r`t$_"
+                Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -RequestedSteps $requestedSteps
+                return
             }
         }
-    } else {
-        $extmsg+= $extmsglLogP
+
+        try {
+            # Every path on the device is built from base folders resolved and validated there, and named
+            # after the device itself (also for an IP target).
+            $bases = Invoke-RepairStep -Target $target -StepName 'Preparing the device' -ArgumentList @{} -ScriptBlock (New-RemoteFunctionScriptBlock -FunctionName 'Get-CleanupBasePath' -EntryPoint 'Get-CleanupBasePath')
+            if ($bases -isnot [hashtable]) { $bases = @{} }
+            $deviceName  = if ($bases.ComputerName) { $bases.ComputerName } else { $targetDevice }
+            $tempPath    = "$(if ($bases.SystemDrive) { $bases.SystemDrive } else { 'C:' })\$tempFolder"
+            $runPrefix   = "$tempPath\${runStamp}_${deviceName}_RepairSystem"
+            # A remote run keeps its repair log on this machine, so it survives a lost connection.
+            $localFolder = if ($remote) { Join-Path $FinalDestinationPath $ComputerName } else { $tempPath }
+            New-Folder -FolderPath $localFolder
+            $masterLogPath = Join-Path $localFolder "${runStamp}_${deviceName}_RepairSystem.log"
+            # This run's own files on the device that are copied back at the end (step logs only with -KeepLogs).
+            $runFiles = [System.Collections.Generic.List[string]]::new()
+            # -Verbose records each step's console and verbose output in a transcript next to the step logs.
+            $verboseLog = if ($VerbosePreference -eq 'Continue') { "${runPrefix}_Verbose.log" }
+            if ($verboseLog) { $runFiles.Add($verboseLog) }
+
+            # Light-weight calls (reads, deletes, the zip job) never reconnect: a broken session is left to
+            # the next step, which reconnects or marks the connection as lost.
+            $onTarget = {
+                param([scriptblock]$ScriptBlock, [object[]]$ArgumentList)
+                if ($target.Lost) { return }
+                if (-not $target.Session) { return Invoke-Command -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList }
+                if ($target.Quiet) { $ScriptBlock = [scriptblock]::Create("& {`n$ScriptBlock`n} @args 6>`$null 3>`$null") }
+            if ($target.Session.State -eq 'Opened') { Invoke-Command -Session $target.Session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList }
+            }
+            $null = & $onTarget (New-RemoteFunctionScriptBlock -FunctionName 'New-Folder' -EntryPoint 'New-Folder') @{ FolderPath = $tempPath }
+            $removeBlock = New-RemoteFunctionScriptBlock -FunctionName 'Remove-PathReliable', 'Register-PendingDelete' -EntryPoint 'Remove-PathReliable'
+            $removeOnTarget = {
+                param([string]$Path)
+                $r = & $onTarget $removeBlock @{ Path = $Path }
+                if ($r.Scheduled) {
+                    Write-CMTraceLog -Message "$Path is locked; queued for deletion on the next restart." -Component "RepairSystem" -LogPath $masterLogPath
+                } elseif ($r.Error) {
+                    Write-CMTraceLog -Message "$Path could not be deleted: $($r.Error)" -Component "RepairSystem" -LogPath $masterLogPath -Severity Warning
+                }
+            }
+
+            # Runs one step on the device, records its result code, embeds its log into the repair log and
+            # returns the log content. A non-empty stderr capture is kept and copied back; the step log is
+            # deleted after embedding unless -KeepLogs.
+            $toolHelpers = 'Write-CMTraceLog', 'Get-RepairSystemProcessResult', 'Remove-PathReliable', 'Register-PendingDelete', 'Invoke-RepairTool'
+            $runStep = {
+                param([int]$Position, [string]$Component, [string]$Label, [string[]]$Functions, [hashtable]$Params, [string]$LogPath)
+                Write-CMTraceLog -Message "Starting $Label..." -Component $Component -LogPath $masterLogPath
+                $attempted[$Position] = $true
+                $block  = New-RemoteFunctionScriptBlock -FunctionName $Functions -EntryPoint $Functions[-1]
+                if ($verboseLog) {
+                    $block = [scriptblock]::Create("`$VerbosePreference = 'Continue'`nStart-Transcript -LiteralPath '$verboseLog' -Append | Out-Null`ntry { & {`n$block`n} @args } finally { Stop-Transcript | Out-Null }")
+                }
+                $result = Invoke-RepairStep -Target $target -ScriptBlock $block -ArgumentList $Params -StepName $Label
+                # A step that ends without a result code must not read as success ([int]$null is 0).
+                $last = $result | Select-Object -Last 1
+                $ExitCode[$Position] = if ($target.Lost) { 5 } elseif ($last -is [int]) { $last } else { 1 }
+                if (-not $target.Lost -and $last -isnot [int]) {
+                    Write-CMTraceLog -Message "$Label returned no result code; recorded as failed." -Component $Component -LogPath $masterLogPath -Severity Warning
+                }
+                $stepSeverity = if ($ExitCode[$Position] -in 0, 3010, $script:RepairSystemNotExecutedCode) { 'Info' } else { 'Warning' }
+                Write-CMTraceLog -Message "$Label completed; ExitCode=$($ExitCode[$Position]);" -Component $Component -LogPath $masterLogPath -Severity $stepSeverity
+                $logs = & $onTarget {
+                    param($log)
+                    $err = $log -replace '\.log$', '_stderr.log'
+                    [PSCustomObject]@{
+                        Log    = $(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw -ErrorAction SilentlyContinue })
+                        Stderr = $(if (Test-Path -LiteralPath $err) { Get-Content -LiteralPath $err -Raw -ErrorAction SilentlyContinue })
+                    }
+                } @($LogPath)
+                Add-RepairStepLog -Content $logs.Log -MasterLogPath $masterLogPath -StepName $Component -Component $Component
+                if (-not [string]::IsNullOrWhiteSpace($logs.Stderr)) {
+                    $errLog = $LogPath -replace '\.log$', '_stderr.log'
+                    $runFiles.Add($errLog)
+                    Write-CMTraceLog -Message "$Label wrote to stderr: $errLog" -Component $Component -LogPath $masterLogPath -Severity Warning
+                }
+                if ($KeepLogs) { $runFiles.Add($LogPath) } elseif ($null -ne $logs) { & $removeOnTarget $LogPath }
+                $logs.Log
+            }
+
+            Write-CMTraceLog -Message ("Repair-System started;`r`n" +
+                "Target: $deviceName; Remote: $remote;`r`n" +
+                "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; RepairWMI: $RepairWMI; ContentCacheCleanup: $ContentCacheCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;") -Component "RepairSystem" -LogPath $masterLogPath
+
+            # DISM/SFC steps that ran but did not truly complete (timed out, killed, empty or incomplete log,
+            # or reboot-pending) - they trigger the one-shot reboot re-run below.
+            $incompleteSteps = [System.Collections.Generic.List[string]]::new()
+            # Steps that were actually started - after a lost connection, a requested step with value 0 that
+            # was never started is reported as not run rather than as a success.
+            $attempted = [bool[]]::new($ExitCode.Count)
+            $checkComplete = {
+                param([int]$Position, [string]$Content, [string]$Kind)
+                if (-not $target.Lost -and (Test-DismSfcStepIncomplete -ResultCode $ExitCode[$Position] -Content $Content -Kind $Kind)) {
+                    $incompleteSteps.Add($script:RepairSystemSteps[$Position].Label)
+                }
+            }
+            $toolParams = { param($component) @{ LogPath = "${runPrefix}_$component.log"; ChangeTimeout = $ChangeTimeout } }
+
+            if (-not $noDism -and -not $target.Lost) {
+                # RestoreHealth scans the image itself and repairs only what it finds, so a separate
+                # ScanHealth first would only scan a damaged image twice.
+                $p = & $toolParams 'DISM-RestoreHealth'
+                $restoreContent = & $runStep 2 'DISM-RestoreHealth' 'DISM RestoreHealth' ($toolHelpers + 'Invoke-DISMRestore') $p $p.LogPath
+                & $checkComplete 2 $restoreContent 'DISM'
+
+                if (-not $target.Lost -and $IncludeComponentCleanup) {
+                    $p = & $toolParams 'DISM-Analyze'
+                    $analyzeContent = & $runStep 3 'DISM-Analyze' 'DISM AnalyzeComponentStore' ($toolHelpers + 'Invoke-DISMAnalyzeComponentStore') $p $p.LogPath
+                    & $checkComplete 3 $analyzeContent 'DISM'
+                    if (-not $target.Lost) {
+                        if ($ExitCode[3] -notin 0, 3010) {
+                            $ExitCode[4] = $script:RepairSystemNotExecutedCode
+                            Write-CMTraceLog -Message "DISM AnalyzeComponentStore returned an unexpected exit code ($($ExitCode[3])); StartComponentCleanup was not run. Please review the logs." -Component "DISM-ComponentCleanup" -LogPath $masterLogPath -Severity Warning
+                        } elseif ($ExitCode[3] -eq 3010 -and (Get-DISMAnalyzeComponentStoreResult -Content $analyzeContent)) {
+                            # 3010: servicing operations are pending a restart; cleaning the store now would work on a stale state.
+                            $ExitCode[4] = $script:RepairSystemPostponedCode
+                            Write-CMTraceLog -Message "A component store cleanup is recommended, but a restart is pending; StartComponentCleanup postponed until after the restart." -Component "DISM-ComponentCleanup" -LogPath $masterLogPath -Severity Warning
+                        } elseif ($ExitCode[3] -eq 0 -and (Get-DISMAnalyzeComponentStoreResult -Content $analyzeContent)) {
+                            $p = & $toolParams 'DISM-ComponentCleanup'
+                            $cleanupContent = & $runStep 4 'DISM-ComponentCleanup' 'DISM ComponentStoreCleanup' ($toolHelpers + 'Invoke-DISMComponentStoreCleanup') $p $p.LogPath
+                            & $checkComplete 4 $cleanupContent 'DISM'
+                        } else {
+                            $ExitCode[4] = $script:RepairSystemNotExecutedCode
+                            Write-CMTraceLog -Message "No component store cleanup was needed; StartComponentCleanup marked as not executed." -Component "DISM-ComponentCleanup" -LogPath $masterLogPath
+                        }
+                    }
+                }
+            }
+
+            if (-not $noSfc -and -not $target.Lost) {
+                $p = & $toolParams 'SFC'
+                $sfcContent = & $runStep 5 'SFC' 'SFC /scannow' ($toolHelpers + 'Get-SfcCbsSummary' + 'Invoke-SFC') $p $p.LogPath
+                & $checkComplete 5 $sfcContent 'SFC'
+            }
+
+            # If any DISM/SFC step that ran did not complete cleanly, schedule a single automatic repair to
+            # run after the next reboot (default on; suppressed by -NoRebootRepair). Only when DISM was in
+            # play - the re-run performs the full DISM + SFC pass.
+            $rebootRerunScheduled = $false
+            if ($incompleteSteps.Count -gt 0 -and -not $NoRebootRepair -and -not $noDism -and -not $target.Lost) {
+                Write-CMTraceLog -Message "A DISM/SFC step did not complete cleanly; scheduling a one-shot reboot re-run..." -Component "RebootRerun" -LogPath $masterLogPath
+                $rebootTask = Register-RebootRepairTask -ChangeTimeout $ChangeTimeout -Target $target
+                if ($null -ne $rebootTask) {
+                    $rebootRerunScheduled = $true
+                    Write-CMTraceLog -Message "Reboot re-run scheduled as task '$($rebootTask.Task)' on $deviceName; its log will be written under $($rebootTask.Folder) after the next restart." -Component "RebootRerun" -LogPath $masterLogPath
+                } else {
+                    Write-CMTraceLog -Message "Reboot re-run could NOT be scheduled (task registration failed); a manual re-run after restart is recommended." -Component "RebootRerun" -LogPath $masterLogPath -Severity Warning
+                }
+            }
+
+            # The CBS/DISM zip runs as a background job on the device while the remaining steps run.
+            $zipJobId = $null
+            if ((-not $noSfc -or -not $noDism) -and -not $target.Lost) {
+                $zipFile     = "${runPrefix}_CBS-DISM.zip"
+                $zipErrorLog = "${runPrefix}_CBS-DISM_zip-errors.log"
+                $runFiles.Add($zipFile)
+                $runFiles.Add($zipErrorLog)
+                Write-CMTraceLog -Message "Starting CBS/DISM log zip in background (after last SFC/DISM step)..." -Component "ZipLogs" -LogPath $masterLogPath
+                $zipText = (New-RemoteFunctionScriptBlock -FunctionName 'Write-CMTraceLog', 'Remove-PathReliable', 'Register-PendingDelete', 'Start-ZipFileCreation' -EntryPoint 'Start-ZipFileCreation').ToString()
+                $attempted[10] = $true
+                try {
+                    $zipJobId = & $onTarget {
+                        param($text, $params)
+                        (Start-Job -ScriptBlock ([scriptblock]::Create($text)) -ArgumentList $params -ErrorAction Stop).Id
+                    } @($zipText, @{ TempPath = $tempPath; ZipFile = $zipFile; ZipErrorLog = $zipErrorLog; Bases = $bases; noDism = [bool]$noDism })
+                } catch {
+                    Write-CMTraceLog -Message "Failed to start zip background job: $_" -Component "ZipLogs" -LogPath $masterLogPath -Severity Warning
+                }
+            }
+
+            # WMI Repository Repair runs BEFORE the WMI-dependent Content Cache Cleanup and CCM Repair steps
+            # so those act on a repaired store. Its exit-code field is position 6 (see RepairSystemStepLayouts).
+            if ($RepairWMI -and -not $target.Lost) {
+                $log = "${runPrefix}_WMIRepair.log"
+                $null = & $runStep 6 'WMIRepair' 'WMI Repository Repair' @('Write-CMTraceLog', 'Write-StepLogLine', 'Repair-WMIRepository') @{ WMIRepairLog = $log; Bases = $bases } $log
+            }
+
+            if ($ContentCacheCleanup -and -not $target.Lost) {
+                $log = "${runPrefix}_ContentCacheCleanup.log"
+                $null = & $runStep 7 'ContentCacheCleanup' 'Content Cache Cleanup' @('Write-CMTraceLog', 'Remove-PathReliable', 'Register-PendingDelete', 'Clear-FolderContentsReliable', 'Clear-WindowsUpdateDownload', 'Get-CCMCachePath', 'Test-SafeCachePath', 'Invoke-ContentCacheCleanup', 'Invoke-ContentCacheCleanupStep') @{ LogPath = $log; Bases = $bases; SkipWindowsUpdate = [bool]$WindowsUpdateCleanup } $log
+                if ($ExitCode[7] -eq 3010) {
+                    Write-Warning "`r`nContent Cache Cleanup on $deviceName scheduled some locked cache items for removal on the next reboot. Please restart the device to finish."
+                }
+            }
+
+            if ($WindowsUpdateCleanup -and -not $target.Lost) {
+                $log = "${runPrefix}_WUCleanup.log"
+                $wuParams = @{ updateCleanupLog = $log; Bases = $bases; ResetUpdateHistory = [bool]$ResetUpdateHistory; DoLegacyRepair = $legacyRepairConfirmed }
+                $null = & $runStep 8 'WUCleanup' 'Windows Update Cleanup' @('Write-CMTraceLog', 'Write-StepLogLine', 'Stop-ServiceSafely', 'Remove-PathReliable', 'Register-PendingDelete', 'Test-DataStoreHealth', 'Invoke-WULegacyRepair', 'Invoke-WindowsUpdateCleanup') $wuParams $log
+                if ($ExitCode[8] -eq 3010) {
+                    Write-Warning "`r`nWindows Update Cleanup on $deviceName scheduled some locked items for removal on the next reboot. Please restart the device to finish."
+                } elseif ($ExitCode[8] -notin 0, 5) {
+                    Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $deviceName. Please review the logs.`r`n`tA restart of the device is advised. Please try again afterwards."
+                }
+            }
+
+            if ($RepairCCM -and -not $target.Lost) {
+                $log = "${runPrefix}_RepairCCM.log"
+                $ccmSetupCopy = "${runPrefix}_ccmsetup.log"
+                $runFiles.Add($ccmSetupCopy)
+                $null = & $runStep 9 'RepairCCM' 'CCM Repair' @('Write-CMTraceLog', 'Write-StepLogLine', 'Remove-PathReliable', 'Register-PendingDelete', 'Clear-FolderContentsReliable', 'Get-CCMCachePath', 'Test-SafeCachePath', 'Repair-CCM') @{ RepairCCMLog = $log; CCMSetupLogCopy = $ccmSetupCopy; Bases = $bases } $log
+            }
+
+            if ($null -ne $zipJobId -and -not $target.Lost) {
+                Write-CMTraceLog -Message "Waiting for CBS/DISM zip background job..." -Component "ZipLogs" -LogPath $masterLogPath
+                $zipResult = & $onTarget {
+                    param($id)
+                    $job = Get-Job -Id $id -ErrorAction SilentlyContinue
+                    if (-not $job) { return 'no job' }
+                    if (-not (Wait-Job -Job $job -Timeout 300)) { Stop-Job -Job $job; Remove-Job -Job $job -Force; return 'timed out after 300 seconds' }
+                    $out = Receive-Job -Job $job -ErrorAction SilentlyContinue | Select-Object -Last 1
+                    Remove-Job -Job $job -Force
+                    if ($out -is [int]) { $out } else { 'no result code' }
+                } @($zipJobId)
+                if ($zipResult -is [int]) {
+                    $ExitCode[10] = $zipResult
+                } else {
+                    $ExitCode[10] = 1
+                    Write-CMTraceLog -Message "CBS/DISM zip job did not finish ($(if ($zipResult) { $zipResult } else { 'connection to the device was lost' }))." -Component "ZipLogs" -LogPath $masterLogPath -Severity Warning
+                }
+            }
+            if ($target.Lost -and ((-not $noSfc) -or (-not $noDism))) { $ExitCode[10] = 5 }
+            Write-CMTraceLog -Message "CBS/DISM zip step completed; ExitCode=$($ExitCode[10]);" -Component "ZipLogs" -LogPath $masterLogPath
+
+            # Remote: copy this run's own files back; only those are removed, the temp folder may be in use
+            # by other tools (it is removed only if this leaves it empty).
+            $notCopied = @()
+            if ($remote -and -not $target.Lost) {
+                $existing = @(& $onTarget { param($files) $files | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } } @(,@($runFiles)))
+                foreach ($file in $existing) {
+                    try {
+                        Copy-Item -LiteralPath $file -Destination $localFolder -FromSession $target.Session -Force -ErrorAction Stop
+                        if (-not $KeepLogs) { & $removeOnTarget $file }
+                    } catch {
+                        $notCopied += $file
+                        Write-CMTraceLog -Message "$file could not be copied from ${deviceName}: $_" -Component "RepairSystem" -LogPath $masterLogPath -Severity Warning
+                    }
+                }
+                if (-not $KeepLogs) {
+                    $null = & $onTarget { param($p) if (-not (Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } } @($tempPath)
+                }
+            }
+
+            if ($target.Lost -and $ExitCode[0] -eq 0) { $ExitCode[0] = 4 }
+
+            # Outcome-driven summary: printed and written as the final log entry.
+            $summary = [System.Collections.Generic.List[object]]::new()
+            $problemSteps = [System.Collections.Generic.List[string]]::new()
+            $restartSteps = [System.Collections.Generic.List[string]]::new()
+            $postponedSteps = [System.Collections.Generic.List[string]]::new()
+            for ($i = 1; $i -lt $ExitCode.Count; $i++) {
+                $label = $script:RepairSystemSteps[$i].Label
+                if ($ExitCode[$i] -eq 3010) { $restartSteps.Add($label) }
+                elseif ($ExitCode[$i] -eq $script:RepairSystemPostponedCode) { $postponedSteps.Add($label) }
+                elseif (($ExitCode[$i] -notin 0, 5, $script:RepairSystemNotExecutedCode) -and ($incompleteSteps -notcontains $label)) { $problemSteps.Add($label) }
+            }
+            if ($target.Lost) {
+                $summary.Add(@('Warning', "Connection to $ComputerName was lost during the repair; the remaining steps were skipped and the log files on the device could not be copied (they remain under $tempPath)."))
+            }
+            if ($incompleteSteps.Count -gt 0) {
+                $notCompleted = "Did not complete: $($incompleteSteps -join ', ')."
+                if ($rebootRerunScheduled) {
+                    $summary.Add(@('Info', "$notCompleted A one-time repair will run automatically after the next restart of $deviceName; its log is saved there under $($rebootTask.Folder)\."))
+                } else {
+                    $reason = if ($NoRebootRepair) { 'disabled by -NoRebootRepair' }
+                              elseif ($noDism) { 'the automatic re-run only covers runs that include DISM' }
+                              elseif ($target.Lost) { "the connection to $ComputerName was lost" }
+                              else { 'the scheduled task could not be registered' }
+                    $summary.Add(@('Warning', "$notCompleted No automatic re-run was scheduled ($reason). Restart $deviceName and run Repair-System again."))
+                }
+            }
+            if ($problemSteps.Count -gt 0) {
+                $summary.Add(@('Warning', "Completed with errors in: $($problemSteps -join ', '). See the repair log for details."))
+            }
+            if ($restartSteps.Count -gt 0) {
+                $summary.Add(@('Info', "Restart $deviceName to finish pending changes ($($restartSteps -join ', '))."))
+            }
+            if ($postponedSteps.Count -gt 0) {
+                $summary.Add(@('Warning', "Postponed because a restart is pending: $($postponedSteps -join ', '). Restart $deviceName and run Repair-System -IncludeComponentCleanup again."))
+            }
+            if ($summary.Count -eq 0) {
+                $summary.Add(@('Info', "System repair completed successfully on $deviceName."))
+            }
+            $logInfo = "Repair log: $masterLogPath"
+            if ($remote -and -not $target.Lost) {
+                $logInfo += "`r`nLog files of this run were copied to $localFolder"
+                if ($KeepLogs) { $logInfo += "; they are also kept on the device under $tempPath" }
+                if ($notCopied) { $logInfo += "`r`nNot copied (left on the device): $($notCopied -join ', ')" }
+            } elseif (-not $remote) {
+                $logInfo += "`r`nLog files of this run are in $tempPath"
+            }
+            $summary.Add(@('Info', $logInfo))
+
+            foreach ($line in $summary) {
+                if ($line[0] -eq 'Warning') { Write-Warning $line[1] } else { Write-Host $line[1] }
+            }
+
+            $finalSeverity = Get-RepairSystemExitCodeSeverity -Codes $ExitCode
+            Write-CMTraceLog -Message ("Repair-System completed;`r`n" +
+                "Target: $deviceName; Remote: $remote;`r`n" +
+                "DetailedExitCode: $(ConvertTo-RepairSystemExitCode -Codes $ExitCode); Severity: $finalSeverity;`r`n" +
+                (($summary | ForEach-Object { $_[1] }) -join "`r`n")) -Component "RepairSystem" -LogPath $masterLogPath -Severity $(if ($finalSeverity -eq 0) { 'Info' } elseif ($finalSeverity -eq 1) { 'Warning' } else { 'Error' })
+
+            Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -LogPath $masterLogPath -RequestedSteps $requestedSteps -AttemptedSteps $attempted
+        } finally {
+            if ($target.Session) { Remove-PSSession -Session $target.Session -ErrorAction SilentlyContinue }
+        }
     }
-
-    if ($remoteConnectionLost) {
-        if ($ExitCode[0] -eq 0) { $ExitCode[0] = 4 }
-        $extmsg += "`r`n[WARNING]`tRemaining repair steps were skipped because the connection to $ComputerName was lost."
-        Write-RepairLog -Message "Connection to $ComputerName was lost during execution; ExitCode[0] set to $($ExitCode[0])." -Component "RepairSystem" -LogPath $masterLogPath
-    }
-
-    Write-RepairLog -Message "Repair-System completed;" -Component "RepairSystem" -LogPath $masterLogPath -StartLogEntry
-    Write-RepairLog -Message "Target: $(if ($remote) { $ComputerName } else { $env:COMPUTERNAME }); Remote: $remote;" -Component "RepairSystem" -LogPath $masterLogPath -AddLogEntryData
-    Write-RepairLog -Message "DetailedExitCode: $(ConvertTo-RepairSystemExitCode -Codes $ExitCode); Severity: $(Get-RepairSystemExitCodeSeverity -Codes $ExitCode);" -Component "RepairSystem" -LogPath $masterLogPath -AddLogEntryData
-    Write-RepairLog -Message "Log: $masterLogPath;" -Component "RepairSystem" -LogPath $masterLogPath -EndLogEntry
-
-    Start-Sleep -Seconds 1
-    if (-not $Quiet) { Write-Host $extmsg }
-    Set-RepairSystemExitCode -Codes $ExitCode -ComputerName $targetDevice -LogPath $masterLogPath -RequestedSteps $requestedSteps
 }
 Export-ModuleMember -Function Repair-System, Repair-LocalSystem, Repair-RemoteSystem
