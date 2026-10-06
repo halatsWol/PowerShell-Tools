@@ -6,9 +6,8 @@ This .exe-installer will install the following Modules:
 
 # Change Log:
 
-
 - `TempDataCleanup`: several devices are cleaned in parallel background jobs (`-ThrottleLimit`, `-DeviceTimeoutMinutes`), each reporting one line when it has finished
-- `TempDataCleanup`: returns one result object per device (status, free space, message, log file); new `-Quiet` switch for scripted runs
+- `TempDataCleanup`: returns one result object per device with `-PassThru` (status, free space, message, log file); new `-Quiet` switch for scripted runs
 - `TempDataCleanup`: `-LowDisk` / `-VeryLowDisk` now also work remotely - CleanMgr never completes without an interactive desktop, so native equivalents are used there instead of a 10-20 minute hang
 - `TempDataCleanup`: CMTrace-format log (same layout as Repair-System), and only the run's own log files are removed from the remote temp folder
 - `TempDataCleanup`: safety hardening - all targets are built from folders resolved and validated on the device, and cache locations pointing at key system folders or user profiles are refused
@@ -34,7 +33,7 @@ This .exe-installer will install the following Modules:
 - **One remoting session per run.** Every step runs through a single PowerShell remoting session (WinRM); no administrative share (`C$`) is needed any more. Step logs, the CBS/DISM archive and the ccmsetup.log copy are written on the device and copied back through the session; only the run's own files are removed. A dropped connection is reopened for up to 90 seconds before the remaining steps are marked as skipped.
 - **Pipeline input.** `-ComputerName` accepts several computers from the pipeline; each is repaired in turn and returns its own result object.
 - **Language-independent results.** DISM runs with `/English`, and the SFC result is read from its `[SR]` entries in `CBS.log` (also when CBS.log is rotated during the scan), so the reboot re-run decision works on any display language.
-- **Outcome summary.** The run ends with a summary of what needs attention (failed, postponed or incomplete steps, restart required) instead of a fixed text.
+- **Outcome summary.** The run ends with a summary of what needs attention (failed, postponed or incomplete steps, restart required) instead of a fixed text, each entry on its own, set apart from the step output.
 
 #### Changes:
 
@@ -60,7 +59,7 @@ This .exe-installer will install the following Modules:
 #### New Features:
 
 - **Parallel cleanup of several devices.** With more than one computer, every device is cleaned in its own background job, at most `-ThrottleLimit` at a time (default 10). There is no step output then; each device prints one line (name, additional and total free space, or the failure reason) as soon as it has finished. Duplicates and local aliases (`""`, `localhost`, the own computer name) are cleaned only once. `-DeviceTimeoutMinutes` (default 90) stops a device that runs too long and reports it as failed.
-- **Result objects and `-Quiet`.** The function returns one `TempDataCleanup.Result` object per device (`ComputerName`, `Status`, `AdditionalFreeGB`, `TotalFreeGB`, `Message`, `LogFile`) after all devices have finished, so results can be filtered or exported. `-Quiet` suppresses all console output; errors and the result objects remain.
+- **Result objects and `-Quiet`.** With `-PassThru`, the function returns one `TempDataCleanup.Result` object per device (`ComputerName`, `Status`, `AdditionalFreeGB`, `TotalFreeGB`, `Message`, `LogFile`) after all devices have finished, so results can be filtered or exported. `-Quiet` suppresses all console output; errors and the requested result objects remain. Without `-PassThru` nothing is returned, so a following command in the same line (e.g. `Repair-System`) is not mixed into a result table.
 - **Native disk cleanup without an interactive desktop.** CleanMgr `/sagerun` never completes in a non-interactive session 0 (remote/WinRM, SYSTEM) - it waits behind hidden dialogs until killed. In those contexts `-LowDisk` / `-VeryLowDisk` now apply native equivalents: the file-based Disk Cleanup options are applied from their own Windows definition (folder, file pattern, age, flags), Delivery Optimization via `Delete-DeliveryOptimizationCache`, Update Cleanup via DISM `/StartComponentCleanup`, and Device Driver Packages by removing older, unused driver versions (`pnputil` without `/force`). Options without a native equivalent are skipped and logged. Interactive runs keep using CleanMgr.
 - **CMTrace log.** The log is written in CMTrace format (same layout as Repair-System) with a component per step and warning/error highlighting, named with timestamp and the device's name. A single device prints its log path; with several devices the start banner shows where the logs will be.
 - **Browser site data needs confirmation.** `-IncludeBrowserData` clears browser caches as before; saved site data (Firefox site storage, Internet Explorer cookies) is only cleared after confirming a prompt, or with `-ConfirmWarning`.
@@ -73,7 +72,7 @@ This .exe-installer will install the following Modules:
 - **Prompts and checks:** the `-VeryLowDisk` confirmation is asked once for the whole run, "exit" really exits, and missing input no longer loops; the elevation check for the local computer runs before anything is cleaned and no longer blocks with `Pause`.
 - **Teams:** background images are backed up outside the cache, and the cache is only cleared once the backup succeeded; a backup left by an interrupted run is restored. `ms-teams` is stopped once instead of once per profile.
 - **Reboot queue:** locked files are queued for deletion once; all locked items of a folder are written in one registry update, skipping entries already queued.
-- **Windows Update downloads:** `SoftwareDistribution\Download` is emptied with wuauserv/BITS force-stopped (an interrupted download is simply fetched again) and started again afterwards; an update installation in progress is never interrupted but waited for up to 10 minutes, after which the folder is cleared at the next boot instead. With `-ContentCacheCleanup` the folder is cleared only once.
+- **Windows Update downloads:** `SoftwareDistribution\Download` is emptied with wuauserv/BITS force-stopped (an interrupted download is simply fetched again) and started again afterwards (without Windows' "Waiting for service ... to start" warnings); an update installation in progress is never interrupted but waited for up to 10 minutes, after which the folder is cleared at the next boot instead. With `-ContentCacheCleanup` the folder is cleared only once.
 - **Failing steps:** a step that fails on a device no longer aborts that device; the remaining steps still run, and the result's `Message` names the failed step.
 - **Other:** profiles whose name contains `[` or `]` are no longer skipped; blank lines and comments in the Config-File no longer abort the run; `-AutoClean` now enables `-IncludeSystemData`, `-ContentCacheCleanup` and `-IncludeIconCache` as documented.
 
