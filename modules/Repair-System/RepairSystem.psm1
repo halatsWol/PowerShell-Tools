@@ -500,7 +500,7 @@ function Set-RepairSystemExitCode {
     $detailedCode = ConvertTo-RepairSystemExitCode -Codes $Codes
     $severity     = Get-RepairSystemExitCodeSeverity -Codes $Codes
     $global:LASTEXITCODE = $severity
-    Write-Host "Detailed Exit Code: $detailedCode"
+    Write-Host "`r`nDetailed Exit Code: $detailedCode`r`n"
     $actions  = $null
     $analysis = Get-RepairSystemStepAnalysis -Code $detailedCode
     if ($null -ne $RequestedSteps -and $RequestedSteps.Count -ge 9) {
@@ -1129,7 +1129,7 @@ function Clear-WindowsUpdateDownload {
     }
     $deferred = $false
     try { $deferred = [bool](Clear-FolderContentsReliable -Folder $Folder) }
-    finally { $running | Start-Service -ErrorAction SilentlyContinue }
+    finally { $running | Start-Service -ErrorAction SilentlyContinue -WarningAction SilentlyContinue }
     [pscustomobject]@{ Deferred = $deferred; Postponed = $null; Skipped = $null }
 }
 
@@ -1589,7 +1589,7 @@ function Invoke-WindowsUpdateCleanup {
 
     # --- restart services -------------------------------------------------------------------------
     if ($stopped) {
-        Get-Service -Name $stopped -ErrorAction SilentlyContinue | Start-Service -ErrorAction SilentlyContinue
+        Get-Service -Name $stopped -ErrorAction SilentlyContinue | Start-Service -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
         $notRestarted = @(Get-Service -Name $stopped -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Running' } | ForEach-Object { $_.Name })
         if ($notRestarted) { & $log "Not running again after the cleanup: $($notRestarted -join ', ')." Warning }
     }
@@ -2710,6 +2710,8 @@ function Repair-System {
                 $logs.Log
             }
 
+            # Keeps the run apart from a preceding command's output (e.g. Invoke-TempDataCleanup in the same line).
+            Write-Host ''
             Write-CMTraceLog -Message ("Repair-System started;`r`n" +
                 "Target: $deviceName; Remote: $remote;`r`n" +
                 "SFC: $(if ($noSfc) { 'skip' } else { 'run' }); DISM: $(if ($noDism) { 'skip' } else { 'run' }); ComponentCleanup: $IncludeComponentCleanup; RepairWMI: $RepairWMI; ContentCacheCleanup: $ContentCacheCleanup; WUCleanup: $WindowsUpdateCleanup; RepairCCM: $RepairCCM; Timeout: ${ChangeTimeout}x;") -Component "RepairSystem" -LogPath $masterLogPath
@@ -2819,9 +2821,8 @@ function Repair-System {
                 $log = "${runPrefix}_WUCleanup.log"
                 $wuParams = @{ updateCleanupLog = $log; Bases = $bases; ResetUpdateHistory = [bool]$ResetUpdateHistory; DoLegacyRepair = $legacyRepairConfirmed }
                 $null = & $runStep 8 'WUCleanup' 'Windows Update Cleanup' @('Write-CMTraceLog', 'Write-StepLogLine', 'Stop-ServiceSafely', 'Remove-PathReliable', 'Register-PendingDelete', 'Test-DataStoreHealth', 'Invoke-WULegacyRepair', 'Invoke-WindowsUpdateCleanup') $wuParams $log
-                if ($ExitCode[8] -eq 3010) {
-                    Write-Warning "`r`nWindows Update Cleanup on $deviceName scheduled some locked items for removal on the next reboot. Please restart the device to finish."
-                } elseif ($ExitCode[8] -notin 0, 5) {
+                # 3010 needs no extra warning: the step reports it, and the summary names the restart.
+                if ($ExitCode[8] -notin 0, 5, 3010) {
                     Write-Error "`r`nAn error occurred while performing Windows Update Cleanup on $deviceName. Please review the logs.`r`n`tA restart of the device is advised. Please try again afterwards."
                 }
             }
@@ -2924,6 +2925,7 @@ function Repair-System {
             $summary.Add(@('Info', $logInfo))
 
             foreach ($line in $summary) {
+                Write-Host ''
                 if ($line[0] -eq 'Warning') { Write-Warning $line[1] } else { Write-Host $line[1] }
             }
 
