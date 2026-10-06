@@ -30,7 +30,8 @@ LONG DESCRIPTION
     - init (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
     - ThrottleLimit (Optional): Maximum number of devices cleaned at the same time when more than one computer is given (1-100, default 10). Further devices start as soon as a running one has finished.
     - DeviceTimeoutMinutes (Optional): With more than one computer, the maximum run time per device (5-1440 minutes, default 90). A device still running after that is stopped and reported as failed.
-    - Quiet (Optional): Suppresses all console output (progress, summary lines, warnings); only errors and the returned result objects remain, e.g. for scheduled or scripted runs. Confirmation prompts are still shown, use -ConfirmWarning to bypass them.
+    - Quiet (Optional): Suppresses all console output (progress, summary lines, warnings); only errors and, with -PassThru, the result objects remain, e.g. for scheduled or scripted runs. Confirmation prompts are still shown, use -ConfirmWarning to bypass them.
+    - PassThru (Optional): Returns one TempDataCleanup.Result object per device after all devices have finished. Without it nothing is returned; the per-device lines on the console show the outcome.
     - Credentials (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
     This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
 

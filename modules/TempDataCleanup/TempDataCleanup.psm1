@@ -270,7 +270,7 @@ function Clear-WindowsUpdateDownload {
     }
     $deferred = $false
     try { $deferred = [bool](Clear-FolderContentsReliable -Folder $Folder) }
-    finally { $running | Start-Service -ErrorAction SilentlyContinue }
+    finally { $running | Start-Service -ErrorAction SilentlyContinue -WarningAction SilentlyContinue }
     [pscustomobject]@{ Deferred = $deferred; Postponed = $null; Skipped = $null }
 }
 
@@ -1339,9 +1339,13 @@ function Invoke-TempDataCleanup {
     still running after that is stopped and reported as failed. Not applied to a single device.
 
     .PARAMETER Quiet
-    Suppresses all console output (progress, summary lines, warnings); only errors and the returned
-    result objects remain, eg. for scheduled or scripted runs. Confirmation prompts are still shown,
+    Suppresses all console output (progress, summary lines, warnings); only errors and, with -PassThru,
+    the result objects remain, eg. for scheduled or scripted runs. Confirmation prompts are still shown,
     use -ConfirmWarning to bypass them.
+
+    .PARAMETER PassThru
+    Returns one TempDataCleanup.Result object per device after all devices have finished (see OUTPUTS).
+    Without it the function returns nothing; the per-device lines on the console show the outcome.
 
     .PARAMETER Credentials
     Specifies the user credentials to use for the remote Connection to Remote Computers.
@@ -1388,7 +1392,7 @@ function Invoke-TempDataCleanup {
     deletion on the next reboot - restart Computer01 to finish.
 
     .EXAMPLE
-    $results = Invoke-TempDataCleanup -ComputerName (Get-Content .\devices.txt) -IncludeSystemData -ThrottleLimit 20
+    $results = Invoke-TempDataCleanup -ComputerName (Get-Content .\devices.txt) -IncludeSystemData -ThrottleLimit 20 -PassThru
     $results | Where-Object Status -eq 'Failed' | Select-Object ComputerName, Message | Export-Csv .\failed.csv -NoTypeInformation
 
     Cleans all devices listed in devices.txt, 20 at a time, and exports the devices that failed with their reason.
@@ -1397,6 +1401,7 @@ function Invoke-TempDataCleanup {
     [string[]]$ComputerName - Accepts pipeline input of Multiple Computer Names.
 
     .OUTPUTS
+    None by default. With -PassThru:
     TempDataCleanup.Result - one object per device, returned after all devices have finished:
     ComputerName, Status ('Completed' / 'Failed'), AdditionalFreeGB, TotalFreeGB, RestartRequired (locked
     files were queued for deletion on the next restart), Message (failure reason, steps that failed while the others still ran, or note) and LogFile (the
@@ -1495,7 +1500,10 @@ function Invoke-TempDataCleanup {
         [int]$DeviceTimeoutMinutes = 90,
 
         [Parameter(Mandatory=$false)]
-        [switch]$Quiet
+        [switch]$Quiet,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$PassThru
 
     )
     begin {
@@ -1797,7 +1805,9 @@ function Invoke-TempDataCleanup {
         }
 
         # Prints the device's summary line and keeps a clean result object (job results arrive
-        # deserialized) for the function's output; the table view shows the four key columns.
+        # deserialized) for -PassThru. TempDataCleanup.format.ps1xml gives it a fixed-width table, so it
+        # prints at once instead of after auto-sizing; the display set is the fallback when the psm1 is
+        # imported without the manifest.
         $results = New-Object System.Collections.Generic.List[object]
         $displaySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('ComputerName','Status','AdditionalFreeGB','TotalFreeGB'))
         $report = {
@@ -1892,7 +1902,9 @@ function Invoke-TempDataCleanup {
         if ($restartDevices) {
             Write-Host "Please restart $($restartDevices -join ', ') to finalize the cleanup (locked files are queued for deletion on the next restart)." -ForegroundColor Yellow
         }
-        $results
+        # Only on request: objects in the default output would mix with a following command's output
+        # (e.g. Repair-System in the same line) and be shown in one table.
+        if ($PassThru) { $results }
     }
 }
 

@@ -61,10 +61,12 @@ Name: "{userappdata}\{#MyAppPublisher}\{#MyAppName}\{#MyAppVersion}\uninst"
 ; TempDataCleanup
 Source: "{#SourcePath}\..\modules\TempDataCleanup\TempDataCleanup.psm1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\TempDataCleanup\TempDataCleanup.psd1"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
+Source: "{#SourcePath}\..\modules\TempDataCleanup\TempDataCleanup.format.ps1xml"; DestDir: "{#BaseDir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\TempDataCleanup\en-US\*"; DestDir: "{#BaseDir}\TempDataCleanup\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; PS7Dir
 Source: "{#SourcePath}\..\modules\TempDataCleanup\TempDataCleanup.psm1"; DestDir: "{#PS7Dir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\TempDataCleanup\TempDataCleanup.psd1"; DestDir: "{#PS7Dir}\TempDataCleanup"; Flags: ignoreversion
+Source: "{#SourcePath}\..\modules\TempDataCleanup\TempDataCleanup.format.ps1xml"; DestDir: "{#PS7Dir}\TempDataCleanup"; Flags: ignoreversion
 Source: "{#SourcePath}\..\modules\TempDataCleanup\en-US\*"; DestDir: "{#PS7Dir}\TempDataCleanup\en-US"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; RepairSystem

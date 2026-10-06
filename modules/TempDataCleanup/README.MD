@@ -26,7 +26,8 @@ The primary function of this module is `Invoke-TempDataCleanup`, which removes t
 - **`-init`** (Optional): When specified, the Config-File will be Written to the Module-Root-Directory. This will NOT overwrite an existing Config-File.
 - **`-ThrottleLimit`** (Optional): Maximum number of devices cleaned at the same time when more than one computer is given (1-100, default 10). Further devices start as soon as a running one has finished.
 - **`-DeviceTimeoutMinutes`** (Optional): With more than one computer, the maximum run time per device (5-1440 minutes, default 90). A device still running after that is stopped and reported as failed.
-- **`-Quiet`** (Optional): Suppresses all console output (progress, summary lines, warnings); only errors and the returned result objects remain, e.g. for scheduled or scripted runs. Confirmation prompts are still shown, use `-ConfirmWarning` to bypass them.
+- **`-Quiet`** (Optional): Suppresses all console output (progress, summary lines, warnings); only errors and, with `-PassThru`, the result objects remain, e.g. for scheduled or scripted runs. Confirmation prompts are still shown, use `-ConfirmWarning` to bypass them.
+- **`-PassThru`** (Optional): Returns one `TempDataCleanup.Result` object per device after all devices have finished (see Output). Without it nothing is returned; the per-device lines on the console show the outcome, so a following command in the same line (e.g. `Repair-System`) is not mixed into a result table.
 - **`-Credentials`** (Optional): when Specified, this will prompt for User-Credentials that will be used for the Remote-Access
 This can be used e.g. by passing on a credential Object `-Credentials (Get-Credential)`
 
@@ -57,16 +58,16 @@ Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeBro
 Invoke-TempDataCleanup -ComputerName "Computer01" -IncludeSystemData -IncludeSystemLogs -ContentCacheCleanup
 
 # Clean a device list 20 at a time and export the devices that failed, with their reason
-$results = Invoke-TempDataCleanup -ComputerName (Get-Content .\devices.txt) -IncludeSystemData -ThrottleLimit 20
+$results = Invoke-TempDataCleanup -ComputerName (Get-Content .\devices.txt) -IncludeSystemData -ThrottleLimit 20 -PassThru
 $results | Where-Object Status -eq 'Failed' | Select-Object ComputerName, Message | Export-Csv .\failed.csv -NoTypeInformation
 ```
 
 #### Output
 
-One `TempDataCleanup.Result` object per device is returned after all devices have finished: `ComputerName`, `Status` (`Completed` / `Failed`), `AdditionalFreeGB`, `TotalFreeGB`, `RestartRequired` (locked files were queued for deletion on the next restart; the closing restart reminder names only these devices), `Message` (failure reason, steps that failed while the others still ran, or note) and `LogFile` (the copied log for remote devices, else the log on the device). The console shows the first four as a table; the per-device summary lines are printed as before. A single device also prints its log path; with several devices the start banner says where the logs will be (the device folders below `LocalTargetPath`, and the local computer's own temp folder). With `-Quiet` nothing is printed and only the objects are returned:
+With `-PassThru`, one `TempDataCleanup.Result` object per device is returned after all devices have finished: `ComputerName`, `Status` (`Completed` / `Failed`), `AdditionalFreeGB`, `TotalFreeGB`, `RestartRequired` (locked files were queued for deletion on the next restart; the closing restart reminder names only these devices), `Message` (failure reason, steps that failed while the others still ran, or note) and `LogFile` (the copied log for remote devices, else the log on the device). Displayed, they show the first four as a table; the per-device summary lines are printed in any case. A single device also prints its log path; with several devices the start banner says where the logs will be (the device folders below `LocalTargetPath`, and the local computer's own temp folder). With `-Quiet -PassThru` nothing is printed and only the objects are returned:
 
 ```PowerShell
-$results = Invoke-TempDataCleanup -ComputerName (Get-Content .\devices.txt) -IncludeSystemData -Quiet
+$results = Invoke-TempDataCleanup -ComputerName (Get-Content .\devices.txt) -IncludeSystemData -Quiet -PassThru
 ```
 
 ## Requirements

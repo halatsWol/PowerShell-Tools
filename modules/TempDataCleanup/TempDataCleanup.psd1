@@ -63,7 +63,7 @@ ProcessorArchitecture = 'None'
 # TypesToProcess = @()
 
 # Format files (.ps1xml) to be loaded when importing this module
-# FormatsToProcess = @()
+FormatsToProcess = @('.\TempDataCleanup.format.ps1xml')
 
 # Modules to import as nested modules of the module specified in RootModule/ModuleToProcess
 # NestedModules = @()
@@ -111,8 +111,8 @@ PrivateData = @{
 1.8
 - Several devices are cleaned in parallel background jobs (-ThrottleLimit, default 10;
   -DeviceTimeoutMinutes, default 90); each device reports one line when it has finished.
-- Returns one TempDataCleanup.Result object per device (status, free space, message, log file);
-  -Quiet suppresses all console output.
+- With -PassThru, returns one TempDataCleanup.Result object per device (status, free space, message,
+  log file), shown as a fixed-width table; -Quiet suppresses all console output.
 - -LowDisk / -VeryLowDisk without an interactive desktop (remote/WinRM, SYSTEM), where CleanMgr never
   completes, apply native equivalents of the CleanMgr options instead.
 - CMTrace-format log (same layout as Repair-System) named with timestamp and device name; only the
