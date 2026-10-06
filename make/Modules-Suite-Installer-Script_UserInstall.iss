@@ -5,6 +5,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion "dev"
 #endif
+#if Exec(GetEnv("SystemRoot") + "\System32\WindowsPowerShell\v1.0\powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File """ + AddBackslash(SourcePath) + "Build-ReleaseInfo.ps1"" -Tag """ + MyAppVersion + """", SourcePath, 1, 0) != 0
+  #error Build-ReleaseInfo.ps1 failed - run it directly to see why
+#endif
 #define MyAppPublisher "Marflow Software"
 #define MyAppURL "https://www.kMarflow.com/"
 #define BaseDir "{userdocs}\WindowsPowerShell\Modules"
@@ -26,7 +29,7 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\PowerShellToolsSuite
 CreateAppDir=no
 LicenseFile={#SourcePath}\..\LICENSE
-InfoBeforeFile={#SourcePath}\Pre-Install.nfo
+InfoBeforeFile={#SourcePath}\build\Pre-Install.nfo
 InfoAfterFile={#SourcePath}\Post-Install.nfo
 OutputDir={#SourcePath}\installer\
 OutputBaseFilename=Setup_PowershellModulesSuite_UserInstaller

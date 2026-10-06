@@ -87,3 +87,6 @@ nuget.config
 
 # Ignore MSBuild Binary Logs
 msbuild.binlog
+
+# Rendered release info (make/Build-ReleaseInfo.ps1)
+/make/build/

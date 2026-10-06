@@ -1,6 +1,3 @@
 This installation will install the following PowerShell-Modules onto the System:
 
-	- RepairSystem (v1.10)
-	- TempDataCleanup (v1.7)
-	- Shortcuts (v1.0)
-	- CredentialHandler (v1.0)
+	{{ModuleList}}

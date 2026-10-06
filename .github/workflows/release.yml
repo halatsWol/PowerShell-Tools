@@ -13,10 +13,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Sync version numbers from module manifests
-        shell: pwsh
-        run: ./make/Sync-ReleaseVersions.ps1 -Tag '${{ github.ref_name }}'
-
       - name: Check installer script exists
         run: |
           if (!(Test-Path 'make/Modules-Suite-Installer-Script_UserInstall.iss')) {
@@ -44,10 +40,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Sync version numbers from module manifests
-        shell: pwsh
-        run: ./make/Sync-ReleaseVersions.ps1 -Tag '${{ github.ref_name }}'
 
       - name: Check installer script exists
         run: |
@@ -79,9 +71,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Sync version numbers from module manifests
+      - name: Render release note
         shell: pwsh
-        run: ./make/Sync-ReleaseVersions.ps1 -Tag '${{ github.ref_name }}'
+        run: ./make/Build-ReleaseInfo.ps1 -Tag '${{ github.ref_name }}'
 
       - name: Get tag name
         id: vars
@@ -97,7 +89,7 @@ jobs:
         id: notes
         run: |
           echo "content<<EOF" >> $GITHUB_OUTPUT
-          cat make/releasenote.md >> $GITHUB_OUTPUT
+          cat make/build/releasenote.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
         shell: bash
 
