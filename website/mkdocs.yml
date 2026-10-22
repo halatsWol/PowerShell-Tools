@@ -1,0 +1,96 @@
+# The documentation site at https://software.kmarflow.com/PowerShell-Tools/ (GitHub Pages, the account's Pages domain;
+# this repository has no domain of its own). Built by make/Build-Website.ps1, which stages this file, overrides/ and
+# pages/ and adds the module READMEs as the module pages of the manual, so GitHub and the site show one text.
+# Colors: website/pages/stylesheets/pstools.css (the Marflow Software slate tones).
+site_name: PowerShell-Tools
+site_description: PowerShell modules and scripts for everyday IT work. Repair Windows, clean up temp data and caches, remove user profiles and Autodesk products, locally or remotely.
+site_url: https://software.kmarflow.com/PowerShell-Tools/
+repo_url: https://github.com/halatsWol/PowerShell-Tools
+repo_name: PowerShell-Tools
+edit_uri: ""
+copyright: Copyright &copy; 2026 Marflow Software
+
+docs_dir: docs
+site_dir: site
+
+# With --strict a broken page or section link fails the build.
+validation:
+  links:
+    anchors: warn
+
+nav:
+  - Overview: index.md
+  - User manual:
+      - Getting started: manual/index.md
+      - Repair-System: manual/repair-system.md
+      - TempDataCleanup: manual/tempdatacleanup.md
+      - CredentialHandler: manual/credentialhandler.md
+      - Shortcuts: manual/shortcuts.md
+      - Scripts: manual/scripts.md
+  - Help & troubleshooting: help.md
+  - Blog: https://www.kmarflow.com
+
+theme:
+  name: material
+  custom_dir: overrides
+  language: en
+  logo: images/logo.svg
+  favicon: images/logo.svg
+  font: false   # Segoe UI and Cascadia Code (pstools.css), no Google Fonts
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+extra_css:
+  - stylesheets/pstools.css
+
+extra:
+  generator: false
+  social:
+    - icon: material/post-outline
+      link: https://www.kmarflow.com
+      name: Blog (kmarflow.com)
+    - icon: material/download
+      link: https://github.com/halatsWol/PowerShell-Tools/releases/latest
+      name: Download the installer
+    - icon: fontawesome/brands/github
+      link: https://github.com/halatsWol/PowerShell-Tools
+      name: PowerShell-Tools on GitHub
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.highlight:
+      use_pygments: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search

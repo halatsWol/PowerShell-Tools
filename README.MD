@@ -2,6 +2,8 @@
 
 Welcome to the **PowerShell-Tools** repository! This repository is dedicated to providing a collection of PowerShell scripts and modules designed to make IT tasks easier, more efficient, and more automated.
 
+Documentation: [software.kmarflow.com/PowerShell-Tools](https://software.kmarflow.com/PowerShell-Tools/)
+
 ## Table of Contents
 
 - [PowerShell-Tools](#powershell-tools)
@@ -24,6 +26,7 @@ Welcome to the **PowerShell-Tools** repository! This repository is dedicated to 
 		- [Running a Script](#running-a-script)
 	- [Releasing the Module Suite](#releasing-the-module-suite)
 		- [Version Placeholders](#version-placeholders)
+	- [Documentation Site](#documentation-site)
 
 
 ## Introduction
@@ -133,4 +136,15 @@ To check the rendered output locally:
 
 ```PowerShell
 .\make\Build-ReleaseInfo.ps1 -Tag v1.8.0
+```
+
+## Documentation Site
+
+The site at [software.kmarflow.com/PowerShell-Tools](https://software.kmarflow.com/PowerShell-Tools/) is built with MkDocs (Material theme) from [`website/`](./website) and the module READMEs: each `modules/<Module>/README.MD` becomes that module's page of the user manual, so edit the README, not a copy. [`make/Build-Website.ps1`](./make/Build-Website.ps1) stages and builds it, and the [Website workflow](./.github/workflows/pages.yml) runs it and deploys to GitHub Pages on every push to `main` that touches these files.
+
+To build and check it locally (needs `pip install "mkdocs==1.6.1" "mkdocs-material==9.7.7"`):
+
+```PowerShell
+.\make\Build-Website.ps1
+python -m http.server 8000 --directory make\build\website\site
 ```

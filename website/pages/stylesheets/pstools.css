@@ -1,0 +1,268 @@
+/* PowerShell-Tools shares the Marflow Software docs colors: TextTemplateManager's slate Store art. */
+:root {
+  --pst-ink: #232848;
+  --pst-ink-deep: #1c2140;
+  --pst-slate: #545d7e;
+  --pst-card: #46507a;
+  --pst-key: #3b4366;
+  --pst-line: #7a84b0;
+  --pst-sub: #d3d7ee;
+  --pst-orange: #ff8c42;
+  --pst-orange-deep: #e0702a;
+
+  --md-text-font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --md-code-font-family: "Cascadia Code", Consolas, ui-monospace, monospace;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: var(--pst-ink);
+  --md-primary-fg-color--light: var(--pst-slate);
+  --md-primary-fg-color--dark: var(--pst-ink-deep);
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: var(--pst-orange-deep);
+  --md-accent-fg-color--transparent: rgba(255, 140, 66, 0.12);
+  --md-default-bg-color: #fbfbfd;
+  --md-default-fg-color--light: #5b6280;
+  --md-typeset-color: #262b44;
+  --md-typeset-a-color: #3a4470;
+  --md-code-bg-color: #eef0f8;
+  --md-code-fg-color: #2b3157;
+  --pst-surface: #ffffff;
+  --pst-surface-line: #e3e5f0;
+  --pst-heading: var(--pst-ink);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 232;
+  --md-primary-fg-color: var(--pst-ink);
+  --md-primary-fg-color--light: var(--pst-slate);
+  --md-primary-fg-color--dark: var(--pst-ink-deep);
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: var(--pst-orange);
+  --md-accent-fg-color--transparent: rgba(255, 140, 66, 0.16);
+  --md-default-bg-color: #191d33;
+  --md-default-fg-color: #e6e8f4;
+  --md-default-fg-color--light: #b3b8d4;
+  --md-default-fg-color--lighter: #7f86a8;
+  --md-default-fg-color--lightest: #3b4366;
+  --md-typeset-color: #dfe2f1;
+  --md-typeset-a-color: #ffa56b;
+  --md-code-bg-color: #232848;
+  --md-code-fg-color: #d3d7ee;
+  --md-footer-bg-color: #12152a;
+  --md-footer-bg-color--dark: #0d1020;
+  --pst-surface: #232848;
+  --pst-surface-line: #343b63;
+  --pst-heading: #ffffff;
+}
+
+/* Header and tabs: the slate gradient. */
+.md-header,
+.md-tabs {
+  background: linear-gradient(100deg, var(--pst-ink) 0%, var(--pst-key) 60%, var(--pst-slate) 100%);
+}
+.md-header { box-shadow: none; }
+.md-tabs { border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.md-tabs__link--active, .md-tabs__item--active .md-tabs__link { color: #ffffff; }
+.md-tabs__item--active .md-tabs__link { box-shadow: inset 0 -3px 0 var(--pst-orange); }
+.md-header__button.md-logo img { height: 1.6rem; border-radius: 6px; }
+/* "Marflow Software ›" before the title: the way back to the landing page (overrides/partials/header.html). */
+.md-header .pst-crumb {
+  flex: none;
+  margin-left: 0.6rem;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+}
+.md-header .pst-crumb:hover, .md-header .pst-crumb:focus { color: var(--pst-orange); }
+.md-header .pst-crumb__sep { flex: none; margin: 0 0 0 0.4rem; font-size: 0.9rem; color: rgba(255, 255, 255, 0.5); }
+.md-header .pst-crumb__sep + .md-header__title { margin-left: 0.4rem; }
+.md-search__form { background-color: rgba(255, 255, 255, 0.12); border-radius: 6px; }
+
+/* Headings: the orange underline under page titles. */
+.md-typeset h1 {
+  color: var(--pst-heading);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.md-typeset h1::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  height: 4px;
+  margin-top: 0.6rem;
+  border-radius: 2px;
+  background: var(--pst-orange);
+}
+.md-typeset h2 { color: var(--pst-heading); font-weight: 650; }
+.md-typeset h3 { font-weight: 650; }
+.md-typeset a:hover { color: var(--md-accent-fg-color); }
+
+/* Buttons. */
+.md-typeset .md-button {
+  border-radius: 8px;
+  font-weight: 600;
+  padding: 0.6em 1.4em;
+}
+.md-typeset .md-button--primary {
+  background: var(--pst-orange);
+  border-color: var(--pst-orange);
+  color: #1c2140;
+}
+.md-typeset .md-button--primary:hover,
+.md-typeset .md-button--primary:focus {
+  background: #ffa25f;
+  border-color: #ffa25f;
+  color: #1c2140;
+}
+
+/* Tables. The module READMEs have long parameter descriptions, so no forced nowrap. */
+.md-typeset table:not([class]) { border-radius: 8px; border: 1px solid var(--pst-surface-line); overflow: hidden; }
+.md-typeset table:not([class]) th { background: var(--pst-ink); color: #ffffff; }
+.md-typeset img { border-radius: 8px; }
+
+/* Admonitions in the slate tones. */
+.md-typeset .admonition.note, .md-typeset details.note { border-color: var(--pst-line); }
+.md-typeset .note > .admonition-title, .md-typeset .note > summary { background-color: rgba(122, 132, 176, 0.14); }
+
+/* ---- Home page ---- */
+.pst-hero {
+  position: relative;
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--pst-ink) 0%, var(--pst-key) 55%, var(--pst-slate) 100%);
+  padding: clamp(3rem, 8vw, 5.5rem) 1rem 4rem;
+  text-align: center;
+  overflow: hidden;
+}
+.pst-hero::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background: var(--pst-orange);
+}
+.pst-hero__inner { position: relative; max-width: 46rem; margin: 0 auto; }
+.pst-hero__logo {
+  display: block;
+  width: 76px;
+  height: 76px;
+  margin: 0 auto 1.25rem;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.pst-hero__title {
+  margin: 0 0 1rem;
+  font-size: 2.6rem;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+}
+.pst-mark { box-shadow: inset 0 -0.18em 0 var(--pst-orange); }
+.pst-hero__lead { margin: 0 auto 1.8rem; max-width: 38rem; font-size: 1.05rem; color: var(--pst-sub); }
+
+/* A console window with a few commands, like the PowerShell card art on the landing page. */
+.pst-console {
+  max-width: 36rem;
+  margin: 0 auto 2rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: 10px;
+  background: var(--pst-ink-deep);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  font-family: var(--md-code-font-family);
+  font-size: 0.72rem;
+  line-height: 1.9;
+  text-align: left;
+  color: var(--pst-sub);
+}
+.pst-console div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pst-console b { color: var(--pst-orange); font-weight: 600; }
+
+.pst-hero__actions { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; align-items: center; }
+/* The hero sits outside .md-typeset, so its buttons are styled here. */
+.pst-hero .md-button {
+  display: inline-block;
+  margin: 0;
+  padding: 0.7em 1.5em;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  font-size: 0.82rem;
+  font-weight: 650;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.pst-hero .md-button--primary { background: var(--pst-orange); border-color: var(--pst-orange); color: #1c2140; box-shadow: 0 6px 20px rgba(255, 140, 66, 0.35); }
+.pst-hero .md-button--primary:hover { background: #ffa25f; border-color: #ffa25f; color: #1c2140; transform: translateY(-1px); }
+.pst-hero .pst-ghost { color: #ffffff; border-color: rgba(255, 255, 255, 0.6); }
+.pst-hero .pst-ghost:hover { background: rgba(255, 255, 255, 0.12); color: #ffffff; border-color: #ffffff; }
+
+.pst-features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 2.5rem;
+}
+.pst-feature {
+  background: var(--pst-surface);
+  border: 1px solid var(--pst-surface-line);
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem 0.4rem;
+  border-top: 4px solid var(--pst-orange);
+}
+.md-typeset .pst-feature h3 { margin: 0.4rem 0 0.1rem; font-size: 1rem; }
+.md-typeset .pst-feature h3 a { color: var(--pst-heading); }
+.md-typeset .pst-feature h3 a:hover { color: var(--md-accent-fg-color); }
+.md-typeset .pst-feature .headerlink { display: none; }
+.md-typeset .pst-kind { margin: 0 0 0.5rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; color: var(--md-default-fg-color--light); }
+.md-typeset .pst-feature p { margin: 0 0 0.8rem; font-size: 0.78rem; color: var(--md-default-fg-color--light); }
+.md-typeset .pst-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--pst-ink) 0%, var(--pst-card) 100%);
+  color: var(--pst-orange);
+}
+.md-typeset .pst-icon svg { width: 1.5rem; height: 1.5rem; max-height: none; fill: currentColor; }
+
+.pst-docs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.md-typeset .pst-docs p { margin: 0; display: contents; }
+.md-typeset .pst-docs a {
+  display: block;
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--pst-ink) 0%, var(--pst-card) 100%);
+  color: #ffffff;
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.md-typeset .pst-docs a:hover { border-color: var(--pst-orange); transform: translateY(-2px); color: #ffffff; }
+.md-typeset .pst-docs a .twemoji { color: var(--pst-orange); margin-right: 0.4rem; vertical-align: -0.3em; }
+.md-typeset .pst-docs a .twemoji svg { width: 1.3rem; height: 1.3rem; max-height: none; }
+.md-typeset .pst-docs a strong { font-size: 0.95rem; }
+.md-typeset .pst-docs a span { display: block; margin-top: 0.35rem; font-size: 0.75rem; color: var(--pst-sub); }
+
+/* Footer in the slate tones instead of Material's black. */
+.md-footer { background: linear-gradient(100deg, var(--pst-ink-deep) 0%, var(--pst-key) 100%); }
+.md-footer-meta { background: rgba(10, 12, 26, 0.35); }
+
+@media screen and (max-width: 76.1875em) {
+  .pst-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pst-docs { grid-template-columns: minmax(0, 1fr); }
+}
+@media screen and (max-width: 44.9375em) {
+  .pst-hero__title { font-size: 1.8rem; }
+  .pst-hero__lead { font-size: 0.95rem; }
+  .pst-console { font-size: 0.66rem; }
+  .md-header .pst-crumb__long { display: none; }
+  .pst-features { grid-template-columns: minmax(0, 1fr); }
+}

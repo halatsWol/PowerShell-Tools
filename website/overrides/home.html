@@ -1,0 +1,25 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+  {{ super() }}
+  <section class="pst-hero">
+    <div class="pst-hero__inner">
+      <img class="pst-hero__logo" src="{{ 'images/logo.svg' | url }}" alt="" width="76" height="76">
+      <h1 class="pst-hero__title">Repair and clean up Windows,<br><span class="pst-mark">locally or remotely</span></h1>
+      <p class="pst-hero__lead">PowerShell modules and scripts for everyday IT work: repair system files and Windows Update, clear temp data and content caches, remove user profiles and Autodesk products. With CMTrace logs and exit codes you can script against.</p>
+      <div class="pst-console" aria-hidden="true">
+        <div><b>PS&gt;</b> Repair-System -ComputerName PC042 -WindowsUpdateCleanup</div>
+        <div><b>PS&gt;</b> Get-Content .\devices.txt | Invoke-TempDataCleanup -IncludeSystemData</div>
+        <div><b>PS&gt;</b> .\removeUserProfile.ps1 -UserName jdoe</div>
+      </div>
+      <div class="pst-hero__actions">
+        <a class="md-button md-button--primary" href="https://github.com/halatsWol/PowerShell-Tools/releases/latest">Download the installer</a>
+        <a class="md-button pst-ghost" href="{{ 'manual/' | url }}">Read the manual</a>
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block content %}
+  {{ page.content }}
+{% endblock %}
