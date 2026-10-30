@@ -133,6 +133,17 @@
   border-color: #ffa25f;
   color: #1c2140;
 }
+/* Material draws other buttons in the primary color, which is about the page background in dark mode. */
+[data-md-color-scheme="slate"] .md-typeset .md-button:not(.md-button--primary) {
+  color: #ffffff;
+  border-color: var(--pst-line);
+}
+[data-md-color-scheme="slate"] .md-typeset .md-button:not(.md-button--primary):hover,
+[data-md-color-scheme="slate"] .md-typeset .md-button:not(.md-button--primary):focus {
+  background: var(--pst-orange);
+  border-color: var(--pst-orange);
+  color: #1c2140;
+}
 
 /* Tables. The module READMEs have long parameter descriptions, so no forced nowrap. */
 .md-typeset table:not([class]) { border-radius: 8px; border: 1px solid var(--pst-surface-line); overflow: hidden; }
