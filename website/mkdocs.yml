@@ -1,7 +1,7 @@
 # The documentation site at https://software.kmarflow.com/PowerShell-Tools/ (GitHub Pages, the account's Pages domain;
 # this repository has no domain of its own). Built by make/Build-Website.ps1, which stages this file, overrides/ and
 # pages/ and adds the module READMEs as the module pages of the manual, so GitHub and the site show one text.
-# Colors: website/pages/stylesheets/pstools.css (the Marflow Software slate tones).
+# Styles: the shared marflow.css of software.kmarflow.com.
 site_name: PowerShell-Tools
 site_description: PowerShell modules and scripts for everyday IT work. Repair Windows, clean up temp data and caches, remove user profiles and Autodesk products, locally or remotely.
 site_url: https://software.kmarflow.com/PowerShell-Tools/
@@ -36,7 +36,7 @@ theme:
   language: en
   logo: images/logo.svg
   favicon: images/logo.svg
-  font: false   # Segoe UI and Cascadia Code (pstools.css), no Google Fonts
+  font: false   # Segoe UI and Cascadia Code (marflow.css), no Google Fonts
   features:
     - navigation.instant
     - navigation.tabs
@@ -62,7 +62,7 @@ theme:
         name: Light mode
 
 extra_css:
-  - stylesheets/pstools.css
+  - https://software.kmarflow.com/assets/marflow.css
 
 extra:
   generator: false

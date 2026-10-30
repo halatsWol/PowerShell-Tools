@@ -6,64 +6,64 @@ hide:
   - toc
 ---
 
-<div class="pst-features" markdown>
+<div class="mf-features" markdown>
 
-<div class="pst-feature" markdown>
-:material-wrench-outline:{ .pst-icon }
+<div class="mf-feature" markdown>
+:material-wrench-outline:{ .mf-icon }
 
 ### [Repair-System](manual/repair-system.md)
 
-<p class="pst-kind">Module</p>
+<p class="mf-kind">Module</p>
 
 DISM and SFC, component store cleanup, a Windows Update reset that keeps the update history, WMI and ConfigMgr client repair. One remoting session, one log, a per-step exit code.
 </div>
 
-<div class="pst-feature" markdown>
-:material-broom:{ .pst-icon }
+<div class="mf-feature" markdown>
+:material-broom:{ .mf-icon }
 
 ### [TempDataCleanup](manual/tempdatacleanup.md)
 
-<p class="pst-kind">Module</p>
+<p class="mf-kind">Module</p>
 
 User and system temp, logs, browser and Teams caches, and the ConfigMgr, Intune, Adaptiva and Windows Update content caches. A whole device list in parallel.
 </div>
 
-<div class="pst-feature" markdown>
-:material-account-remove-outline:{ .pst-icon }
+<div class="mf-feature" markdown>
+:material-account-remove-outline:{ .mf-icon }
 
 ### [removeUserProfile.ps1](manual/scripts.md#removeuserprofileps1)
 
-<p class="pst-kind">Script</p>
+<p class="mf-kind">Script</p>
 
 Removes Windows user profiles after backing up their registry keys, mapped drives and printers. Renames the folder to `.old`, or deletes it with `-Delete`.
 </div>
 
-<div class="pst-feature" markdown>
-:material-delete-sweep-outline:{ .pst-icon }
+<div class="mf-feature" markdown>
+:material-delete-sweep-outline:{ .mf-icon }
 
 ### [AutoDeskCleanRemove.ps1](manual/scripts.md#autodeskcleanremoveps1)
 
-<p class="pst-kind">Script</p>
+<p class="mf-kind">Script</p>
 
 Autodesk's clean uninstall (2022 and newer), unattended: every bundle and MSI product, folders, user data and registry keys, backed up first. Ready for Intune and ConfigMgr.
 </div>
 
-<div class="pst-feature" markdown>
-:material-key-outline:{ .pst-icon }
+<div class="mf-feature" markdown>
+:material-key-outline:{ .mf-icon }
 
 ### [CredentialHandler](manual/credentialhandler.md)
 
-<p class="pst-kind">Module</p>
+<p class="mf-kind">Module</p>
 
 `Get-CredentialObject` asks for credentials in the console, where `Get-Credential` fails in Windows PowerShell 5.1 with Windows Terminal as the default terminal.
 </div>
 
-<div class="pst-feature" markdown>
-:material-link-variant:{ .pst-icon }
+<div class="mf-feature" markdown>
+:material-link-variant:{ .mf-icon }
 
 ### [Shortcuts](manual/shortcuts.md)
 
-<p class="pst-kind">Module</p>
+<p class="mf-kind">Module</p>
 
 `Get-Shortcut` reads target, arguments, icon and hotkey of `.lnk` files, one file or a whole folder. `Set-Shortcut` creates or changes them.
 </div>
@@ -89,7 +89,7 @@ The four modules come as one suite with an installer: one for all users (needs a
 
 ## Documentation
 
-<div class="pst-docs" markdown>
+<div class="mf-docs" markdown>
 
 [:material-book-open-variant: **User manual**<br><span>Install, requirements, remote runs, config files, logs and exit codes, and a page per module and script.</span>](manual/index.md)
 
